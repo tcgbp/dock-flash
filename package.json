@@ -1,0 +1,70 @@
+{
+  "name": "dock-flash",
+  "version": "1.0.0",
+  "description": "Quick Control dock plugin — a dynamic floating shortcut panel for DSH Workbench with extensible switch registry. Works standalone or with dock-base.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tcgbp/dock-flash.git"
+  },
+  "homepage": "https://github.com/tcgbp/dock-flash#readme",
+  "bugs": {
+    "url": "https://github.com/tcgbp/dock-flash/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "dock",
+    "workbench",
+    "quick-control",
+    "ui"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "dock-base"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1-0 <5.0.0-0",
+    "dock-base": ">=0.1.2-0 <1.0.0-0"
+  },
+  "peerDependenciesMeta": {
+    "dock-base": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-settings": "0.1.5-rc.1",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0"
+  }
+}
