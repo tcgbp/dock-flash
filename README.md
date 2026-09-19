@@ -28,7 +28,7 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 | ⚙️ System | Language | buttongroup | 中文 / English — switches DSH global UI language | ✅ |
 | ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control | ✅ |
 | ⚙️ System | Test URL | select | Google 204 / GitHub / DeepSeek API / Custom — the address the connection test probes. The effective URL is shown in full on its own line directly above Test Connection | ✅ |
-| ⚙️ System | Diagnostics Log | log | Read-only multi-line log of recent connection tests — one fact per line, no 30s expiry, ✕ clears | ✅ |
+| ⚙️ System | Diagnostics Log | log | Read-only multi-line report of the **latest** connection test — one fact per line, hidden until the first test, ✕ clears (no 30s expiry) | ✅ |
 
 > **The Layout group only renders in standalone mode.** In workbench mode `close-on-blur` exists solely as the panel-header toggle, so no built-in switch carries `group: 'layout'` and the category is skipped entirely.
 
