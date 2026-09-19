@@ -94,10 +94,11 @@ const wb = ctx.get ? ctx.get('workbench') : undefined
 
 if (wb) {
   // Workbench mode: register panel, activity bar, editor view, command
-  // Register the dock-flash-owned switches (close-on-blur is NOT one of them —
-  // it lives in the panel header; see "Close-on-blur is a header toggle" below)
+  // Register the dock-flash-owned switches — but NOT close-on-blur, which in
+  // this mode exists only as the panel-header toggle
 } else {
-  // Standalone mode: inject the trigger button into the configured conversation slot
+  // Standalone mode: inject the trigger button into the configured slot, and
+  // register trigger-position + close-on-blur as Layout switches
 }
 ```
 
@@ -134,19 +135,29 @@ The `inject` array is empty (`inject: []`) — workbench is resolved lazily via 
 
 Client plugin is loaded via `window.__ModuleLoader__.load({ id, factory })`. The factory receives `require` and must use `require('react')` (not import). All React usage goes through `h = React.createElement`.
 
-### Close-on-blur is a header toggle, not a switch
+### Close-on-blur: one key, one writer, two controls
 
-`close-on-blur` deliberately has **no entry in the switch registry**. It is a small icon button rendered immediately left of the close (×) button, in two places:
+`close-on-blur` is exposed twice, and the two must never drift apart:
 
-- the workbench `headerComponent` of the sidebar panel (`wb.registerPanel({ headerComponent })`), and
-- the standalone floating panel's own title bar, built imperatively with `document.createElement`.
+| Control | Where |
+|---|---|
+| Panel-header toggle | immediately left of the close (×) button — in the workbench `headerComponent` **and** in the standalone floating title bar |
+| `buttongroup` switch | the **standalone** Layout subgroup, registered inside `mountStandaloneSlotTrigger` |
 
-All three readers — the panel component's outside-click `useEffect`, the workbench header button, and the standalone header button — share the single `localStorage` key `dock-flash:close-on-blur` (`'off'` | `'floating'`; anything that is not `'off'` counts as on).
+Workbench mode deliberately registers **no** such switch, which is why it renders no Layout category at all (see below).
+
+Linkage is not automatic — the header toggle is painted imperatively, so React never re-renders it when the switch changes. Everything goes through the module-level helpers declared next to `LIGHTNING_ICON`:
+
+- `readCloseOnBlur()` / `writeCloseOnBlur(on, registry)` — the **only** writer of `dock-flash:close-on-blur` (`'off'` | `'floating'`; anything that is not `'off'` counts as on).
+- `subscribeCloseOnBlur(fn)` — `writeCloseOnBlur` repaints every subscriber. That is how a switch change reaches the header toggles.
+- `writeCloseOnBlur` also calls `registry.notifyChange('dock-flash:close-on-blur')`. That is how a header toggle reaches the switch: `notifyChange` does `sw._v++; notify()`, `notify()` bumps the registry `version`, and the panel's `registry.subscribe` does `setRegVersion(registry.version)` — that **new** value is what re-renders the panel (an unchanged value would make React bail out). In workbench mode no switch with that id exists, so `notifyChange` no-ops via its `if (sw)` guard.
+
+Never write `localStorage` for this key directly, and never add a third control without routing it through `writeCloseOnBlur` — otherwise one of the others silently stops tracking.
 
 Two consequences worth knowing:
 
-- Because no built-in switch carries `group: 'layout'` in workbench mode, the **Layout subgroup is simply not rendered there** and needs no special-casing: `groupOrder.filter((g) => builtInGroups.has(g))` already skips groups that have no switches. `trigger-position` is the only remaining layout switch, and it is registered inside `mountStandaloneSlotTrigger`, i.e. standalone only.
-- The workbench header button paints its own active state imperatively instead of using `useState`, because dock-base may invoke `headerComponent` as a plain render function rather than mounting it as a component — hooks would then be illegal. Do not "tidy this up" into a hook.
+- Because no built-in switch carries `group: 'layout'` in **workbench** mode, the Layout subgroup is not rendered there and needs no special-casing: `groupOrder.filter((g) => builtInGroups.has(g))` already skips groups with no switches. In **standalone** mode the group exists and holds `trigger-position` plus `close-on-blur`.
+- The workbench header button paints its own active state imperatively instead of using `useState`, because dock-base may invoke `headerComponent` as a plain render function rather than mounting it as a component — hooks would then be illegal. Do not "tidy this up" into a hook. Its repaint subscription is disposed inside the `ref` callback, which React calls with `null` on unmount.
 
 ---
 
@@ -523,3 +534,4 @@ Since dock-flash has no automated test suite, verify manually after changes:
 | 1.0.2 | Removed the `dock-flash:dock-position` and `dock-flash:auto-hide` switches from workbench mode — both were pure duplicates of dock-base's own settings. dock-base already registers `DOCK_POSITION_SETTING` (a radiogroup over the same `left/right/top/bottom` values) and `DOCK_AUTO_HIDE_SETTING` (`off`/`edge`), and both wrote through the very same call dock-flash used, `wb.updateLayout({ dock })` / `{ autoHide }`, so one store had two entry points. There is nothing to replace them with: dock-base's layout store exposes only `dock` and `autoHide` to users, and its settings registry already covers `reserveSpace`, `hoverScale` and `nearScale`, so any new layout control would duplicate it too. Workbench layout group is now just `close-on-blur`, which dock-flash actually owns. Also dropped the 8 i18n keys the two switches used (`dockPosition`, `dockLeft/Right/Top/Bottom`, `autoHide`, `autoHideOff`, `autoHideEdge`; the latter two were already dead). Docs: removed the stale `Zoom` row (the feature was deleted in 0.15.2 but the READMEs still advertised it) and corrected `Close on Blur`'s Standalone column from ❌ to ✅ — it is registered in both modes and the standalone panel's `handleOutsideClick` reads the shared localStorage key. |
 | 1.0.3 | Moved `close-on-blur` out of the switch registry and into the panel header: it is now a small icon toggle immediately left of the close (×) button, in **both** the workbench `headerComponent` and the standalone floating title bar. The `off`/`on` buttongroup that used to live in the Layout subgroup is gone, so **workbench mode no longer renders a Layout category at all** — no built-in switch carries `group: 'layout'` there any more, and `groupOrder.filter((g) => builtInGroups.has(g))` drops the empty group with no extra code. `trigger-position` (standalone only) is the sole remaining layout switch. The workbench header button paints its own state imperatively rather than with `useState`, because dock-base may call `headerComponent` as a plain render function, which would make hooks illegal. i18n: `closeOnBlurFloating` renamed to `closeOnBlurOn`, and both state labels reworded (`关闭/开启` → `已关闭/已开启`) since they now read as a tooltip ("失焦关闭: 已开启") instead of as option labels. Docs: the READMEs' mode table, switch table, grouping rules and mode notes were corrected — they still claimed standalone had no Layout switches and workbench had all three groups. |
 | 1.0.4 | Dropped `sidebar.footer` from `TRIGGER_POSITIONS` — it injected the standalone trigger into `sidebar.footer.action`, a shared slot that CordisPanel and other plugins also occupy, so the badges visually collided. The default in `loadTriggerPosition()` moved from `'sidebar.footer'` to `'input.right'`; since that function validates the stored value against `TRIGGER_POSITIONS`, users who had `sidebar.footer` stored migrate to the new default automatically, with no explicit migration step. Dead code removed with it: the `badge` branch of the panel-positioning code (byte-identical to the `input` branch, so it had always been redundant), the `QuickTriggerBadge` component, the `style === 'badge'` ternary in `injectTrigger()`, and the `triggerSidebarFooter` i18n key. Trade-off accepted: every remaining position lives inside the conversation UI, so with no session open the standalone trigger is not rendered at all — `sidebar.footer.action` was the only always-present slot. |
+| 1.0.5 | Put the `close-on-blur` switch back into the **standalone** Layout subgroup while keeping the panel-header toggle, and made the two genuinely linked. All three readers/writers now go through one module-level channel next to `LIGHTNING_ICON`: `readCloseOnBlur()`, the single writer `writeCloseOnBlur(on, registry)`, and `subscribeCloseOnBlur(fn)`. `writeCloseOnBlur` repaints every subscriber (that is how the switch reaches the imperatively-painted header toggles) and calls `registry.notifyChange('dock-flash:close-on-blur')` (that is how a header toggle reaches the switch — the registry `version` bump is what re-renders the panel). This replaced four separate copies of the key/reader/writer that had accumulated across the panel component, the standalone title bar and `apply`, so drift between them is no longer possible. Workbench mode still registers no such switch and therefore still renders no Layout category. Docs: the README switch table regained the Close on Blur row (Standalone ✅), gained a missing Trigger Position row, and the mode/grouping notes were corrected. |
