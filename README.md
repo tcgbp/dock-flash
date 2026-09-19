@@ -27,6 +27,8 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 | 📐 Layout | Trigger Position | select | Input Left / Input Right / Session Header / Header Utils — where the standalone ⚡ trigger is injected | ✅ |
 | ⚙️ System | Language | buttongroup | 中文 / English — switches DSH global UI language | ✅ |
 | ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control | ✅ |
+| ⚙️ System | Test URL | select | Google 204 / GitHub / DeepSeek API / Custom — the address the connection test probes | ✅ |
+| ⚙️ System | Diagnostics Log | log | Read-only multi-line log of recent connection tests — one fact per line, no 30s expiry, ✕ clears | ✅ |
 
 > **The Layout group only renders in standalone mode.** In workbench mode `close-on-blur` exists solely as the panel-header toggle, so no built-in switch carries `group: 'layout'` and the category is skipped entirely.
 
@@ -38,18 +40,36 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 - 🌐 **Internationalization** — Full Chinese/English localization, auto-follows DSH language setting (via `<html lang>` MutationObserver)
 - 🎨 **Skin System** — Multi-layer discovery + categorized switching (CSS / Managed / Excluded)
 - 🛡️ **Error Boundaries** — All panel components are wrapped in `PanelErrorBoundary` to prevent render errors from crashing the entire dock-base WorkbenchRoot
-- 🔌 **Standalone Mode** — Works without dock-base: a floating ⚡ button in the bottom-right corner opens a popup panel with all non-layout switches
+- 🔌 **Standalone Mode** — Works without dock-base: a ⚡ trigger injected into the configured conversation slot opens a floating popup panel
 - 📝 **Recent Changes** — Auto-records switch operations (30s TTL), displayed in "old value → new value" format
+- 🩺 **Connection Diagnostics** — A read-only multi-line log of recent proxy tests (route taken, redirect chain, timings, body size, socket error code) that persists across runs
 
 ### Host-side Features
 
 `src/index.ts` (host half) provides:
 
-- Registers the `dock-flash` settings namespace (`proxyMode` string + `customNoProxy` string config)
+- Registers the `dock-flash` settings namespace (`proxyMode` string + `customNoProxy` string + `testUrl` string)
 - Listens for proxy mode changes and re-installs the undici global dispatcher via `@deepseek-ai/dsh-http-proxy`, so outbound `fetch()` requests respect the user's NO_PROXY choice
 - Exposes HTTP routes:
-  - `GET /plugins/dock-flash/proxy-status` — returns current `proxyMode`, `customNoProxy`, and actual `NO_PROXY` env value
-  - `POST /plugins/dock-flash/test-connection` — tests outbound connectivity (fetches `https://github.com`)
+  - `GET /plugins/dock-flash/proxy-status` — returns current `proxyMode`, `customNoProxy`, `testUrl`, and the actual `NO_PROXY` env value
+  - `POST /plugins/dock-flash/test-connection` — runs the diagnostic connectivity probe; an optional `{ "url": "..." }` body overrides the stored target
+
+#### Connection Diagnostics
+
+`POST /plugins/dock-flash/test-connection` returns a structured report, not a bare pass/fail:
+
+| Field | Meaning |
+| --- | --- |
+| `proxy` | `{ mode, noProxy, httpProxy, proxied, routeError }` — how `dsh-http-proxy` would route this exact URL |
+| `redirects` | the redirect chain, walked one hop at a time (`redirect: 'manual'`), plus `redirectLimitHit` when capped |
+| `status` / `statusText` | final response status — **any** HTTP response counts as `ok`, because it proves the network path works |
+| `headersMs` / `bodyMs` / `elapsedMs` | time to headers, time to body, and total |
+| `bodyBytes` / `bodySnippet` | body size, plus the first 200 bytes of a textual body — which is where a corporate proxy's own "blocked" page shows up |
+| `error` | `{ name, message, code, causeName, causeMessage, causeCode, causeErrno }` — the nested undici `cause` is what carries `ENOTFOUND`, `ECONNREFUSED`, `UND_ERR_CONNECT_TIMEOUT`, `DEPTH_ZERO_SELF_SIGNED_CERT`, … |
+
+The panel renders this into the **Diagnostics Log** block, one fact per line, and keeps it across runs so two tests can be compared.
+
+> **The test target is a setting, never a constant.** `testUrl` defaults to `https://www.google.com/generate_204` and is stored in the DSH profile on disk, so an internal endpoint can be configured without appearing in this repository.
 
 #### Proxy Mode Options
 

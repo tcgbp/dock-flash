@@ -25,6 +25,8 @@
 | 📐 布局 | 触发位置 | select | 输入框左 / 输入框右 / 会话标题栏操作区 / 会话标题栏工具区 —— 独立模式 ⚡ 触发按钮注入的位置 | ✅ |
 | ⚙️ 系统 | 语言 | buttongroup | 中文 / English，切换 DSH 全局 UI 语言 | ✅ |
 | ⚙️ 系统 | 系统代理 | select | 全部代理 / 仅 API 绕过 / 全部绕过 / 自定义 — 细粒度 NO_PROXY 控制 | ✅ |
+| ⚙️ 系统 | 测试 URL | select | Google 204 / GitHub / DeepSeek API / 自定义 —— 测试连接所探测的地址 | ✅ |
+| ⚙️ 系统 | 诊断日志 | log | 只读多行日志，记录最近几次测试结果 —— 一行一件事，不受 30 秒 TTL 限制，点 ✕ 清空 | ✅ |
 
 > **「布局」分组只在独立模式出现。** 集成模式下 `close-on-blur` 只以面板标题栏按钮的形式存在，因此没有任何内置开关带 `group: 'layout'`，该分类会被整体跳过。
 
@@ -36,18 +38,36 @@
 - 🌐 **国际化** — 完整的中英文本地化，自动跟随 DSH 语言设置（通过 `<html lang>` MutationObserver 实时同步）
 - 🎨 **皮肤系统** — 多层发现 + 分类切换（CSS / 托管 / 排除）
 - 🛡️ **错误边界** — 所有面板组件包裹在 `PanelErrorBoundary` 中，防止渲染错误崩溃整个 dock-base WorkbenchRoot
-- 🔌 **独立运行** — 无需 dock-base 即可运行：右下角悬浮⚡按钮，点击展开弹出面板
+- 🔌 **独立运行** — 无需 dock-base 即可运行：⚡ 触发按钮注入到所选会话槽位，点击展开悬浮面板
 - 📝 **最近修改** — 自动记录开关操作（30 秒 TTL），以 "旧值 → 新值" 格式展示
+- 🩺 **连接诊断** — 只读多行日志，记录最近几次代理测试（链路走向、重定向链、耗时、响应体大小、socket 错误码），跨多次测试保留
 
 ### Host 端功能
 
 `src/index.ts`（Host 半）提供：
 
-- 注册 `dock-flash` 设置命名空间（`proxyMode` 字符串 + `customNoProxy` 字符串配置）
+- 注册 `dock-flash` 设置命名空间（`proxyMode` 字符串 + `customNoProxy` 字符串 + `testUrl` 字符串）
 - 监听代理模式变更，通过 `@deepseek-ai/dsh-http-proxy` 重新安装 undici 全局 dispatcher，使出站 `fetch()` 请求遵循用户设定的 NO_PROXY 规则
 - 提供 HTTP 路由：
-  - `GET /plugins/dock-flash/proxy-status` — 返回当前 `proxyMode`、`customNoProxy` 及实际 `NO_PROXY` 环境变量值
-  - `POST /plugins/dock-flash/test-connection` — 测试出站连通性（访问 `https://github.com`）
+  - `GET /plugins/dock-flash/proxy-status` — 返回当前 `proxyMode`、`customNoProxy`、`testUrl` 及实际 `NO_PROXY` 环境变量值
+  - `POST /plugins/dock-flash/test-connection` — 执行诊断式连通性探测；可选用 `{ "url": "..." }` 请求体覆盖已存目标
+
+#### 连接诊断
+
+`POST /plugins/dock-flash/test-connection` 返回的是一份结构化诊断报告，而不是简单的成功/失败：
+
+| 字段 | 含义 |
+| --- | --- |
+| `proxy` | `{ mode, noProxy, httpProxy, proxied, routeError }` —— `dsh-http-proxy` 会如何路由这个具体 URL |
+| `redirects` | 重定向链，逐跳手动跟随（`redirect: 'manual'`）记录；超出上限时 `redirectLimitHit` 为真 |
+| `status` / `statusText` | 最终响应状态 —— **只要能拿到 HTTP 响应就算 `ok`**，因为它已经证明网络通路是通的 |
+| `headersMs` / `bodyMs` / `elapsedMs` | 响应头耗时、响应体耗时、总耗时 |
+| `bodyBytes` / `bodySnippet` | 响应体大小，以及文本型响应体前 200 字节 —— 企业代理自己的「已拦截」页面就出现在这里 |
+| `error` | `{ name, message, code, causeName, causeMessage, causeCode, causeErrno }` —— 内层 undici `cause` 才携带 `ENOTFOUND`、`ECONNREFUSED`、`UND_ERR_CONNECT_TIMEOUT`、`DEPTH_ZERO_SELF_SIGNED_CERT` 等真实原因 |
+
+面板把这份报告渲染成 **诊断日志** 区块，一行一件事，并且跨多次测试保留，便于前后对比。
+
+> **测试目标是一个设置项，绝不是一个常量。** `testUrl` 默认 `https://www.google.com/generate_204`，保存在磁盘上的 DSH 配置里，因此内网地址可以配置而不会出现在本仓库中。
 
 #### 代理模式选项
 

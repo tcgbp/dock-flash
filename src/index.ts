@@ -12,6 +12,9 @@
 //   respect the user's NO_PROXY choice.
 // - Exposes HTTP routes for the client to query proxy status and test
 //   the connection (improvements #4, #5, #6).
+// - Owns the *test target* (testUrl) and runs the diagnostic connectivity
+//   probe: redirect chain, response headers, body size/snippet, proxy route
+//   decision, and the underlying socket error code (cause.code).
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type {} from '@deepseek-ai/dsh-settings'
@@ -37,6 +40,15 @@ export interface ProxyConfig {
   proxyMode: string
   /** Custom NO_PROXY value, used only when proxyMode is 'custom'. */
   customNoProxy: string
+  /**
+   * URL the connection test fetches from the host side.
+   *
+   * Deliberately a setting and not a constant: the maintainer's real target is
+   * an internal host, and hardcoding it published internal infrastructure
+   * details in this public repository. Users point this at whatever address
+   * actually proves their proxy works.
+   */
+  testUrl: string
   /** @deprecated Legacy boolean — migrated to proxyMode on first load. */
   useProxy?: boolean
 }
@@ -44,7 +56,28 @@ export interface ProxyConfig {
 const DEFAULT_MODE = 'all-proxy'
 const DEFAULT_CUSTOM = ''
 
-const entry: ProxyConfig = { proxyMode: DEFAULT_MODE, customNoProxy: DEFAULT_CUSTOM }
+/**
+ * Default test target: the canonical "is there a working network path"
+ * endpoint. Returns an empty 204, so it measures the path and nothing else —
+ * and it is unreachable without a working proxy on networks that need one,
+ * which is exactly the signal the test is meant to produce.
+ */
+const DEFAULT_TEST_URL = 'https://www.google.com/generate_204'
+
+/** Hard ceiling on a single test; also reported in the diagnostics payload. */
+const TEST_TIMEOUT_MS = 10000
+
+/** Redirect hops followed before giving up (the chain is reported either way). */
+const MAX_REDIRECTS = 5
+
+/** Bytes of response body echoed back for inspection. */
+const BODY_SNIPPET_LIMIT = 200
+
+const entry: ProxyConfig = {
+  proxyMode: DEFAULT_MODE,
+  customNoProxy: DEFAULT_CUSTOM,
+  testUrl: DEFAULT_TEST_URL,
+}
 
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
 const API_BYPASS_DOMAINS = 'api.deepseek.com,chat.deepseek.com'
@@ -111,17 +144,34 @@ function sendJson(res: ServerResponse, status: number, payload: any) {
   res.end(JSON.stringify(payload))
 }
 
-/** URL used to test outbound connectivity. */
-const TEST_URL = 'https://www.google.com/generate_204'
+/**
+ * Read an optional JSON request body, bounded so a client cannot feed the
+ * host an unbounded buffer. Returns null for an empty, oversized, or
+ * unparseable body — callers treat that as "no override supplied".
+ */
+async function readJsonBody(req: IncomingMessage, limit = 4096): Promise<any> {
+  try {
+    const chunks: Buffer[] = []
+    let size = 0
+    for await (const chunk of req as any) {
+      size += (chunk as Buffer).length
+      if (size > limit) return null
+      chunks.push(chunk as Buffer)
+    }
+    if (chunks.length === 0) return null
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch (_) {
+    return null
+  }
+}
 
 export function apply(ctx: Context) {
 
-  /** Check whether a proxy is actively routing requests. */
-  function hasActiveProxy(): boolean {
+  /** Check whether a proxy is actively routing requests to `url`. */
+  function hasActiveProxy(url: string): boolean {
     try {
       const { proxyRouteFor } = require('@deepseek-ai/dsh-http-proxy') as any
-      const route = proxyRouteFor('https://github.com')
-      return route?.proxied === true
+      return proxyRouteFor(url)?.proxied === true
     } catch (_) {
       return false
     }
@@ -131,6 +181,156 @@ export function apply(ctx: Context) {
   // the composition entry otherwise.
   let source: () => ProxyConfig = () => entry
 
+  /**
+   * Resolve the test target.
+   *
+   * An explicit `override` (from the request body) wins over the stored
+   * setting, so the URL the client is displaying is exactly the URL probed —
+   * no dependency on the settings write having landed first.
+   */
+  function resolveTestUrl(override?: unknown): string {
+    const fromOverride = typeof override === 'string' ? override.trim() : ''
+    const raw = fromOverride || String(source().testUrl || '').trim()
+    return raw || DEFAULT_TEST_URL
+  }
+
+  /** How dsh-http-proxy would route `url`, plus the env it decides from. */
+  function describeProxyRoute(url: string) {
+    let proxied = false
+    let routeError: string | null = null
+    try {
+      const { proxyRouteFor } = require('@deepseek-ai/dsh-http-proxy') as any
+      proxied = proxyRouteFor(url)?.proxied === true
+    } catch (e: any) {
+      routeError = e?.message || String(e)
+    }
+    const cfg = source()
+    let mode = cfg.proxyMode || DEFAULT_MODE
+    if (!cfg.proxyMode && typeof cfg.useProxy === 'boolean') {
+      mode = cfg.useProxy ? 'all-proxy' : 'all-bypass'
+    }
+    return {
+      mode,
+      noProxy: process.env.NO_PROXY || process.env.no_proxy || null,
+      httpProxy:
+        process.env.HTTPS_PROXY || process.env.https_proxy ||
+        process.env.HTTP_PROXY || process.env.http_proxy || null,
+      proxied,
+      routeError,
+    }
+  }
+
+  /**
+   * Diagnose outbound connectivity to `url`.
+   *
+   * Two deliberate choices, both about *diagnosis* rather than connectivity:
+   *
+   * - `redirect: 'manual'` with a hand-rolled hop loop, so the redirect chain is
+   *   recorded instead of silently followed. "302 to somewhere unreachable" is
+   *   a different failure from "connection refused", and the old single-shot
+   *   `redirect: 'follow'` made them indistinguishable.
+   * - Never throws. Every failure is returned as data, because the caller has
+   *   to render it either way, and the interesting part (`cause.code` — e.g.
+   *   `ENOTFOUND`, `UND_ERR_CONNECT_TIMEOUT`, `DEPTH_ZERO_SELF_SIGNED_CERT`)
+   *   only exists on the nested cause of undici's `TypeError: fetch failed`.
+   */
+  async function runConnectionTest(url: string) {
+    const started = Date.now()
+    const proxy = describeProxyRoute(url)
+    const redirects: Array<{ hop: number; from: string; status: number; to: string }> = []
+
+    /** Assemble the payload so every exit path reports the same shape. */
+    const report = (extra: Record<string, unknown>) => ({
+      url,
+      proxy,
+      timeoutMs: TEST_TIMEOUT_MS,
+      redirects,
+      elapsedMs: Date.now() - started,
+      ...extra,
+    })
+
+    let current = url
+    let resp: any = null
+    let redirectLimitHit = false
+
+    try {
+      for (let hop = 0; ; hop++) {
+        resp = await fetch(current, {
+          method: 'GET',
+          redirect: 'manual',
+          signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+        })
+        const location = resp.headers.get('location')
+        if (!(resp.status >= 300 && resp.status < 400 && location)) break
+        let next = String(location)
+        try { next = new URL(next, current).href } catch (_) { /* keep raw value */ }
+        redirects.push({ hop: hop + 1, from: current, status: resp.status, to: next })
+        if (hop >= MAX_REDIRECTS) { redirectLimitHit = true; break }
+        current = next
+      }
+    } catch (e: any) {
+      const cause = e?.cause
+      return report({
+        ok: false,
+        finalUrl: current,
+        headersMs: Date.now() - started,
+        status: 0,
+        statusText: '',
+        contentType: '',
+        contentLength: null,
+        bodyMs: 0,
+        bodyBytes: 0,
+        bodySnippet: null,
+        redirectLimitHit,
+        error: {
+          name: e?.name || 'Error',
+          message: e?.message || String(e),
+          code: e?.code || null,
+          causeName: cause?.name || null,
+          causeMessage: cause?.message || null,
+          causeCode: cause?.code || null,
+          causeErrno: cause?.errno ?? null,
+        },
+      })
+    }
+
+    const headersMs = Date.now() - started
+    const contentType = resp.headers.get('content-type') || ''
+    const contentLength = resp.headers.get('content-length') || null
+
+    // Read the body too, so the timing covers the whole exchange and a proxy's
+    // own "blocked" page can be inspected rather than guessed at.
+    let bodyBytes = 0
+    let bodySnippet: string | null = null
+    const bodyStart = Date.now()
+    try {
+      const buf = Buffer.from(await resp.arrayBuffer())
+      bodyBytes = buf.byteLength
+      const textual = !contentType || /text|json|xml|javascript|html/i.test(contentType)
+      if (buf.byteLength > 0 && textual) {
+        bodySnippet = buf.toString('utf8', 0, Math.min(buf.byteLength, BODY_SNIPPET_LIMIT))
+      }
+    } catch (_) { /* body is optional — headers already prove the path */ }
+    const bodyMs = Date.now() - bodyStart
+
+    // Any HTTP response means the network path works — 401/404 included. The
+    // status is reported verbatim so the caller can judge it.
+    return report({
+      ok: true,
+      finalUrl: current,
+      headersMs,
+      status: resp.status,
+      statusText: resp.statusText || '',
+      contentType,
+      contentLength,
+      bodyMs,
+      bodyBytes,
+      bodySnippet,
+      redirectLimitHit,
+      error: null,
+    })
+  }
+
   // When the settings service is available, register the dock-flash
   // namespace and watch for proxy preference changes.
   ctx.inject(['settings'], (settingsCtx) => {
@@ -139,6 +339,7 @@ export function apply(ctx: Context) {
     const ProxySchema = Schema.object({
       proxyMode: Schema.string().default(DEFAULT_MODE),
       customNoProxy: Schema.string().default(DEFAULT_CUSTOM),
+      testUrl: Schema.string().default(DEFAULT_TEST_URL),
       // Keep the old field so legacy clients don't break; migrated on read.
       useProxy: Schema.boolean().default(true),
     })
@@ -180,7 +381,8 @@ export function apply(ctx: Context) {
   // which is not a direct dependency; cast through `any` for the register calls.
   ctx.inject(['webServer'], (wsCtx: any) => {
     // #4/#6: Proxy status — returns the current proxyMode, customNoProxy,
-    // and the actual NO_PROXY env var value so the client can show the real state.
+    // the test target, and the actual NO_PROXY env var value so the client
+    // can show the real state.
     wsCtx.effect(() => wsCtx.webServer.register({
       kind: 'exact',
       path: '/plugins/dock-flash/proxy-status',
@@ -197,17 +399,23 @@ export function apply(ctx: Context) {
           mode = cfg.useProxy ? 'all-proxy' : 'all-bypass'
         }
         const noProxy = process.env.NO_PROXY || process.env.no_proxy || null
+        const testUrl = resolveTestUrl()
         sendJson(res, 200, {
           proxyMode: mode,
           customNoProxy: cfg.customNoProxy || '',
+          testUrl,
           noProxy,
-          proxyAvailable: hasActiveProxy(),
+          testDefault: DEFAULT_TEST_URL,
+          // Probed against the configured test target, not a hardcoded host —
+          // "is a proxy active" and "did the test use one" must not disagree.
+          proxyAvailable: hasActiveProxy(testUrl),
         })
       },
     }), 'dock-flash: GET /plugins/dock-flash/proxy-status')
 
-    // #5: Connection test — fetches a well-known URL from the host side
-    // and reports success/failure + latency back to the client.
+    // #5 (v1.0.7): Connection test with diagnostics — walks the redirect chain
+    // manually, measures headers vs body separately, and reports the proxy
+    // route decision plus the underlying socket error code.
     wsCtx.effect(() => wsCtx.webServer.register({
       kind: 'exact',
       path: '/plugins/dock-flash/test-connection',
@@ -218,23 +426,58 @@ export function apply(ctx: Context) {
           res.end()
           return
         }
-        const t0 = Date.now()
+        // Optional `{ url }` override; falls back to the stored setting.
+        const body = await readJsonBody(req)
+        const testUrl = resolveTestUrl(body && body.url)
+        let target: URL
         try {
-          const resp = await fetch(TEST_URL, {
-            method: 'GET',
-            signal: AbortSignal.timeout(10000),
-            redirect: 'follow',
-          })
-          const latencyMs = Date.now() - t0
-          // Any HTTP response means the network path is working
-          sendJson(res, 200, { ok: true, latencyMs, url: TEST_URL, status: resp.status })
+          target = new URL(testUrl)
+          if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+            throw new Error('unsupported protocol: ' + target.protocol)
+          }
         } catch (e: any) {
-          const latencyMs = Date.now() - t0
           sendJson(res, 200, {
             ok: false,
-            latencyMs,
-            url: TEST_URL,
-            error: e.message || String(e),
+            url: testUrl,
+            finalUrl: testUrl,
+            elapsedMs: 0,
+            headersMs: 0,
+            bodyMs: 0,
+            bodyBytes: 0,
+            bodySnippet: null,
+            status: 0,
+            statusText: '',
+            contentType: '',
+            contentLength: null,
+            redirects: [],
+            redirectLimitHit: false,
+            timeoutMs: TEST_TIMEOUT_MS,
+            proxy: describeProxyRoute(testUrl),
+            error: {
+              name: 'InvalidTestUrl',
+              message: e?.message || String(e),
+              code: null,
+              causeName: null,
+              causeMessage: null,
+              causeCode: null,
+              causeErrno: null,
+            },
+          })
+          return
+        }
+        try {
+          sendJson(res, 200, await runConnectionTest(testUrl))
+        } catch (e: any) {
+          // runConnectionTest already reports failures as data; this is a
+          // belt-and-braces guard so the route can never 500.
+          sendJson(res, 200, {
+            ok: false,
+            url: testUrl,
+            finalUrl: testUrl,
+            elapsedMs: 0,
+            redirects: [],
+            proxy: describeProxyRoute(testUrl),
+            error: { name: 'InternalError', message: e?.message || String(e) },
           })
         }
       },

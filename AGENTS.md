@@ -10,7 +10,7 @@
 dock-flash/
 ├── src/index.ts          HOST half — settings namespace + proxy toggle (tsc → dist/)
 ├── dist/index.js         Compiled host half
-├── lib/client.js         BROWSER half — quickControl registry + panel + skin system + i18n (~3386 lines, single file, NO build step, organized by #region markers)
+├── lib/client.js         BROWSER half — quickControl registry + panel + skin system + i18n (~3841 lines, single file, NO build step, organized by #region markers)
 ├── cordis.patch.yml      Bundle layer — inserts host rows into profile
 ├── package.json          Plugin manifest + dsh.client.inject
 ├── README.md             English docs (canonical)
@@ -115,9 +115,10 @@ The `inject` array is empty (`inject: []`) — workbench is resolved lazily via 
 │  HOST (src/index.ts → dist/index.js)    │
 │  - Register 'dock-flash' settings       │
 │  - Fine-grained proxy mode + NO_PROXY   │
+│  - Owns testUrl (never hardcoded)       │
 │  - HTTP API routes (webServer):         │
 │    GET /proxy-status → proxy mode/state │
-│    POST /test-connection → fetch test   │
+│    POST /test-connection → diagnostics  │
 │  - Runs in Node.js via Cordis           │
 └──────────────────┬──────────────────────┘
                    │ cordis.patch.yml (bundle layer)
@@ -130,6 +131,26 @@ The `inject` array is empty (`inject: []`) — workbench is resolved lazily via 
 │  - Runs in browser via ModuleLoader     │
 └─────────────────────────────────────────┘
 ```
+
+### System proxy: the test target is a setting, and diagnostics are structured
+
+`testUrl` (default `https://www.google.com/generate_204`) is the address `POST /test-connection` probes. It lives in the settings namespace — **never** as a constant in `src/index.ts`.
+
+It started life as a constant pointing at an internal host, and that address — private IP plus path naming — got published in this public repository, in both `src/index.ts` and the tracked `dist/` build output. So: no environment-specific endpoint here, default or otherwise. The presets on the `dock-flash:test-url` switch are deliberately generic public endpoints; the user's own target is entered through the `custom` option and persisted to their DSH profile on disk.
+
+Three properties of the probe are deliberate and must survive refactoring:
+
+- **`redirect: 'manual'` with a hand-rolled hop loop** (bounded by `MAX_REDIRECTS`). Following redirects silently conflates "302 to somewhere unreachable" with "connection refused"; recording the chain keeps them distinguishable.
+- **Failures are returned as data, never thrown.** The route cannot 500, because the client has to render the outcome either way.
+- **The nested undici `cause` is unpacked** into `causeName` / `causeMessage` / `causeCode` / `causeErrno`. `fetch()` on its own only ever says `TypeError: fetch failed`; the actionable part (`ENOTFOUND`, `ECONNREFUSED`, `UND_ERR_CONNECT_TIMEOUT`, `DEPTH_ZERO_SELF_SIGNED_CERT`, `bad port`, …) lives on `error.cause`.
+
+`hasActiveProxy()` probes the **configured** test target, not a hardcoded host. It used to check `https://github.com` while the test used a different address, so "is a proxy active" and "what did the test actually do" could legitimately disagree — a confusing pair of answers with no way to tell which was lying.
+
+The client sends the URL it is displaying in the request body, so the probe targets exactly what the user sees. This also removes a race: without it, clicking Test immediately after changing Test URL could probe the previous address, because `settings.update` is asynchronous and the host may not have applied it yet.
+
+On the client the report is rendered by `_describeTest()` into the `dock-flash:proxy-log` switch. Every field must pass through `_oneLine()` first: error messages are not single-line in general — a module-resolution failure carries a whole "Require stack" — and one injected newline destroys the block's one-fact-per-line alignment.
+
+The `log` switch type exists because the registry changelog cannot serve this purpose: it stores one line per entry and expires after 30 seconds, which is useless for comparing one run against the next.
 
 ### Module Loading
 
@@ -369,6 +390,7 @@ dock-base's `WorkbenchRoot` has NO error boundary. An uncaught render error in a
 | `select` | `getValue()`, `setValue(any)`, `options` | Dropdown select |
 | `buttongroup` | `getValue()`, `setValue(any)`, `options` | Button group |
 | `action` | `run()` | Action button |
+| `log` | `getLines()` | Read-only multi-line output block. Optional `getMeta()` (right-aligned header status), `emptyText()`, `onClear()` + `clearTitle` (renders a ✕ button). See "System proxy: the test target is a setting" in Architecture |
 
 ### Registration Rules
 
@@ -477,6 +499,10 @@ Since dock-flash has no automated test suite, verify manually after changes:
 14. **Optional Integration (dock-flash absent)**: Uninstall dock-flash → `dock-flash-qc-demo` still loads without error (console shows "dock-flash not detected" message); no switches registered (graceful)
 15. **dock-flash:ready Event**: Install a test plugin that only uses `ctx.on('dock-flash:ready', ...)` (no `ctx.get`) → switches appear when dock-flash loads after the test plugin
 16. **Dual-Discovery No Duplicate**: Install `dock-flash-qc-demo` (Pattern B) → each demo switch appears exactly once in Extensions tab (not duplicated)
+17. **Test URL**: Switch Test URL between presets → the subtitle updates immediately and the choice survives a page refresh; pick `custom` → prompt appears, a value not starting with `http://`/`https://` is rejected with an alert and the select reverts; the host console logs `test-url sync` and `GET /proxy-status` reports the same `testUrl`
+18. **Diagnostics Log**: Run Test Connection → several lines appear under Diagnostics Log (route, response status, header/body timings, body size); run it again → lines are appended, not replaced; ✕ clears the block; the log is still there after 30 seconds, unlike Recent Changes
+19. **Diagnostics on Failure**: Point Test URL at a closed port → the log names `ECONNREFUSED` (not just "fetch failed"); point it at a redirecting URL → the chain is listed hop by hop with a final URL; enter garbage → `InvalidTestUrl`, and the route still answers 200 rather than 500
+20. **Probe Targets What Is Displayed**: Change Test URL and immediately click Test Connection → the logged `▶ <url>` is the new URL, not the previous one (the URL rides in the request body, so the probe cannot lag the UI)
 
 ### Key Observation Points
 
@@ -511,6 +537,9 @@ Since dock-flash has no automated test suite, verify manually after changes:
 | Only using `ctx.get('quickControl')` without `ctx.on('dock-flash:ready')` | Switches never appear when third-party plugin loads before dock-flash | Must use dual-discovery: passive (event listener) covers the "we load first" case, active (`ctx.get`) covers the "dock-flash already loaded" case. |
 | Using `"dock-flash/client"` in third-party `dsh.client.inject` | Load-order hint silently ignored; third-party plugin may load before dock-flash | Same `arriveGraphRow()` limitation as `"dock-base/client"`: use `"dock-flash"` (base package name), NOT `"dock-flash/client"`. |
 | Running the GraphFlow installer (`npx @roarpeng/graphflow install`) inside this repo | **`AGENTS.md` is overwritten** — the 500+ lines of dock-flash rules are replaced by GraphFlow's own "for Claude Code" setup notes, and `CLAUDE.md`, `GEMINI.md`, `.windsurfrules`, `.claude/`, `.graphflow-cache/`, `graphflow-out/` appear beside it | The installer writes `AGENTS.md` unconditionally. All six paths are `.gitignore`d, but the overwrite is the real damage — recover with `git checkout -- AGENTS.md` and keep GraphFlow's notes in `CLAUDE.md`. Verify with `grep -c dock-flash AGENTS.md` (a healthy file reports dozens, a clobbered one reports 0). |
+| Hardcoding an environment-specific endpoint as a default | An internal address (private IP + path naming) is published in a public repository — it was in both `src/index.ts` and the tracked `dist/` | Make it a setting (`testUrl`), keep any built-in presets generic, and let the user enter their own target. Recovery needs `git filter-branch` + force-push: editing the file only removes it from the tip, and the old commits stay readable by SHA |
+| Injecting raw error text into a single-line log block | One message spills across many lines and destroys the block's one-fact-per-line alignment (`TypeError: fetch failed` is fine, a module-resolution error is not) | Collapse with `_oneLine(v, max)` before pushing a log line — for `err.message`, `err.causeMessage`, `proxy.routeError`, redirect targets and body snippets |
+| A diagnostic readout that answers a different question than the test does | "Is a proxy active" and "what did the test do" disagree, with no way to tell which is wrong | Probe the *same* target everywhere: `hasActiveProxy()` takes the resolved `testUrl` rather than a second hardcoded host |
 
 ---
 
@@ -552,3 +581,4 @@ Since dock-flash has no automated test suite, verify manually after changes:
 | 1.0.4 | Dropped `sidebar.footer` from `TRIGGER_POSITIONS` — it injected the standalone trigger into `sidebar.footer.action`, a shared slot that CordisPanel and other plugins also occupy, so the badges visually collided. The default in `loadTriggerPosition()` moved from `'sidebar.footer'` to `'input.right'`; since that function validates the stored value against `TRIGGER_POSITIONS`, users who had `sidebar.footer` stored migrate to the new default automatically, with no explicit migration step. Dead code removed with it: the `badge` branch of the panel-positioning code (byte-identical to the `input` branch, so it had always been redundant), the `QuickTriggerBadge` component, the `style === 'badge'` ternary in `injectTrigger()`, and the `triggerSidebarFooter` i18n key. Trade-off accepted: every remaining position lives inside the conversation UI, so with no session open the standalone trigger is not rendered at all — `sidebar.footer.action` was the only always-present slot. |
 | 1.0.5 | Put the `close-on-blur` switch back into the **standalone** Layout subgroup while keeping the panel-header toggle, and made the two genuinely linked. All three readers/writers now go through one module-level channel next to `LIGHTNING_ICON`: `readCloseOnBlur()`, the single writer `writeCloseOnBlur(on, registry)`, and `subscribeCloseOnBlur(fn)`. `writeCloseOnBlur` repaints every subscriber (that is how the switch reaches the imperatively-painted header toggles) and calls `registry.notifyChange('dock-flash:close-on-blur')` (that is how a header toggle reaches the switch — the registry `version` bump is what re-renders the panel). This replaced four separate copies of the key/reader/writer that had accumulated across the panel component, the standalone title bar and `apply`, so drift between them is no longer possible. Workbench mode still registers no such switch and therefore still renders no Layout category. Docs: the README switch table regained the Close on Blur row (Standalone ✅), gained a missing Trigger Position row, and the mode/grouping notes were corrected. |
 | 1.0.6 | Fixed the workbench panel being painted over by dock-git. `S.root` had neither `position` nor `z-index`, so the panel was a plain static block and **any** positioned sibling in dock-base's `.dsh-wb-root` won over it — dock-git's `.dg-graph` is only `position: absolute; z-index: 2` and still covered the whole panel. `S.root` now sets `position: relative; z-index: 10`: above in-content escapees like `.dg-graph` (2), below `.dsh-wb-floating` (70) so dock-base's own floating-above-docked precedence is preserved. The value is bounded on purpose — see the "Stacking: why this panel needs its own context" section for why raising it further cannot help against elements that live outside `.dsh-wb-root` and would invert dock-base's precedence above 70. |
+| 1.0.7 | System-proxy refactor — **the test target became a setting, and the probe became diagnostic**. `TEST_URL` was a hardcoded internal host, which had published a private IP and its path naming in this public repository, in both `src/index.ts` and the tracked `dist/`; it is now `testUrl` in the settings namespace (default `https://www.google.com/generate_204`) and exposed as the `dock-flash:test-url` select (Google 204 / GitHub / DeepSeek API / a `custom` prompt, written through to the host and mirrored in localStorage like `proxyMode`). That address was also purged from history. `POST /test-connection` returns a structured report instead of `{ ok, latencyMs }`: the proxy route decision (`proxied`, `noProxy`, `httpProxy`, `mode`, `routeError`), the redirect chain walked hop-by-hop via `redirect: 'manual'` and bounded by `MAX_REDIRECTS` (following it silently conflated "302 to somewhere unreachable" with "connection refused"), split header/body timings, body size plus a 200-byte snippet of textual bodies (where a proxy's own block page shows up), and the unpacked undici `cause` as `causeCode`/`causeErrno`/`causeMessage` — `fetch()` alone only ever says `TypeError: fetch failed`. The probe accepts an optional `{ url }` body override, so it always targets what the UI is displaying and cannot lag an async `settings.update`. `hasActiveProxy()` now probes the configured target instead of a second hardcoded `https://github.com`, which had let "is a proxy active" and "what did the test do" disagree. New `log` switch type (`getLines` / `getMeta` / `emptyText` / `onClear` + `clearTitle`) renders a read-only multi-line block — the changelog could not serve this, being single-line with a 30s TTL — used by the new `dock-flash:proxy-log` switch, where every field passes through `_oneLine()` so a multi-line error cannot break the one-fact-per-line layout. |

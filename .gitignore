@@ -13,4 +13,5 @@ Thumbs.db
 GEMINI.md
 CLAUDE.md
 .graphflow-cache/
+.graphflow/
 graphflow-out/
