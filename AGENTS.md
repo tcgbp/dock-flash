@@ -76,13 +76,13 @@ dock-flash can run in two modes:
 | Registration | API | Purpose |
 |---|---|---|
 | Sidebar Panel | `ctx.workbench.registerPanel()` | Quick control panel (sideBar area) |
-| Plugin Entry | `ctx.workbench.registerPlugin()` | Settings panel card — title "Quick" (visibility toggle + Open button) |
+| Plugin Entry | `ctx.workbench.registerPlugin()` | Settings panel card — title "Flash" (visibility toggle + Open button) |
 | Activity Bar Item | `ctx.workbench.registerActivityBarItem()` | ⚡ icon |
 | Editor View | `ctx.workbench.registerEditorView()` | Quick control panel (draggable to floating) |
 | Command | `ctx.workbench.registerCommand()` | `dock-flash:openQuickControl` |
 | Service | `ctx.provide('quickControl', registry)` | Pub/sub switch registry for other plugins |
 
-**Standalone mode** (no dock-base) — injects a ⚡ badge into the sidebar footer via `ctx.slots.inject('sidebar.footer.action', ...)` (same slot used by CordisPanel). The badge shows ⚡ icon + "Quick Control" label when sidebar is wide, icon-only when collapsed to rail. Clicking the badge toggles a floating QuickControlPanel positioned above the badge. The floating panel has a drag-to-move title bar (⠿ grip + ⚡ + "Quick" + × close) and uses `react-dom/client`'s `createRoot`. Layout switches like dock-position and auto-hide are not available in standalone mode. The old floating `position:fixed` trigger button with four-corner presets and drag-to-reposition was removed — the sidebar footer badge is always anchored to existing UI and never overlaps or floats in empty space.
+**Standalone mode** (no dock-base) — injects a ⚡ badge into the sidebar footer via `ctx.slots.inject('sidebar.footer.action', ...)` (same slot used by CordisPanel). The badge shows ⚡ icon + "Quick Control" label when sidebar is wide, icon-only when collapsed to rail. Clicking the badge toggles a floating QuickControlPanel positioned above the badge. The floating panel has a drag-to-move title bar (⠿ grip + ⚡ + the localized `title` string + × close) and uses `react-dom/client`'s `createRoot`. Layout switches like dock-position and auto-hide are not available in standalone mode. The old floating `position:fixed` trigger button with four-corner presets and drag-to-reposition was removed — the sidebar footer badge is always anchored to existing UI and never overlaps or floats in empty space.
 
 ### Mode Detection
 
