@@ -338,7 +338,7 @@ pnpm run build      # tsc → dist/index.js
 pnpm run typecheck  # 仅类型检查
 ```
 
-开发规则、关键约束与测试规范见 [AGENTS.md](./AGENTS.md)。
+开发规则、关键约束与测试规范见 [AGENTS.md](./AGENTS.md)；各版本的改动内容与原因见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 样式契约
 

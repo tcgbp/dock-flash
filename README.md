@@ -340,7 +340,7 @@ pnpm run build      # tsc → dist/index.js
 pnpm run typecheck  # type check only
 ```
 
-For development rules, critical constraints, and testing conventions, see [AGENTS.md](./AGENTS.md).
+For development rules, critical constraints, and testing conventions, see [AGENTS.md](./AGENTS.md). For what changed in each release and why, see [CHANGELOG.md](./CHANGELOG.md).
 
 ## Style Contract
 
