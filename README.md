@@ -9,7 +9,7 @@
 | Mode | Condition | UI | Available Switches |
 | --- | --- | --- | --- |
 | **Workbench** | dock-base installed | ⚡ icon in activity bar → sidebar/floating panel | Appearance + System switches |
-| **Standalone** | no dock-base | ⚡ badge in the sidebar footer → floating panel | Appearance + Layout (trigger position) + System |
+| **Standalone** | no dock-base | ⚡ trigger button in the configured conversation slot (default: input right) → floating panel | Appearance + Layout (trigger position) + System |
 
 ## Features
 
@@ -306,7 +306,7 @@ dsh plugin --profile my-profile add dock-base
 dsh --profile my-profile
 ```
 
-**Without dock-base**: dock-flash runs in standalone mode — a ⚡ badge is injected into the sidebar footer. Click it to open the quick control popup panel (Appearance, Layout — trigger position — and System switches).
+**Without dock-base**: dock-flash runs in standalone mode — a ⚡ trigger button is injected into the conversation slot picked by the `trigger-position` switch (default: input right). Click it to open the quick control popup panel (Appearance, Layout — trigger position — and System switches). The shared `sidebar.footer.action` slot is deliberately not offered, because other plugins occupy it too.
 
 **With dock-base**: dock-flash integrates into the workbench — the ⚡ icon appears in the activity bar, and the panel can be opened as a sidebar or floating window with the Appearance and System switches. Dock layout properties (dock edge, auto-hide, reserve space, icon scaling) are configured in dock-base's own settings, not here.
 
