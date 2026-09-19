@@ -144,13 +144,28 @@ Three properties of the probe are deliberate and must survive refactoring:
 - **Failures are returned as data, never thrown.** The route cannot 500, because the client has to render the outcome either way.
 - **The nested undici `cause` is unpacked** into `causeName` / `causeMessage` / `causeCode` / `causeErrno`. `fetch()` on its own only ever says `TypeError: fetch failed`; the actionable part (`ENOTFOUND`, `ECONNREFUSED`, `UND_ERR_CONNECT_TIMEOUT`, `DEPTH_ZERO_SELF_SIGNED_CERT`, `bad port`, …) lives on `error.cause`.
 
-`hasActiveProxy()` probes the **configured** test target, not a hardcoded host. It used to check `https://github.com` while the test used a different address, so "is a proxy active" and "what did the test actually do" could legitimately disagree — a confusing pair of answers with no way to tell which was lying.
+`proxyRouteForUrl()` probes the **configured** test target, not a hardcoded host. It used to check `https://github.com` while the test used a different address, so "is a proxy active" and "what did the test actually do" could legitimately disagree — a confusing pair of answers with no way to tell which was lying.
 
 The client sends the URL it is displaying in the request body, so the probe targets exactly what the user sees. This also removes a race: without it, clicking Test immediately after changing Test URL could probe the previous address, because `settings.update` is asynchronous and the host may not have applied it yet.
 
 On the client the report is rendered by `_describeTest()` into the `dock-flash:proxy-log` switch. Every field must pass through `_oneLine()` first: error messages are not single-line in general — a module-resolution failure carries a whole "Require stack" — and one injected newline destroys the block's one-fact-per-line alignment.
 
 The `log` switch type exists because the registry changelog cannot serve this purpose: it stores one line per entry and expires after 30 seconds, which is useless for comparing one run against the next.
+
+#### Talking to `@deepseek-ai/dsh-http-proxy` (read this before touching proxy code)
+
+The package is **not a dependency of this plugin** and **`require` does not exist in this half**. Both of those were true for the whole life of the feature and combined into a silent total failure — see Critical Rule 11.
+
+Four things must hold together, or the proxy mode switch changes nothing:
+
+1. **Load it through one cached handle.** `loadProxyModule()` tries a bare `await import('@deepseek-ai/dsh-http-proxy')` first (for a setup that installs it for us) and otherwise resolves it with `createRequire(process.argv[1]).resolve(...)` and imports that path. `process.argv[1]` is the running DSH entry, so this lands on `<dsh>/node_modules/@deepseek-ai/dsh-http-proxy/lib/index.js`.
+2. **That handle must be the *same module instance* DSH booted with.** The module keeps the resolved policy in module-level `active`/`installed` state, written only by `installProxyFromEnvironment` and read by `proxyRouteFor`. A second copy answers `DIRECT_ROUTE` forever, and installs a dispatcher DSH's own `proxyRouteFor` cannot see. Verified: resolving through `createRequire` from the same tree yields the identical instance, so the state is genuinely shared.
+3. **Pass a `URL`, not a string.** `proxyRouteFor(new URL(u))` — the signature is `(url: URL)`. Handed a string it does not throw, it silently reports "direct", which is how this plugin spent its life printing 直连 for everything.
+4. **Keep the returned disposer.** `installProxyFromEnvironment` returns `() => Promise<void>` that restores both the dispatcher and the module state. Ignoring it leaks one `ProxyAgent` and its socket pool per mode change. Release the previous install before taking a new one.
+
+And resolve the policy from DSH's own environment: the ctx service **`launchEnvironment`** (`DSH_LAUNCH_ENVIRONMENT_KEY`) is the snapshot DSH resolved the boot-time policy from — it merges `process` | `project-env` | `user-env`, so reading `process.env` instead can disagree with the policy actually in force. `applyProxyEnv()` uses it as the base and overrides only `NO_PROXY`/`no_proxy`, which is the single field this plugin owns.
+
+The narrow claim to keep honest: this plugin owns the **bypass list**, not the proxy address, and installing replaces the process-global dispatcher for everything in the DSH process.
 
 ### Module Loading
 
@@ -340,6 +355,26 @@ localStorage.removeItem('dock-flash:zoom')
 
 dock-base's `WorkbenchRoot` has NO error boundary. An uncaught render error in any panel component crashes the entire dock (activity bar + all panels disappear). Wrap every dock-flash panel component in `PanelErrorBoundary`.
 
+### 11. `require` Does Not Exist in the Host Half — It Is ESM
+
+`src/index.ts` compiles to ESM (`"type": "module"`, tsc `module: "esnext"`), and DSH's own entry is ESM too (`dsh` is `type: module`, `lib/bin.js` uses `import`). So inside the host half:
+
+```ts
+// ❌ ReferenceError: require is not defined
+const { Schema } = require('@deepseek-ai/schemastery')
+const { proxyRouteFor } = require('@deepseek-ai/dsh-http-proxy')
+
+// ✅ a declared dependency: import it
+import Schema from '@deepseek-ai/schemastery'   // default export only
+
+// ✅ not a dependency, must resolve DSH's own copy: dynamic import
+const mod = await loadProxyModule()
+```
+
+**The trap is that a `require` inside `try/catch` fails silently.** That is not hypothetical: it disabled the entire proxy feature for the whole life of the feature, because `installProxyFromEnvironment` was never reached and the failure only ever surfaced as a stray `routeError` string in the client's diagnostics log. Worse, `require('@deepseek-ai/schemastery')` sat in the `ctx.inject(['settings'], …)` callback, so the throw meant **`installSection` never ran and the `dock-flash` settings namespace was never registered at all** — every proxy setting silently reverted to its composition default.
+
+When adding a host-side dependency, import it statically and declare it in `package.json`. When the module is DSH's rather than yours, see the dsh-http-proxy notes in the System proxy section — resolution alone is not enough there.
+
 ---
 
 ## Skin System Architecture
@@ -507,7 +542,7 @@ Since dock-flash has no automated test suite, verify manually after changes:
 6. **Theme Retry**: With wxj-black-hole installed, switch theme → change persists after retry
 7. **Language Switch**: Toggle language → all labels update immediately
 8. **Third-Party Switch**: Register a test switch via `quickControl` service → appears in Extensions tab
-9. **Proxy Select**: Switch proxy mode (all-proxy / api-bypass / all-bypass / custom) → check `process.env.NO_PROXY` in host console matches the selected mode; custom mode prompts for NO_PROXY value, cancel reverts
+9. **Proxy Select**: Switch proxy mode (all-proxy / api-bypass / all-bypass / custom) → the **host console** logs `proxy mode=…` followed by `undici global dispatcher re-installed (env source=launchEnvironment)` and `dsh-http-proxy resolved to …`; `GET /plugins/dock-flash/proxy-status` then reports the matching `noProxy`, and its `proxyAvailable` **changes** between `all-proxy` (true) and `all-bypass` (false). If `proxyAvailable` never changes, the install is not reaching the dispatcher — see Critical Rule 11. Custom mode prompts for NO_PROXY value, cancel reverts
 10. **Preference Restore**: Set skin, refresh page → saved skin auto-restores after 300ms
 11. **Sidebar Sash Drag**: With dock-flash enabled, drag sidebar sash → width resizes correctly (no residual `style.zoom` on `<html>` interfering with coordinate system)
 12. **No Duplicate Skin Entries**: Switch to Claude Style skin → dropdown shows exactly one entry; switch away → still exactly one entry for Claude Style (no phantom duplicate from `data-skin-chrome` vs boot manifest ID mismatch)
@@ -556,6 +591,11 @@ Since dock-flash has no automated test suite, verify manually after changes:
 | Hardcoding an environment-specific endpoint as a default | An internal address (private IP + path naming) is published in a public repository — it was in both `src/index.ts` and the tracked `dist/` | Make it a setting (`testUrl`), keep any built-in presets generic, and let the user enter their own target. Recovery needs `git filter-branch` + force-push: editing the file only removes it from the tip, and the old commits stay readable by SHA |
 | Injecting raw error text into a single-line log block | One message spills across many lines and destroys the block's one-fact-per-line alignment (`TypeError: fetch failed` is fine, a module-resolution error is not) | Collapse with `_oneLine(v, max)` before pushing a log line — for `err.message`, `err.causeMessage`, `proxy.routeError`, redirect targets and body snippets |
 | A diagnostic readout that answers a different question than the test does | "Is a proxy active" and "what did the test do" disagree, with no way to tell which is wrong | Probe the *same* target everywhere: `hasActiveProxy()` takes the resolved `testUrl` rather than a second hardcoded host |
+| `require(...)` inside `try/catch` in the ESM host half | `ReferenceError: require is not defined`, swallowed — the feature silently does nothing while looking implemented | Import statically (declared deps) or go through `loadProxyModule()` (DSH's deps). See Critical Rule 11 |
+| `require('@deepseek-ai/schemastery')` in the `ctx.inject(['settings'], …)` callback | The throw happens **before** `installSection`, so the settings namespace is never registered and every setting silently reverts to its composition default | The import is the one-liner: `import Schema from '@deepseek-ai/schemastery'` |
+| Loading DSH's own package through a *second* module copy | `proxyRouteFor` answers "direct" forever, because the resolved policy lives in that package's module-level state | Resolve and import the exact instance DSH has: `createRequire(process.argv[1]).resolve(...)` + `import(pathToFileURL(...))` |
+| Passing a string where `proxyRouteFor` wants a `URL` | Silently reports "direct" instead of throwing, so every test prints 直连 | `proxyRouteFor(new URL(u))` |
+| Dropping the disposer returned by `installProxyFromEnvironment` | One `ProxyAgent` and its socket pool leak per proxy-mode change | Keep it and release the previous install before taking a new one |
 
 ---
 
@@ -566,7 +606,8 @@ Since dock-flash has no automated test suite, verify manually after changes:
 | `dock-base` ^0.1.2 | peer (optional) | `ctx.workbench` registry services | Optional — plugin runs in standalone mode without it |
 | `@deepseek-ai/cordis` ^4.0.1 | peer | Plugin framework | Required |
 | `@deepseek-ai/dsh-settings` | devDep | Settings service types (host half) | |
-| `@deepseek-ai/schemastery` | dep | Schema definition for settings | Required at runtime — host half `require()`s it inside `ctx.inject(['settings'], …)` |
+| `@deepseek-ai/schemastery` | dep | Schema definition for settings | Required at runtime — the host half **statically imports** it (default export; there is no named `Schema`). It must stay a real dependency: an ESM import of a missing package fails at load, unlike the old silent `require` in a try/catch |
+| `@deepseek-ai/dsh-http-proxy` | **not declared** | Re-installs the undici global dispatcher; answers `proxyRouteFor` | Ships nested inside the DSH install and is deliberately *not* a dependency of this plugin. Loaded through `loadProxyModule()`, which resolves DSH's own copy — see the System proxy section |
 
 ---
 
@@ -599,3 +640,4 @@ Since dock-flash has no automated test suite, verify manually after changes:
 | 1.0.6 | Fixed the workbench panel being painted over by dock-git. `S.root` had neither `position` nor `z-index`, so the panel was a plain static block and **any** positioned sibling in dock-base's `.dsh-wb-root` won over it — dock-git's `.dg-graph` is only `position: absolute; z-index: 2` and still covered the whole panel. `S.root` now sets `position: relative; z-index: 10`: above in-content escapees like `.dg-graph` (2), below `.dsh-wb-floating` (70) so dock-base's own floating-above-docked precedence is preserved. The value is bounded on purpose — see the "Stacking: why this panel needs its own context" section for why raising it further cannot help against elements that live outside `.dsh-wb-root` and would invert dock-base's precedence above 70. |
 | 1.0.7 | System-proxy refactor — **the test target became a setting, and the probe became diagnostic**. `TEST_URL` was a hardcoded internal host, which had published a private IP and its path naming in this public repository, in both `src/index.ts` and the tracked `dist/`; it is now `testUrl` in the settings namespace (default `https://www.google.com/generate_204`) and exposed as the `dock-flash:test-url` select (Google 204 / GitHub / DeepSeek API / a `custom` prompt, written through to the host and mirrored in localStorage like `proxyMode`). That address was also purged from history. `POST /test-connection` returns a structured report instead of `{ ok, latencyMs }`: the proxy route decision (`proxied`, `noProxy`, `httpProxy`, `mode`, `routeError`), the redirect chain walked hop-by-hop via `redirect: 'manual'` and bounded by `MAX_REDIRECTS` (following it silently conflated "302 to somewhere unreachable" with "connection refused"), split header/body timings, body size plus a 200-byte snippet of textual bodies (where a proxy's own block page shows up), and the unpacked undici `cause` as `causeCode`/`causeErrno`/`causeMessage` — `fetch()` alone only ever says `TypeError: fetch failed`. The probe accepts an optional `{ url }` body override, so it always targets what the UI is displaying and cannot lag an async `settings.update`. `hasActiveProxy()` now probes the configured target instead of a second hardcoded `https://github.com`, which had let "is a proxy active" and "what did the test do" disagree. New `log` switch type (`getLines` / `getMeta` / `emptyText` / `onClear` + `clearTitle`) renders a read-only multi-line block — the changelog could not serve this, being single-line with a 30s TTL — used by the new `dock-flash:proxy-log` switch, where every field passes through `_oneLine()` so a multi-line error cannot break the one-fact-per-line layout. |
 | 1.0.8 | System-proxy UI cleanup. The `dock-flash:test-url` switch lost its `tooltip`: it was an `ⓘ` hover carrying the exact same string as its subtitle, so it added a hover target and no information. The subtitle moved out of the label column onto its own full-width line via the new `subtitleBlock` option on `select` switches — the inline variant sets `nowrap` + `text-overflow: ellipsis` because it shares the row with the control, which truncated the URL at precisely the part worth reading (host and path). The effective URL now occupies a whole line directly above the **Test Connection** button, and the row above it is a bare label + select with nothing explanatory in between. Because the URL line is the `test-url` switch's own subtitle rather than a separate element, no new switch type was needed and the value stays next to the control that changes it. `renderSelectSwitch` was restructured around that (also dropping a dead `currentOpt`/`currentLabel` pair that was computed and never read). Client-half only — takes effect on page refresh, no DSH restart. |
+| 1.0.9 | **The proxy feature never worked, and now it does.** Four independent defects had combined into a silent total failure, all of them invisible because each was swallowed by a `try/catch` or by a "returns direct" code path: (1) `require` does not exist in the ESM host half, so every `require('@deepseek-ai/dsh-http-proxy')` threw `ReferenceError` — `installProxyFromEnvironment` was therefore **never called**, meaning changing the proxy mode never affected actual traffic, only the `NO_PROXY` string; (2) the same throw in `require('@deepseek-ai/schemastery')` happened *inside* the `ctx.inject(['settings'], …)` callback, so `installSection` was never reached and **the `dock-flash` settings namespace was never registered at all** — `proxyMode`, `customNoProxy` and `testUrl` all silently reverted to their composition defaults; (3) `proxyRouteFor(url)` was passed a **string** where it wants a `URL`, and it does not throw on a string, it just answers "direct" — which is why every diagnostics run printed 直连; (4) `installProxyFromEnvironment`'s disposer was dropped, leaking one `ProxyAgent` per mode change. Fixes: `Schema` is now a static default import (schemastery has no named export); the proxy package is loaded once through `loadProxyModule()`, which resolves **DSH's own copy** via `createRequire(process.argv[1]).resolve(...)` so the module-level policy state is shared with the install DSH performed at boot (a second copy would answer "direct" forever — verified that `createRequire` + `pathToFileURL` yields the identical instance); the policy is now based on the `launchEnvironment` ctx service rather than `process.env`, since that snapshot merges the `process`/`project-env`/`user-env` layers DSH actually resolved from; only `NO_PROXY`/`no_proxy` are overridden; `proxyRouteFor(new URL(u))`; and the previous install is released before a new one. `/proxy-status` gained `httpProxy` because `proxyAvailable` alone cannot distinguish "no proxy configured" from "configured, and this URL is deliberately bypassed" — the client's ⓘ tooltip was keyed off the wrong one and called a deliberate bypass a misconfiguration. The invalid-URL branch no longer probes the route, so the log stops printing "Invalid URL" twice. Verified with a host-harness run (17/17) that drives the real routes with `process.argv[1]` pointed at the DSH entry. |

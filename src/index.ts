@@ -6,15 +6,20 @@
 //
 // Host-side responsibilities:
 // - Registers the 'dock-flash' settings namespace so the client can
-//   persist the proxy-mode selection via ctx.remote.settings.
+//   persist the proxy-mode and test-URL selections via ctx.remote.settings.
 // - Watches the 'proxyMode' setting and re-installs the undici global
-//   dispatcher via @deepseek-ai/dsh-http-proxy so outbound requests
-//   respect the user's NO_PROXY choice.
+//   dispatcher via @deepseek-ai/dsh-http-proxy so outbound requests respect
+//   the user's NO_PROXY choice.
 // - Exposes HTTP routes for the client to query proxy status and test
 //   the connection (improvements #4, #5, #6).
 // - Owns the *test target* (testUrl) and runs the diagnostic connectivity
 //   probe: redirect chain, response headers, body size/snippet, proxy route
 //   decision, and the underlying socket error code (cause.code).
+//
+// This half is ESM (`"type": "module"`, and DSH's own entry is ESM too), so
+// `require` does not exist here. Everything that used to be a lazy `require()`
+// in a try/catch now either imports statically or goes through
+// `loadProxyModule()` — see that function for why the second case is subtle.
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type {} from '@deepseek-ai/dsh-settings'
@@ -22,6 +27,10 @@ import type {} from '@deepseek-ai/dsh-settings'
 import { execFileSync } from 'node:child_process'
 import { platform } from 'node:os'
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+// Default export only (`export default Schema`); there is no named `Schema`.
+import Schema from '@deepseek-ai/schemastery'
 
 export const name = 'dock-flash'
 
@@ -94,45 +103,96 @@ function resolveNoProxy(mode: string, custom: string): string | undefined {
 }
 
 /**
- * Re-install the process-wide proxy policy via @deepseek-ai/dsh-http-proxy.
- *
- * Simply writing `process.env.NO_PROXY` does NOT affect outbound requests,
- * because undici's global dispatcher was installed at startup with a frozen
- * policy object.  The dispatcher re-reads neither the environment nor
- * `process.env` — it routes by the `ProxyPolicy` it was given.
- *
- * The fix is to call `installProxyFromEnvironment()` again after mutating
- * `process.env`, which creates a fresh dispatcher with the updated noProxy
- * and installs it as the global one.
+ * The ctx service DSH publishes with the launch-environment snapshot it
+ * resolved the boot-time proxy policy from. That snapshot merges three layers
+ * (`process` | `project-env` | `user-env`) and structurally satisfies the
+ * `EnvLookup` this plugin hands back to dsh-http-proxy.
  */
-async function applyProxyEnv(mode: string, custom: string) {
-  const noProxy = resolveNoProxy(mode, custom)
-  if (noProxy === undefined) {
-    delete process.env.NO_PROXY
-    delete process.env.no_proxy
-  } else {
-    process.env.NO_PROXY = noProxy
-    process.env.no_proxy = noProxy
-  }
-  console.log('[dock-flash] proxy mode=' + mode + ' (NO_PROXY=' + (noProxy ?? '<removed>') + ')')
+const LAUNCH_ENVIRONMENT_SERVICE = 'launchEnvironment'
 
-  // Re-install the undici global dispatcher so it picks up the new NO_PROXY.
-  try {
-    const { installProxyFromEnvironment } = require('@deepseek-ai/dsh-http-proxy') as any
-    // Build a simple EnvLookup from process.env
-    const envLookup = {
-      get(name: string) {
-        const value = process.env[name]
-        return value !== undefined && value !== '' ? { value } : undefined
-      },
+/** The slice of @deepseek-ai/dsh-http-proxy this plugin uses. */
+interface ProxyModule {
+  installProxyFromEnvironment(
+    env: EnvLookup,
+    report: (message: string) => void,
+  ): Promise<() => Promise<void>>
+  proxyRouteFor(url: URL): { proxied?: boolean; proxy?: string } | undefined
+}
+
+/** The one thing policy resolution needs from an environment. */
+interface EnvLookup {
+  get(name: string): { readonly value: string } | undefined
+}
+
+/**
+ * Disposer for the dispatcher this plugin installed.
+ *
+ * `installProxyFromEnvironment` returns one and restores both the global
+ * dispatcher and the module's policy state. Dropping it — as this code used to
+ * — leaks one ProxyAgent and its whole socket pool per mode change.
+ */
+let _disposeProxyPolicy: (() => Promise<void>) | null = null
+
+let _proxyModulePromise: Promise<ProxyModule | null> | null = null
+
+/**
+ * Load @deepseek-ai/dsh-http-proxy, once, from the instance DSH itself uses.
+ *
+ * Two traps live here, and both previously made the entire proxy feature a
+ * silent no-op:
+ *
+ * 1. `require` does not exist. This half is ESM, so every `require(...)` threw
+ *    `ReferenceError: require is not defined` into a surrounding try/catch —
+ *    which is why the failure only ever surfaced as a stray string in the
+ *    client's diagnostics.
+ * 2. The package is not resolvable from here at all. It ships nested inside the
+ *    DSH installation (`<dsh>/node_modules/@deepseek-ai/dsh-http-proxy`) and is
+ *    not a dependency of this plugin.
+ *
+ * Resolving it is not merely convenience. The module keeps the resolved policy
+ * in *module-level* state (`active`/`installed`) that only
+ * `installProxyFromEnvironment` writes, and `proxyRouteFor` reads. A second
+ * copy of the module would therefore answer "direct" for every URL forever,
+ * while also installing a dispatcher that DSH's own `proxyRouteFor` cannot see.
+ * So: one cached handle, resolved through DSH's own entry point, which is the
+ * exact module instance DSH booted with.
+ */
+function loadProxyModule(): Promise<ProxyModule | null> {
+  if (_proxyModulePromise) return _proxyModulePromise
+  _proxyModulePromise = (async () => {
+    // Widened to `string` on purpose: a literal would make TypeScript try to
+    // resolve a package that is deliberately not a dependency of this plugin.
+    const specifier: string = '@deepseek-ai/dsh-http-proxy'
+
+    // Preferred: an ordinary resolution, for any setup that installs it for us.
+    try {
+      return (await import(specifier)) as unknown as ProxyModule
+    } catch (_) { /* fall through to DSH's own copy */ }
+
+    const entry = process.argv[1]
+    if (!entry) {
+      console.warn('[dock-flash] cannot locate the DSH entry point; proxy control unavailable')
+      return null
     }
-    await installProxyFromEnvironment(envLookup, (msg: string) => {
-      console.warn('[dock-flash] proxy install warning: ' + msg)
-    })
-    console.log('[dock-flash] undici global dispatcher re-installed')
-  } catch (e: any) {
-    // dsh-http-proxy may not be available in all environments
-    console.warn('[dock-flash] could not re-install proxy dispatcher:', e.message || e)
+    try {
+      const resolved = createRequire(entry).resolve(specifier)
+      console.log('[dock-flash] dsh-http-proxy resolved to ' + resolved)
+      return (await import(pathToFileURL(resolved).href)) as unknown as ProxyModule
+    } catch (e: any) {
+      console.warn('[dock-flash] could not load ' + specifier + ': ' + (e?.message || e))
+      return null
+    }
+  })()
+  return _proxyModulePromise
+}
+
+/** An EnvLookup over process.env — the fallback when no snapshot is provided. */
+function processEnvLookup(): EnvLookup {
+  return {
+    get(name: string) {
+      const value = process.env[name]
+      return value !== undefined && value !== '' ? { value } : undefined
+    },
   }
 }
 
@@ -167,19 +227,110 @@ async function readJsonBody(req: IncomingMessage, limit = 4096): Promise<any> {
 
 export function apply(ctx: Context) {
 
-  /** Check whether a proxy is actively routing requests to `url`. */
-  function hasActiveProxy(url: string): boolean {
-    try {
-      const { proxyRouteFor } = require('@deepseek-ai/dsh-http-proxy') as any
-      return proxyRouteFor(url)?.proxied === true
-    } catch (_) {
-      return false
-    }
-  }
-
   // The authoritative config: the settings section while one is attached,
   // the composition entry otherwise.
   let source: () => ProxyConfig = () => entry
+
+  /** The launch-environment snapshot DSH resolved the boot-time policy from. */
+  function launchEnvironment(): EnvLookup | null {
+    try {
+      const svc = ctx.get ? ctx.get(LAUNCH_ENVIRONMENT_SERVICE) : undefined
+      return svc && typeof (svc as any).get === 'function' ? (svc as EnvLookup) : null
+    } catch (_) {
+      return null
+    }
+  }
+
+  /**
+   * Read a proxy variable the way the policy resolved it: the launch snapshot
+   * first (it merges process / project-env / user-env), process.env as fallback.
+   */
+  function readProxyEnv(names: string[]): string | null {
+    const snapshot = launchEnvironment()
+    for (const name of names) {
+      const fromSnapshot = snapshot ? snapshot.get(name) : undefined
+      if (fromSnapshot && fromSnapshot.value) return fromSnapshot.value
+      const raw = process.env[name]
+      if (raw) return raw
+    }
+    return null
+  }
+
+  /**
+   * Publish the chosen bypass list and re-install the process-wide dispatcher.
+   *
+   * Writing `process.env.NO_PROXY` is necessary but nowhere near sufficient:
+   * undici's global dispatcher routes by the `ProxyPolicy` object it was handed
+   * at install time and never re-reads the environment, so only a re-install
+   * changes actual routing. The environment write exists for the consumers that
+   * *do* read it — spawned children, and `node:http`'s proxyEnv.
+   */
+  async function applyProxyEnv(mode: string, custom: string) {
+    const noProxy = resolveNoProxy(mode, custom)
+    if (noProxy === undefined) {
+      delete process.env.NO_PROXY
+      delete process.env.no_proxy
+    } else {
+      process.env.NO_PROXY = noProxy
+      process.env.no_proxy = noProxy
+    }
+    console.log('[dock-flash] proxy mode=' + mode + ' (NO_PROXY=' + (noProxy ?? '<removed>') + ')')
+
+    const mod = await loadProxyModule()
+    if (!mod) {
+      console.warn('[dock-flash] proxy module unavailable — routing is unchanged (the mode now affects child processes only)')
+      return
+    }
+
+    // Base the policy on DSH's own snapshot so that nothing but the bypass list
+    // changes. Resolving from process.env would silently disagree with the
+    // policy DSH installed: its snapshot also merges the project-env and
+    // user-env layers, which process.env knows nothing about.
+    const snapshot = launchEnvironment()
+    const base: EnvLookup = snapshot || processEnvLookup()
+    const envLookup: EnvLookup = {
+      get(name: string) {
+        // undici reads the lowercase spelling first, so both are owned here.
+        if (name === 'NO_PROXY' || name === 'no_proxy') {
+          return noProxy === undefined ? undefined : { value: noProxy }
+        }
+        return base.get(name)
+      },
+    }
+
+    try {
+      // Release the previous install before taking a new one, otherwise every
+      // mode change stacks another dispatcher on top of the last.
+      if (_disposeProxyPolicy) {
+        try { await _disposeProxyPolicy() } catch (_) { /* already released */ }
+        _disposeProxyPolicy = null
+      }
+      _disposeProxyPolicy = await mod.installProxyFromEnvironment(envLookup, (message: string) => {
+        console.warn('[dock-flash] proxy install warning: ' + message)
+      })
+      console.log('[dock-flash] undici global dispatcher re-installed (env source=' +
+        (snapshot ? 'launchEnvironment' : 'process.env') + ')')
+    } catch (e: any) {
+      console.warn('[dock-flash] could not re-install proxy dispatcher:', e?.message || e)
+    }
+  }
+
+  /**
+   * Ask dsh-http-proxy how it would route `url`.
+   *
+   * `proxyRouteFor` takes a `URL` object. Handed a string it does not throw — it
+   * quietly answers "direct", which is how this plugin came to report 直连 for
+   * every request it ever tested.
+   */
+  async function proxyRouteForUrl(url: string): Promise<{ proxied: boolean; error: string | null }> {
+    const mod = await loadProxyModule()
+    if (!mod) return { proxied: false, error: 'dsh-http-proxy is not loadable from this plugin' }
+    try {
+      return { proxied: mod.proxyRouteFor(new URL(url))?.proxied === true, error: null }
+    } catch (e: any) {
+      return { proxied: false, error: e?.message || String(e) }
+    }
+  }
 
   /**
    * Resolve the test target.
@@ -194,29 +345,32 @@ export function apply(ctx: Context) {
     return raw || DEFAULT_TEST_URL
   }
 
-  /** How dsh-http-proxy would route `url`, plus the env it decides from. */
-  function describeProxyRoute(url: string) {
-    let proxied = false
-    let routeError: string | null = null
-    try {
-      const { proxyRouteFor } = require('@deepseek-ai/dsh-http-proxy') as any
-      proxied = proxyRouteFor(url)?.proxied === true
-    } catch (e: any) {
-      routeError = e?.message || String(e)
-    }
+  /**
+   * How dsh-http-proxy would route `url`, plus the env it decides from.
+   *
+   * `probeRoute: false` is for callers that already rejected the URL: routing is
+   * moot then, and reporting `routeError: "Invalid URL"` alongside the caller's
+   * own `InvalidTestUrl` only prints the same message twice.
+   */
+  async function describeProxyRoute(url: string, probeRoute = true) {
     const cfg = source()
     let mode = cfg.proxyMode || DEFAULT_MODE
     if (!cfg.proxyMode && typeof cfg.useProxy === 'boolean') {
       mode = cfg.useProxy ? 'all-proxy' : 'all-bypass'
     }
+    const custom = cfg.customNoProxy || ''
+    const route = probeRoute
+      ? await proxyRouteForUrl(url)
+      : { proxied: false, error: null }
+
     return {
       mode,
-      noProxy: process.env.NO_PROXY || process.env.no_proxy || null,
-      httpProxy:
-        process.env.HTTPS_PROXY || process.env.https_proxy ||
-        process.env.HTTP_PROXY || process.env.http_proxy || null,
-      proxied,
-      routeError,
+      // What this plugin published for the current mode: the value that governs
+      // routing once the dispatcher has been re-installed.
+      noProxy: resolveNoProxy(mode, custom) ?? null,
+      httpProxy: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
+      proxied: route.proxied,
+      routeError: route.error,
     }
   }
 
@@ -236,7 +390,7 @@ export function apply(ctx: Context) {
    */
   async function runConnectionTest(url: string) {
     const started = Date.now()
-    const proxy = describeProxyRoute(url)
+    const proxy = await describeProxyRoute(url)
     const redirects: Array<{ hop: number; from: string; status: number; to: string }> = []
 
     /** Assemble the payload so every exit path reports the same shape. */
@@ -334,8 +488,6 @@ export function apply(ctx: Context) {
   // When the settings service is available, register the dock-flash
   // namespace and watch for proxy preference changes.
   ctx.inject(['settings'], (settingsCtx) => {
-    const { Schema } = require('@deepseek-ai/schemastery') as any
-
     const ProxySchema = Schema.object({
       proxyMode: Schema.string().default(DEFAULT_MODE),
       customNoProxy: Schema.string().default(DEFAULT_CUSTOM),
@@ -386,7 +538,7 @@ export function apply(ctx: Context) {
     wsCtx.effect(() => wsCtx.webServer.register({
       kind: 'exact',
       path: '/plugins/dock-flash/proxy-status',
-      handler: (req: IncomingMessage, res: ServerResponse) => {
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'GET') {
           res.statusCode = 405
           res.setHeader('allow', 'GET')
@@ -398,17 +550,26 @@ export function apply(ctx: Context) {
         if (!cfg.proxyMode && typeof cfg.useProxy === 'boolean') {
           mode = cfg.useProxy ? 'all-proxy' : 'all-bypass'
         }
-        const noProxy = process.env.NO_PROXY || process.env.no_proxy || null
+        const custom = cfg.customNoProxy || ''
         const testUrl = resolveTestUrl()
+        const route = await proxyRouteForUrl(testUrl)
         sendJson(res, 200, {
           proxyMode: mode,
-          customNoProxy: cfg.customNoProxy || '',
+          customNoProxy: custom,
           testUrl,
-          noProxy,
+          // What this plugin published for the current mode (null = cleared).
+          noProxy: resolveNoProxy(mode, custom) ?? null,
           testDefault: DEFAULT_TEST_URL,
           // Probed against the configured test target, not a hardcoded host —
           // "is a proxy active" and "did the test use one" must not disagree.
-          proxyAvailable: hasActiveProxy(testUrl),
+          proxyAvailable: route.proxied,
+          // Whether any proxy variable exists at all. `proxyAvailable` alone
+          // cannot distinguish "no proxy configured" from "configured, and this
+          // URL is deliberately bypassed" — the client needs both to avoid
+          // telling the user their proxy has no effect when they asked for a
+          // bypass.
+          httpProxy: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
+          routeError: route.error,
         })
       },
     }), 'dock-flash: GET /plugins/dock-flash/proxy-status')
@@ -452,7 +613,7 @@ export function apply(ctx: Context) {
             redirects: [],
             redirectLimitHit: false,
             timeoutMs: TEST_TIMEOUT_MS,
-            proxy: describeProxyRoute(testUrl),
+            proxy: await describeProxyRoute(testUrl, false),
             error: {
               name: 'InvalidTestUrl',
               message: e?.message || String(e),
@@ -476,7 +637,7 @@ export function apply(ctx: Context) {
             finalUrl: testUrl,
             elapsedMs: 0,
             redirects: [],
-            proxy: describeProxyRoute(testUrl),
+            proxy: await describeProxyRoute(testUrl),
             error: { name: 'InternalError', message: e?.message || String(e) },
           })
         }
