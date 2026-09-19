@@ -168,6 +168,10 @@ And resolve the policy from DSH's own environment: the ctx service **`launchEnvi
 
 The narrow claim to keep honest: this plugin owns the **bypass list**, not the proxy address, and installing replaces the process-global dispatcher for everything in the DSH process.
 
+**The bypass list is validated on the way in.** `custom` mode's value comes from a `prompt()`, and the grammar enforced there is exactly what this package matches with (`bypassesProxy`): entries split on commas or whitespace, `*` meaning everything, an optional leading `.`/`*.` meaning "this host and every subdomain under it", and an optional `:port` that must equal the URL's port. Blank is rejected — "bypass nothing" and "bypass everything" already have their own options — as is anything containing `/ ? # @ \`, which covers both a pasted proxy URL and CIDR. CIDR deserves its own mention: the matcher deliberately has no CIDR support, so `10.0.0.0/8` would sit in the list as a dead entry that bypasses nothing, and the message asks for a suffix instead. Malformed host names, IPv4 octets above 255 and ports outside 1-65535 are rejected too. Accepted values are normalized to a trimmed, comma-joined list, so a paste like `"a.com, b.com  c.com"` is stored as `a.com,b.com,c.com`; a rejection changes neither the mode nor the stored list.
+
+`resolveNoProxy()` returns `undefined` for a **blank** custom value, i.e. it removes `NO_PROXY` the way `all-proxy` does rather than publishing `NO_PROXY=''`. Routing is identical either way — the parser drops empty entries — but the environment is not left carrying a set-but-empty variable for spawned children to read. Only the interactive path is validated: a value edited straight into `settings.yaml` reaches the host unchecked, and the blank rule above is the one piece of that the host enforces itself.
+
 ### Module Loading
 
 Client plugin is loaded via `window.__ModuleLoader__.load({ id, factory })`. The factory receives `require` and must use `require('react')` (not import). All React usage goes through `h = React.createElement`.
@@ -430,7 +434,17 @@ When adding a host-side dependency, import it statically and declare it in `pack
 
 ### Optional switch fields
 
-Common to every type: `icon`, `order`, `group`, `label` (string, or `() => string` for i18n).
+Common to every type: `icon`, `order`, `group`, `label` (string, or `() => string` for i18n), and
+`visible`.
+
+`visible: () => boolean` drops the switch from the panel while it stays registered — its state,
+its changelog entries and every other reader keep working, so no dispose/re-register dance is
+needed. The panel filters **before grouping**, so a group whose every switch is hidden does not
+render its title above nothing, and `renderSwitch` checks it again as a backstop for other
+callers. The predicate is re-evaluated on every render and the panel re-renders on any
+`notifyChange`, which means a switch driven by `visible` **must** notify when its condition
+changes, or it flips only on the next unrelated render. `_fetchProxyStatus()` does this for the
+proxy controls via `notifyChange('dock-flash:system-proxy')`.
 
 Per renderer:
 
@@ -442,7 +456,7 @@ Per renderer:
 | `actionLabel` | `action` | Button text (string, or `() => string`) |
 | `getMeta`, `hideWhenEmpty`, `emptyText`, `onClear`, `clearTitle` | `log` | See the `log` row above. `hideWhenEmpty` renders nothing at all while `getLines()` is empty, instead of an empty box; `emptyText` is the placeholder used when it is *not* set |
 
-> **Don't hide a switch's own value behind `tooltip`.** The test URL was once both a subtitle *and* a tooltip of the same string: the tooltip added a hover target and no information, while the subtitle truncated the URL at exactly the part worth reading. If a value matters, give it `subtitleBlock`.
+> **Don't hide a switch's own value behind `tooltip`.** The test URL was once both a subtitle *and* a tooltip of the same string: the tooltip added a hover target and no information, while the subtitle truncated the URL at exactly the part worth reading. If a value matters, give it `subtitleBlock`. `dock-flash:test-url` has since dropped its subtitle line too — it is a bare label + select now, and hides itself while no proxy is configured.
 
 ### Registration Rules
 
@@ -560,9 +574,16 @@ easiest to break invisibly.
    matching `noProxy`, and `proxyAvailable` **flips** between `all-proxy` (true) and `all-bypass`
    (false). If it never flips, the install is not reaching the dispatcher — see Critical Rule 11.
    Custom mode prompts for a NO_PROXY value, and cancel reverts.
-8. **Test URL**: Shown in full on its own line above **Test Connection** — untruncated, and with
-   no `ⓘ` hover on that row. Presets update the line immediately and survive a refresh; `custom`
-   prompts, rejects anything not starting `http(s)://` with an alert, and reverts the select.
+   Custom's value is validated before it is stored: a blank value, CIDR, a pasted proxy URL, a bad
+   host or a port outside 1-65535 raises an alert naming the entry and leaves both the mode and the
+   stored list unchanged, while a valid list is normalized to comma-separated form. With a blank
+   value written straight into `settings.yaml` instead, the host removes `NO_PROXY` (as `all-proxy`
+   does) rather than publishing `NO_PROXY=''` — the host console then logs `NO_PROXY=<removed>`.
+8. **Test URL**: hidden — together with **Test Connection** — whenever no proxy variable is
+   configured (`_httpProxyValue` falsy, i.e. the host reports `httpProxy: null`); both appear as
+   soon as one is. The row itself is a bare label + select: no icon, and no URL line above the
+   Test Connection button. Presets apply on selection and survive a refresh; `custom` prompts,
+   rejects anything not starting `http(s)://` with an alert, and reverts the select.
 9. **Diagnostics log**: **absent entirely before the first test** — no header, no placeholder
    box. Run Test Connection → it appears with that run's lines (route, response status,
    header/body timings, body size). Run again → the block is **replaced**, not appended. ✕

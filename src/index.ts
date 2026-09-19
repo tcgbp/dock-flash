@@ -97,7 +97,15 @@ function resolveNoProxy(mode: string, custom: string): string | undefined {
     case 'all-proxy':  return undefined   // no bypass → all traffic proxied
     case 'api-bypass': return API_BYPASS_DOMAINS
     case 'all-bypass': return '*'
-    case 'custom':     return custom || ''
+    case 'custom': {
+      // The only user-supplied value here. A blank one means "no bypass
+      // entries", i.e. the same routing as `all-proxy` — so clear the variable
+      // rather than publishing `NO_PROXY=''`, which would leave a set-but-empty
+      // variable in the environment for spawned children to read. (Routing is
+      // identical either way: dsh-http-proxy's parser drops empty entries.)
+      const value = (custom || '').trim()
+      return value === '' ? undefined : value
+    }
     default:           return undefined
   }
 }

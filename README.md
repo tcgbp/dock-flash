@@ -26,8 +26,8 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 | 📐 Layout | Close on Blur | buttongroup | Off / On — auto-close the panel when clicking outside. Also a toggle in the panel header (both modes) | ✅ |
 | 📐 Layout | Trigger Position | select | Input Left / Input Right / Session Header / Header Utils — where the standalone ⚡ trigger is injected | ✅ |
 | ⚙️ System | Language | buttongroup | 中文 / English — switches DSH global UI language | ✅ |
-| ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control | ✅ |
-| ⚙️ System | Test URL | select | Google 204 / GitHub / DeepSeek API / Custom — the address the connection test probes. The effective URL is shown in full on its own line directly above Test Connection | ✅ |
+| ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control. Custom is validated: host / domain suffix / IP / host:port, comma- or space-separated; blank and CIDR are rejected | ✅ |
+| ⚙️ System | Test URL | select | Google 204 / GitHub / DeepSeek API / Custom — the address the connection test probes. A bare label + select, and hidden together with Test Connection while no proxy is configured | ✅ |
 | ⚙️ System | Diagnostics Log | log | Read-only multi-line report of the **latest** connection test — one fact per line, hidden until the first test, ✕ clears (no 30s expiry) | ✅ |
 
 > **The Layout group only renders in standalone mode.** In workbench mode `close-on-blur` exists solely as the panel-header toggle, so no built-in switch carries `group: 'layout'` and the category is skipped entirely.
