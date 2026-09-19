@@ -82,7 +82,7 @@ dock-flash can run in two modes:
 | Command | `ctx.workbench.registerCommand()` | `dock-flash:openQuickControl` |
 | Service | `ctx.provide('quickControl', registry)` | Pub/sub switch registry for other plugins |
 
-**Standalone mode** (no dock-base) — injects a ⚡ badge into the sidebar footer via `ctx.slots.inject('sidebar.footer.action', ...)` (same slot used by CordisPanel). The badge shows ⚡ icon + "Quick Control" label when sidebar is wide, icon-only when collapsed to rail. Clicking the badge toggles a floating QuickControlPanel positioned above the badge. The floating panel has a drag-to-move title bar (⠿ grip + ⚡ + the localized `title` string + × close) and uses `react-dom/client`'s `createRoot`. The `close-on-blur` switch is registered in both modes and shares one `localStorage` key, so the standalone floating panel honours it too. The old floating `position:fixed` trigger button with four-corner presets and drag-to-reposition was removed — the sidebar footer badge is always anchored to existing UI and never overlaps or floats in empty space.
+**Standalone mode** (no dock-base) — injects a ⚡ badge into the sidebar footer via `ctx.slots.inject('sidebar.footer.action', ...)` (same slot used by CordisPanel). The badge shows ⚡ icon + "Quick Control" label when sidebar is wide, icon-only when collapsed to rail. Clicking the badge toggles a floating QuickControlPanel positioned above the badge. The floating panel has a drag-to-move title bar (⠿ grip + ⚡ + the localized `title` string + close-on-blur toggle + × close) and uses `react-dom/client`'s `createRoot`. That toggle and the outside-click handler read the same `localStorage` key, so close-on-blur here behaves exactly as it does in workbench mode. The old floating `position:fixed` trigger button with four-corner presets and drag-to-reposition was removed — the sidebar footer badge is always anchored to existing UI and never overlaps or floats in empty space.
 
 ### Mode Detection
 
@@ -92,7 +92,8 @@ const wb = ctx.get ? ctx.get('workbench') : undefined
 
 if (wb) {
   // Workbench mode: register panel, activity bar, editor view, command
-  // Register the layout switch: close-on-blur
+  // Register the dock-flash-owned switches (close-on-blur is NOT one of them —
+  // it lives in the panel header; see "Close-on-blur is a header toggle" below)
 } else {
   // Standalone mode: inject sidebar footer badge via slots + floating panel
 }
@@ -130,6 +131,20 @@ The `inject` array is empty (`inject: []`) — workbench is resolved lazily via 
 ### Module Loading
 
 Client plugin is loaded via `window.__ModuleLoader__.load({ id, factory })`. The factory receives `require` and must use `require('react')` (not import). All React usage goes through `h = React.createElement`.
+
+### Close-on-blur is a header toggle, not a switch
+
+`close-on-blur` deliberately has **no entry in the switch registry**. It is a small icon button rendered immediately left of the close (×) button, in two places:
+
+- the workbench `headerComponent` of the sidebar panel (`wb.registerPanel({ headerComponent })`), and
+- the standalone floating panel's own title bar, built imperatively with `document.createElement`.
+
+All three readers — the panel component's outside-click `useEffect`, the workbench header button, and the standalone header button — share the single `localStorage` key `dock-flash:close-on-blur` (`'off'` | `'floating'`; anything that is not `'off'` counts as on).
+
+Two consequences worth knowing:
+
+- Because no built-in switch carries `group: 'layout'` in workbench mode, the **Layout subgroup is simply not rendered there** and needs no special-casing: `groupOrder.filter((g) => builtInGroups.has(g))` already skips groups that have no switches. `trigger-position` is the only remaining layout switch, and it is registered inside `mountStandaloneSlotTrigger`, i.e. standalone only.
+- The workbench header button paints its own active state imperatively instead of using `useState`, because dock-base may invoke `headerComponent` as a plain render function rather than mounting it as a component — hooks would then be illegal. Do not "tidy this up" into a hook.
 
 ---
 
@@ -504,3 +519,4 @@ Since dock-flash has no automated test suite, verify manually after changes:
 | 1.0.0 | First stable release. All prior development history squashed into a single commit. `prepare` script removed: with `dist/` tracked, a git install needs no build at all, so declaring `prepare` only forced pnpm ≥10 users to grant an `allowBuilds` permission before their first `dsh plugin add` could succeed. Version bumped from 0.20.0 in both `package.json` and `lib/client.js`. |
 | 1.0.1 | Settings plugin entry renamed from "Quick" to **"Flash"**. Every other dock-family plugin titles its settings card with the package name minus the `dock-` prefix (Dock, Git, Files, Editor, Images, Markdown), so "Quick" was the sole outlier — and being merely a fragment of the panel's own "Quick Control" name, it gave users nothing to connect to the `dock-flash` package they installed. The floating title bar's hardcoded "Quick" now goes through `t('title')`, closing the only user-visible string that bypassed i18n. The activity-bar and panel name stays "Quick Control", which already matches how siblings name those (dock-git → "Git History", dock-base → "Dock settings"). |
 | 1.0.2 | Removed the `dock-flash:dock-position` and `dock-flash:auto-hide` switches from workbench mode — both were pure duplicates of dock-base's own settings. dock-base already registers `DOCK_POSITION_SETTING` (a radiogroup over the same `left/right/top/bottom` values) and `DOCK_AUTO_HIDE_SETTING` (`off`/`edge`), and both wrote through the very same call dock-flash used, `wb.updateLayout({ dock })` / `{ autoHide }`, so one store had two entry points. There is nothing to replace them with: dock-base's layout store exposes only `dock` and `autoHide` to users, and its settings registry already covers `reserveSpace`, `hoverScale` and `nearScale`, so any new layout control would duplicate it too. Workbench layout group is now just `close-on-blur`, which dock-flash actually owns. Also dropped the 8 i18n keys the two switches used (`dockPosition`, `dockLeft/Right/Top/Bottom`, `autoHide`, `autoHideOff`, `autoHideEdge`; the latter two were already dead). Docs: removed the stale `Zoom` row (the feature was deleted in 0.15.2 but the READMEs still advertised it) and corrected `Close on Blur`'s Standalone column from ❌ to ✅ — it is registered in both modes and the standalone panel's `handleOutsideClick` reads the shared localStorage key. |
+| 1.0.3 | Moved `close-on-blur` out of the switch registry and into the panel header: it is now a small icon toggle immediately left of the close (×) button, in **both** the workbench `headerComponent` and the standalone floating title bar. The `off`/`on` buttongroup that used to live in the Layout subgroup is gone, so **workbench mode no longer renders a Layout category at all** — no built-in switch carries `group: 'layout'` there any more, and `groupOrder.filter((g) => builtInGroups.has(g))` drops the empty group with no extra code. `trigger-position` (standalone only) is the sole remaining layout switch. The workbench header button paints its own state imperatively rather than with `useState`, because dock-base may call `headerComponent` as a plain render function, which would make hooks illegal. i18n: `closeOnBlurFloating` renamed to `closeOnBlurOn`, and both state labels reworded (`关闭/开启` → `已关闭/已开启`) since they now read as a tooltip ("失焦关闭: 已开启") instead of as option labels. Docs: the READMEs' mode table, switch table, grouping rules and mode notes were corrected — they still claimed standalone had no Layout switches and workbench had all three groups. |

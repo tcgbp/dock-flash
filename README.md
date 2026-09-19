@@ -8,14 +8,14 @@
 
 | Mode | Condition | UI | Available Switches |
 | --- | --- | --- | --- |
-| **Workbench** | dock-base installed | ⚡ icon in activity bar → sidebar/floating panel | All switches (Appearance + Layout + System) |
-| **Standalone** | no dock-base | ⚡ floating button (bottom-right corner) → popup panel | Appearance + System only (no Layout switches) |
+| **Workbench** | dock-base installed | ⚡ icon in activity bar → sidebar/floating panel | Appearance + System switches |
+| **Standalone** | no dock-base | ⚡ badge in the sidebar footer → floating panel | Appearance + Layout (trigger position) + System |
 
 ## Features
 
 ### Built-in Switches
 
-Built-in switches are displayed in three groups (compact two-column layout):
+Built-in switches are grouped into Appearance / Layout / System (compact two-column layout). The Layout group appears in standalone mode only:
 
 | Group | Switch | Type | Description | Standalone |
 | --- | --- | --- | --- | --- |
@@ -23,9 +23,12 @@ Built-in switches are displayed in three groups (compact two-column layout):
 | 🎨 Appearance | Skin | select | Dynamically discovers installed skin plugins and switches between them (requires dsh-market) | ✅ |
 | 🎨 Appearance | Fullscreen | toggle | Browser Fullscreen API — enter/exit fullscreen | ✅ |
 | 🎨 Appearance | Log Download | toggle | Show/hide the session log download button | ✅ |
-| 📐 Layout | Close on Blur | buttongroup | Off / On — auto-close the floating panel when clicking outside | ✅ |
 | ⚙️ System | Language | buttongroup | 中文 / English — switches DSH global UI language | ✅ |
 | ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control | ✅ |
+
+> **Close on Blur** is not a switch in this list. It is a toggle in the panel header, immediately left of the close (×) button, in both modes.
+
+> **Dock layout is not configured here.** Dock edge, auto-hide, reserve space and icon scaling are dock-base's own settings — dock-flash deliberately does not duplicate them. The only layout switch dock-flash owns is `trigger-position`, and it exists in standalone mode only.
 
 ### Core Capabilities
 
@@ -233,7 +236,7 @@ setTimeout(() => {
 
 The panel uses a collapsible tab layout:
 
-- **⚡ Workbench** — Built-in switches (ids starting with `dock-flash:`), grouped by `group` field into Appearance / Layout / System subgroups
+- **⚡ Workbench** — Built-in switches (ids starting with `dock-flash:`), grouped by `group` field into Appearance / Layout / System subgroups. In workbench mode the Layout subgroup is empty and is not rendered, because dock-base's own settings already own every dock layout property.
 - **🧩 Extensions** — Third-party switches (ids not starting with `dock-flash:`), automatically grouped by id colon prefix (plugin name)
 - **📝 Recent Changes** — Switch change records from the last 30 seconds
 
@@ -303,9 +306,9 @@ dsh plugin --profile my-profile add dock-base
 dsh --profile my-profile
 ```
 
-**Without dock-base**: dock-flash runs in standalone mode — a ⚡ floating button appears in the bottom-right corner. Click to open the quick control popup panel (Appearance + System switches only, no Layout controls).
+**Without dock-base**: dock-flash runs in standalone mode — a ⚡ badge is injected into the sidebar footer. Click it to open the quick control popup panel (Appearance, Layout — trigger position — and System switches).
 
-**With dock-base**: dock-flash integrates into the workbench — the ⚡ icon appears in the activity bar, and the panel can be opened as a sidebar or floating window with all switches including Layout controls.
+**With dock-base**: dock-flash integrates into the workbench — the ⚡ icon appears in the activity bar, and the panel can be opened as a sidebar or floating window with the Appearance and System switches. Dock layout properties (dock edge, auto-hide, reserve space, icon scaling) are configured in dock-base's own settings, not here.
 
 ## Development
 
