@@ -4,3 +4,13 @@ node_modules/
 Thumbs.db
 .mnemon/
 .pnpm-store/
+
+# Local AI-assistant tooling — developer-machine state, not part of the
+# published plugin. graphflow-out/ holds a SQLite graph database and
+# .graphflow-cache/ an index cache; neither belongs in a public repo.
+.claude/
+.windsurfrules
+GEMINI.md
+CLAUDE.md
+.graphflow-cache/
+graphflow-out/
