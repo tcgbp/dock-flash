@@ -63,6 +63,28 @@ const LAUNCH_ENVIRONMENT_SERVICE = 'launchEnvironment';
  * — leaks one ProxyAgent and its whole socket pool per mode change.
  */
 let _disposeProxyPolicy = null;
+/**
+ * The last `(mode, custom)` pair this plugin actually applied, joined by a NUL
+ * so `("a","b\0c")` cannot collide with `("a\0b","c")`.
+ *
+ * Two paths reach `applyProxyEnv` at startup: `installSection` invokes its
+ * `onChange` synchronously while installing (dsh-settings does — see
+ * `installSection` in `@deepseek-ai/dsh-settings`), and the composition then
+ * applies the initial state explicitly. Both ran, and because `applyProxyEnv`
+ * suspends on `await loadProxyModule()` *before* it touches
+ * `_disposeProxyPolicy`, neither install could see the other: the second
+ * overwrote the field and the first disposer was dropped — one leaked
+ * ProxyAgent and socket pool per startup, which is exactly the leak the
+ * release-before-install step exists to prevent. The duplicate also meant the
+ * pair was logged twice, so the proxy log could no longer distinguish a real
+ * mode switch from startup noise, and every unrelated edit in this namespace
+ * (changing `testUrl`, say) re-installed the dispatcher as well.
+ *
+ * The guard is assigned before the first `await` on purpose — that is what
+ * makes the second caller in the same tick a no-op — and cleared again on the
+ * paths that do not end in an install, so a transient failure still retries.
+ */
+let _appliedProxyKey = null;
 let _proxyModulePromise = null;
 /**
  * Load @deepseek-ai/dsh-http-proxy, once, from the instance DSH itself uses.
@@ -194,6 +216,12 @@ export function apply(ctx) {
      * *do* read it — spawned children, and `node:http`'s proxyEnv.
      */
     async function applyProxyEnv(mode, custom) {
+        // Idempotence guard — see _appliedProxyKey. Set before any await so the
+        // duplicate startup caller is a no-op rather than a racing second install.
+        const key = mode + '\u0000' + custom;
+        if (key === _appliedProxyKey)
+            return;
+        _appliedProxyKey = key;
         const noProxy = resolveNoProxy(mode, custom);
         if (noProxy === undefined) {
             delete process.env.NO_PROXY;
@@ -206,6 +234,7 @@ export function apply(ctx) {
         console.log('[dock-flash] proxy mode=' + mode + ' (NO_PROXY=' + (noProxy ?? '<removed>') + ')');
         const mod = await loadProxyModule();
         if (!mod) {
+            _appliedProxyKey = null;
             console.warn('[dock-flash] proxy module unavailable — routing is unchanged (the mode now affects child processes only)');
             return;
         }
@@ -241,6 +270,8 @@ export function apply(ctx) {
                 (snapshot ? 'launchEnvironment' : 'process.env') + ')');
         }
         catch (e) {
+            // Let the next change retry: nothing was installed, so nothing is in force.
+            _appliedProxyKey = null;
             console.warn('[dock-flash] could not re-install proxy dispatcher:', e?.message || e);
         }
     }
