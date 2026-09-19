@@ -10,7 +10,6 @@ export const name = 'dock-flash';
 export const inject = [];
 const DEFAULT_MODE = 'all-proxy';
 const DEFAULT_CUSTOM = '';
-const DEFAULT_USE_SYSTEM_PROXY = false;
 /**
  * Default test target: the canonical "is there a working network path"
  * endpoint. Returns an empty 204, so it measures the path and nothing else —
@@ -28,7 +27,6 @@ const entry = {
     proxyMode: DEFAULT_MODE,
     customNoProxy: DEFAULT_CUSTOM,
     testUrl: DEFAULT_TEST_URL,
-    useSystemProxy: DEFAULT_USE_SYSTEM_PROXY,
 };
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
 const API_BYPASS_DOMAINS = 'api.deepseek.com,chat.deepseek.com';
@@ -118,163 +116,6 @@ function processEnvLookup() {
         },
     };
 }
-// ── Windows "Manual proxy setup" ──────────────────────────────────────────
-//
-// Settings → Network & Internet → Proxy writes this registry key. It is a
-// completely separate store from the proxy *environment variables* everything
-// else here is built on, and Node never consults it: undici has no OS-proxy
-// integration, so a Windows manual proxy does NOT affect DSH's outbound
-// requests. That is why reading it is opt-in — it is a proxy the user has
-// configured for WinINET apps, not one anything in this process is using.
-const WIN_PROXY_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
-/** `reg query` spawns a process, so keep the answer briefly. */
-const WIN_PROXY_TTL_MS = 10_000;
-const EMPTY_WIN_PROXY = (platform, error) => ({
-    platform, readable: error === null, enabled: false, server: null,
-    httpProxy: null, httpsProxy: null, socksProxy: null,
-    override: null, noProxy: null, pacUrl: null, error,
-});
-let _winProxyCache = null;
-/** One value out of the proxy key, or null when it is absent. */
-function readRegistryValue(name) {
-    try {
-        const out = execFileSync('reg', ['query', WIN_PROXY_KEY, '/v', name], {
-            encoding: 'utf8',
-            windowsHide: true,
-        });
-        // `    Name    REG_TYPE    value` — the type token is stable in English even
-        // on a localized Windows, which the leading columns are not.
-        for (const line of String(out).split(/\r?\n/)) {
-            const m = line.match(/^\s+(\S+)\s+(REG_[A-Z_]+)\s*(.*)$/);
-            if (m && m[1].toLowerCase() === name.toLowerCase())
-                return m[3].trim();
-        }
-        return null;
-    }
-    catch (_) {
-        // Absent value or unreadable key — `reg` exits non-zero for both.
-        return null;
-    }
-}
-/** `host:port` → `http://host:port`, or null when it is not usable. */
-function normalizeProxyUrl(raw) {
-    if (!raw)
-        return null;
-    const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : 'http://' + raw;
-    try {
-        const u = new URL(withScheme);
-        if (!u.hostname || !u.port)
-            return null;
-        if (u.protocol !== 'http:' && u.protocol !== 'https:')
-            return null;
-        return u.origin;
-    }
-    catch (_) {
-        return null;
-    }
-}
-/**
- * WinINET stores either one `host:port` for everything, or a per-scheme list
- * (`http=…;https=…;socks=…`).
- */
-function parseProxyServer(raw) {
-    const out = { http: null, https: null, socks: null };
-    if (!raw)
-        return out;
-    if (!raw.includes('=')) {
-        out.http = normalizeProxyUrl(raw);
-        out.https = out.http;
-        return out;
-    }
-    const seen = {};
-    for (const part of raw.split(';')) {
-        const i = part.indexOf('=');
-        if (i < 0)
-            continue;
-        seen[part.slice(0, i).trim().toLowerCase()] = part.slice(i + 1).trim();
-    }
-    out.http = normalizeProxyUrl(seen.http || null);
-    out.https = normalizeProxyUrl(seen.https || seen.http || null);
-    // Kept as the raw `host:port` on purpose: normalizing it to `http://` would
-    // present a SOCKS proxy as an HTTP one, and this field exists only so the UI
-    // can say "a SOCKS proxy is configured and cannot be applied".
-    out.socks = seen.socks || null;
-    return out;
-}
-/**
- * ProxyOverride → NO_PROXY. An approximation, deliberately: these are WinINET
- * patterns, and undici's matcher is not WinINET.
- *
- * - `local` and `<local>` are dropped. Windows writes either spelling for
- *   "bypass local addresses", and neither is a host name — keeping `local`
- *   would put a bogus entry in the bypass list. The package merges
- *   `LOOPBACK_NO_PROXY` into every policy anyway, so loopback is covered.
- * - `*` means bypass everything, which NO_PROXY spells the same way.
- * - everything else is passed through; `*.example.com`-style wildcards happen
- *   to line up, bare host and host:port entries do too.
- */
-function mapProxyOverride(raw) {
-    if (!raw)
-        return null;
-    const out = [];
-    for (const entry of raw.split(';')) {
-        const v = entry.trim();
-        if (!v)
-            continue;
-        const lower = v.toLowerCase();
-        if (lower === 'local' || lower === '<local>')
-            continue;
-        if (v === '*')
-            return '*';
-        out.push(v);
-    }
-    return out.length ? out.join(',') : null;
-}
-/** Read the Windows manual proxy setting, cached for WIN_PROXY_TTL_MS. */
-function readWindowsProxy(force = false) {
-    const now = Date.now();
-    if (!force && _winProxyCache && now - _winProxyCache.at < WIN_PROXY_TTL_MS) {
-        return _winProxyCache.value;
-    }
-    const platform = process.platform;
-    let value;
-    if (platform !== 'win32') {
-        value = EMPTY_WIN_PROXY(platform, null);
-    }
-    else {
-        try {
-            const enabledRaw = readRegistryValue('ProxyEnable');
-            // ProxyEnable is a REG_DWORD; "0x1" means on. Absent means off.
-            const enabled = !!enabledRaw && parseInt(enabledRaw, 16) !== 0;
-            const server = readRegistryValue('ProxyServer');
-            const override = readRegistryValue('ProxyOverride');
-            const pacUrl = readRegistryValue('AutoConfigURL');
-            const parsed = parseProxyServer(server);
-            value = {
-                platform,
-                readable: true,
-                enabled,
-                server,
-                httpProxy: parsed.http,
-                httpsProxy: parsed.https,
-                socksProxy: parsed.socks,
-                override,
-                noProxy: mapProxyOverride(override),
-                pacUrl,
-                error: null,
-            };
-        }
-        catch (e) {
-            value = EMPTY_WIN_PROXY(platform, e?.message || String(e));
-        }
-    }
-    _winProxyCache = { at: now, value };
-    return value;
-}
-/** The registry proxy is usable as a policy source. */
-function windowsProxyUsable(p) {
-    return p.platform === 'win32' && p.readable && p.enabled && !!(p.httpProxy || p.httpsProxy);
-}
 /** Send a JSON response with no-store cache control. */
 function sendJson(res, status, payload) {
     res.statusCode = status;
@@ -320,81 +161,20 @@ export function apply(ctx) {
         }
     }
     /**
-     * The proxy variables the *user* supplied — frozen on first read, and read
-     * from the launch snapshot in preference to process.env.
-     *
-     * This must never be re-read live. Installing a policy makes
-     * `dsh-http-proxy` publish the resolved values into `process.env` (that is
-     * how spawned children and `node:http` are meant to see them), so a live read
-     * would report this plugin's own publication back as a user-provided
-     * variable. The failure would be silent and self-locking: `proxySource` flips
-     * from `windows-registry` to `env`, and the Windows opt-in toggle disappears
-     * the instant it is switched on, with no way to switch it back off.
+     * Read a proxy variable the way the policy resolved it: the launch snapshot
+     * first (it merges process / project-env / user-env), process.env as fallback.
      */
-    let _userEnvProxy = null;
-    function userEnvProxy() {
-        if (_userEnvProxy)
-            return _userEnvProxy;
+    function readProxyEnv(names) {
         const snapshot = launchEnvironment();
-        const read = (names) => {
-            for (const name of names) {
-                const fromSnapshot = snapshot ? snapshot.get(name) : undefined;
-                if (fromSnapshot && fromSnapshot.value)
-                    return fromSnapshot.value;
-                // process.env only when no snapshot exists at all: once an install has
-                // run, values there may be ours rather than the user's.
-                if (!snapshot) {
-                    const raw = process.env[name];
-                    if (raw)
-                        return raw;
-                }
-            }
-            return null;
-        };
-        const http = read(['http_proxy', 'HTTP_PROXY']);
-        const https = read(['https_proxy', 'HTTPS_PROXY']);
-        _userEnvProxy = { http, https, any: http || https || read(['all_proxy', 'ALL_PROXY']) };
-        return _userEnvProxy;
-    }
-    /**
-     * The proxy addresses in effect, and where they came from.
-     *
-     * Environment variables always win. The Windows setting is only ever a
-     * fallback, only when the user opted in, and only when *no* proxy variable
-     * exists at all — including `ALL_PROXY`, which would otherwise be silently
-     * overridden. That setting is written for WinINET apps, so preferring it over
-     * an explicit environment variable would overrule a deliberate choice.
-     */
-    function proxyAddresses() {
-        const env = userEnvProxy();
-        const envAny = env.any;
-        const win = readWindowsProxy();
-        if (envAny) {
-            return { source: 'env', httpProxy: env.http, httpsProxy: env.https, envProxy: envAny, win, warning: null };
+        for (const name of names) {
+            const fromSnapshot = snapshot ? snapshot.get(name) : undefined;
+            if (fromSnapshot && fromSnapshot.value)
+                return fromSnapshot.value;
+            const raw = process.env[name];
+            if (raw)
+                return raw;
         }
-        if (!source().useSystemProxy) {
-            return { source: 'none', httpProxy: null, httpsProxy: null, envProxy: null, win, warning: null };
-        }
-        if (!windowsProxyUsable(win)) {
-            return {
-                source: 'none', httpProxy: null, httpsProxy: null, envProxy: null, win,
-                warning: win.pacUrl ? 'pac-only' : 'windows-proxy-unavailable',
-            };
-        }
-        // SOCKS is reported but never applied: the environment policy rejects it,
-        // and inventing a tunnel here would be a different feature.
-        const warning = win.httpProxy || win.httpsProxy ? null : 'socks-only';
-        if (warning) {
-            return { source: 'none', httpProxy: null, httpsProxy: null, envProxy: null, win, warning };
-        }
-        return {
-            source: 'windows-registry',
-            httpProxy: win.httpProxy,
-            httpsProxy: win.httpsProxy,
-            envProxy: null,
-            win,
-            warning: null,
-        };
+        return null;
     }
     /**
      * Publish the chosen bypass list and re-install the process-wide dispatcher.
@@ -427,19 +207,11 @@ export function apply(ctx) {
         // user-env layers, which process.env knows nothing about.
         const snapshot = launchEnvironment();
         const base = snapshot || processEnvLookup();
-        const addresses = proxyAddresses();
-        const useRegistry = addresses.source === 'windows-registry';
         const envLookup = {
             get(name) {
                 // undici reads the lowercase spelling first, so both are owned here.
                 if (name === 'NO_PROXY' || name === 'no_proxy') {
                     return noProxy === undefined ? undefined : { value: noProxy };
-                }
-                if (useRegistry && (name === 'http_proxy' || name === 'HTTP_PROXY')) {
-                    return addresses.httpProxy ? { value: addresses.httpProxy } : undefined;
-                }
-                if (useRegistry && (name === 'https_proxy' || name === 'HTTPS_PROXY')) {
-                    return addresses.httpsProxy ? { value: addresses.httpsProxy } : undefined;
                 }
                 return base.get(name);
             },
@@ -458,14 +230,7 @@ export function apply(ctx) {
                 console.warn('[dock-flash] proxy install warning: ' + message);
             });
             console.log('[dock-flash] undici global dispatcher re-installed (env source=' +
-                (snapshot ? 'launchEnvironment' : 'process.env') +
-                ', proxy source=' + addresses.source + ')');
-            // Deliberately NOT written into process.env. Publishing it there would
-            // make `proxyAddresses()` see it as a user-provided environment variable
-            // on the very next read — which would silently disable the opt-in and
-            // leave the toggle stuck on with no way to turn it off. Children therefore
-            // do not inherit the registry proxy; the dispatcher policy is what governs
-            // this process's own requests, which is the whole point.
+                (snapshot ? 'launchEnvironment' : 'process.env') + ')');
         }
         catch (e) {
             console.warn('[dock-flash] could not re-install proxy dispatcher:', e?.message || e);
@@ -518,17 +283,12 @@ export function apply(ctx) {
         const route = probeRoute
             ? await proxyRouteForUrl(url)
             : { proxied: false, error: null };
-        const addresses = proxyAddresses();
         return {
             mode,
             // What this plugin published for the current mode: the value that governs
             // routing once the dispatcher has been re-installed.
             noProxy: resolveNoProxy(mode, custom) ?? null,
-            // The address actually in force, whichever source supplied it, so the log
-            // line means "what this process would use" rather than "what the
-            // environment happens to say".
-            httpProxy: addresses.httpsProxy || addresses.httpProxy,
-            proxySource: addresses.source,
+            httpProxy: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
             proxied: route.proxied,
             routeError: route.error,
         };
@@ -653,7 +413,6 @@ export function apply(ctx) {
             proxyMode: Schema.string().default(DEFAULT_MODE),
             customNoProxy: Schema.string().default(DEFAULT_CUSTOM),
             testUrl: Schema.string().default(DEFAULT_TEST_URL),
-            useSystemProxy: Schema.boolean().default(DEFAULT_USE_SYSTEM_PROXY),
             // Keep the old field so legacy clients don't break; migrated on read.
             useProxy: Schema.boolean().default(true),
         });
@@ -714,7 +473,6 @@ export function apply(ctx) {
                 const custom = cfg.customNoProxy || '';
                 const testUrl = resolveTestUrl();
                 const route = await proxyRouteForUrl(testUrl);
-                const addresses = proxyAddresses();
                 sendJson(res, 200, {
                     proxyMode: mode,
                     customNoProxy: custom,
@@ -725,34 +483,12 @@ export function apply(ctx) {
                     // Probed against the configured test target, not a hardcoded host —
                     // "is a proxy active" and "did the test use one" must not disagree.
                     proxyAvailable: route.proxied,
-                    // The address in force, whichever source supplied it. `proxyAvailable`
-                    // alone cannot distinguish "no proxy configured" from "configured, and
-                    // this URL is deliberately bypassed", and the client needs to know a
-                    // proxy is in play at all to decide what to show.
-                    httpProxy: addresses.httpsProxy || addresses.httpProxy,
-                    // Environment-derived address *only*. Kept separate from `httpProxy`
-                    // because it is what decides whether the Windows opt-in is offered:
-                    // folding the registry value in would hide the toggle the moment it
-                    // was switched on, leaving no way back.
-                    envProxy: addresses.envProxy,
-                    proxySource: addresses.source,
-                    proxyWarning: addresses.warning,
-                    useSystemProxy: !!cfg.useSystemProxy,
-                    // Enough for the client to decide whether to offer the opt-in, and to
-                    // explain itself when the registry cannot be honoured.
-                    systemProxy: {
-                        platform: addresses.win.platform,
-                        readable: addresses.win.readable,
-                        enabled: addresses.win.enabled,
-                        server: addresses.win.server,
-                        httpProxy: addresses.win.httpProxy,
-                        httpsProxy: addresses.win.httpsProxy,
-                        socksProxy: addresses.win.socksProxy,
-                        override: addresses.win.override,
-                        noProxy: addresses.win.noProxy,
-                        pacUrl: addresses.win.pacUrl,
-                        error: addresses.win.error,
-                    },
+                    // Whether any proxy variable exists at all. `proxyAvailable` alone
+                    // cannot distinguish "no proxy configured" from "configured, and this
+                    // URL is deliberately bypassed" — the client needs both to avoid
+                    // telling the user their proxy has no effect when they asked for a
+                    // bypass.
+                    httpProxy: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
                     routeError: route.error,
                 });
             },

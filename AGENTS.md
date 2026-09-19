@@ -168,21 +168,6 @@ And resolve the policy from DSH's own environment: the ctx service **`launchEnvi
 
 The narrow claim to keep honest: this plugin owns the **bypass list**, not the proxy address, and installing replaces the process-global dispatcher for everything in the DSH process.
 
-#### Windows "Manual proxy setup" (v1.1.0)
-
-Settings → Network & Internet → Proxy writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` — a store that has nothing to do with the proxy environment variables everything above is built on. **Node never reads it**: undici has no OS-proxy integration, so a Windows manual proxy has no effect on DSH's outbound requests. It is read here only so the user can opt into honouring it.
-
-The opt-in (`useSystemProxy`, default **false**) is offered only when *no* proxy variable exists **and** Windows actually has one. Once on, the registry supplies the proxy **address** while `proxyMode` still supplies the bypass list — which is how the plugin's one clear claim survives: it owns NO_PROXY, and this only adds the address it previously could not know.
-
-Four things about the implementation are load-bearing:
-
-1. **Detection reads the launch snapshot, never a live `process.env`** — and it is frozen on first read. Installing a policy makes `dsh-http-proxy` publish the resolved values into `process.env` on purpose (that is how spawned children and `node:http` see them), so a live read would report this plugin's own publication back as a user-provided variable. The failure is silent and self-locking: `proxySource` flips from `windows-registry` to `env`, and the toggle disappears the instant it is switched on, with no way to switch it off. The client keeps `envProxy` (environment only) separate from `httpProxy` (effective) for the same reason: folding them together would hide the toggle it just enabled.
-2. **`ProxyServer` has two shapes** — one `host:port` for everything, or a per-scheme list (`http=…;https=…;socks=…`). Both are parsed; a missing `https=` falls back to `http=`.
-3. **SOCKS and PAC are reported, never applied.** The environment policy rejects SOCKS outright, and a PAC script's address cannot be known without running the script. Both keep the opt-in visible with an explanatory tooltip, because "switched on but nothing happened" is the worst possible outcome.
-4. **`ProxyOverride` → `NO_PROXY` is an approximation** and should stay one. `local` and `<local>` are dropped (Windows writes either spelling; neither is a host name, and the package merges loopback bypass anyway), `*` passes through as `*`, and the rest is joined verbatim — WinINET patterns happen to line up with undici's matcher for the common forms, but they are not the same language.
-
-`reg query` is spawned through the already-present `node:child_process` import and its answer cached for 10 s, because it costs a process. Absent values make `reg` exit non-zero; that is a miss, not an error.
-
 ### Module Loading
 
 Client plugin is loaded via `window.__ModuleLoader__.load({ id, factory })`. The factory receives `require` and must use `require('react')` (not import). All React usage goes through `h = React.createElement`.
@@ -445,9 +430,7 @@ When adding a host-side dependency, import it statically and declare it in `pack
 
 ### Optional switch fields
 
-Common to every type: `icon`, `order`, `group`, `label` (string, or `() => string` for i18n), and `visible`.
-
-`visible: () => boolean` suppresses rendering entirely when it returns false — the mechanism behind the proxy controls disappearing when no proxy is in play. The panel filters **before grouping**, so a group whose every switch is hidden does not render its title above nothing, and `renderSwitch` checks it again as a backstop for other callers. The predicate is re-evaluated on every render, and the panel re-renders on any `notifyChange`, so state changes are picked up without extra plumbing — but that also means a switch driven by `visible` must be notified when its condition changes.
+Common to every type: `icon`, `order`, `group`, `label` (string, or `() => string` for i18n).
 
 Per renderer:
 
@@ -590,13 +573,6 @@ easiest to break invisibly.
 11. **Probe targets what is displayed**: Change the Test URL and immediately test → the logged
     `▶ <url>` is the new one, not the previous (the URL rides in the request body, so it cannot
     lag the UI).
-12. **Windows opt-in** — only offered when no proxy variable exists *and* Windows has a manual
-    proxy. The switch appears with the registry address on its own line, and the other four proxy
-    controls do **not**. Switch it on → the host logs `proxy source=windows-registry`,
-    `proxyAvailable` flips to true, and the mode / test URL / test connection / log controls
-    appear. Switch it off → they disappear and the toggle is **still there**. With a proxy
-    variable set, the toggle must not appear at all. With a SOCKS-only or PAC-only registry it
-    appears with a tooltip explaining that it cannot be applied.
 
 ### Key Observation Points
 
@@ -626,7 +602,6 @@ form and each carries its own example, so they are not repeated here — check t
 | Hardcoding an environment-specific endpoint | An internal address published in the public repository | Make it a setting; keep built-in presets generic. Recovery needs `git filter-branch` **and** platform-side repository deletion — force-push only moves refs, and the old commits stay fetchable by SHA |
 | Injecting raw error text into a single-line log block | One message spills over many lines and destroys the alignment | Collapse with `_oneLine(v, max)` before pushing the line |
 | A diagnostic readout that answers a different question than the test | "Is a proxy active" and "what did the test do" disagree | Probe the same target in both: `proxyRouteForUrl()` takes the resolved `testUrl` |
-| Reading a live `process.env` to decide "what the user configured" | A plugin that installs a proxy policy sees its own publication echoed back: here `proxySource` flipped from `windows-registry` to `env` and the opt-in toggle vanished the moment it was switched on | Capture the launch snapshot once (`userEnvProxy()`) and detect from that. Keep the environment-only value separate from the effective one in the payload, or the UI hides the control it just enabled |
 
 ---
 
@@ -639,8 +614,6 @@ form and each carries its own example, so they are not repeated here — check t
 | `@deepseek-ai/dsh-settings` | devDep | Settings service types (host half) | |
 | `@deepseek-ai/schemastery` | dep | Schema definition for settings | Required at runtime — the host half **statically imports** it (default export; there is no named `Schema`). It must stay a real dependency: an ESM import of a missing package fails at load, unlike the old silent `require` in a try/catch |
 | `@deepseek-ai/dsh-http-proxy` | **not declared** | Re-installs the undici global dispatcher; answers `proxyRouteFor` | Ships nested inside the DSH install and is deliberately *not* a dependency of this plugin. Loaded through `loadProxyModule()`, which resolves DSH's own copy — see the System proxy section |
-
-> **No new dependency for the Windows proxy.** It is read with `reg query`, spawned through the already-present `node:child_process` import and cached for 10 s.
 
 ---
 
