@@ -26,7 +26,8 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 | 📐 Layout | Close on Blur | buttongroup | Off / On — auto-close the panel when clicking outside. Also a toggle in the panel header (both modes) | ✅ |
 | 📐 Layout | Trigger Position | select | Input Left / Input Right / Session Header / Header Utils — where the standalone ⚡ trigger is injected | ✅ |
 | ⚙️ System | Language | buttongroup | 中文 / English — switches DSH global UI language | ✅ |
-| ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control | ✅ |
+| ⚙️ System | Use Windows System Proxy | toggle | Offered **only** when no proxy variable is set *and* Windows has a manual proxy (Settings → Network & Internet → Proxy). Node ignores that setting, so reading it is not enough — switching this on actually applies it | ✅ |
+| ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control. Shown only while a proxy is in effect | ✅ |
 | ⚙️ System | Test URL | select | Google 204 / GitHub / DeepSeek API / Custom — the address the connection test probes. The effective URL is shown in full on its own line directly above Test Connection | ✅ |
 | ⚙️ System | Diagnostics Log | log | Read-only multi-line report of the **latest** connection test — one fact per line, hidden until the first test, ✕ clears (no 30s expiry) | ✅ |
 
