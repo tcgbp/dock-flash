@@ -19,14 +19,11 @@ Built-in switches are displayed in three groups (compact two-column layout):
 
 | Group | Switch | Type | Description | Standalone |
 | --- | --- | --- | --- | --- |
-| 🎨 Appearance | Zoom | slider | 50%–200%, controls global zoom via CSS `zoom` | ✅ |
 | 🎨 Appearance | Theme | select | Light / Dark / System — switches DSH global theme (includes wxj-black-hole conflict retry) | ✅ |
 | 🎨 Appearance | Skin | select | Dynamically discovers installed skin plugins and switches between them (requires dsh-market) | ✅ |
 | 🎨 Appearance | Fullscreen | toggle | Browser Fullscreen API — enter/exit fullscreen | ✅ |
 | 🎨 Appearance | Log Download | toggle | Show/hide the session log download button | ✅ |
-| 📐 Layout | Dock Position | buttongroup | Left / Right / Top / Bottom — switches the workbench dock edge | ❌ |
-| 📐 Layout | Auto Hide | toggle | Auto-hide on mouse leave / off | ❌ |
-| 📐 Layout | Close on Blur | buttongroup | Off / On — auto-close the floating panel when clicking outside | ❌ |
+| 📐 Layout | Close on Blur | buttongroup | Off / On — auto-close the floating panel when clicking outside | ✅ |
 | ⚙️ System | Language | buttongroup | 中文 / English — switches DSH global UI language | ✅ |
 | ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control | ✅ |
 
