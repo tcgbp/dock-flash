@@ -1,0 +1,22 @@
+# dsh-market submission entry for dock-flash.
+#
+# To submit: copy this file to
+#   <your-fork-of-awesome-dsh-plugin>/data/plugins/tcgbp__dock-flash.yml
+# and open a PR against https://github.com/awesome-dsh-plugin/awesome-dsh-plugin.
+# After it is merged, update it here rather than in a second place.
+#
+# Rules enforced by the registry's own scripts/lib/entries.mjs::validateEntries:
+#   - only these keys: url, name, category, description, tarball
+#     (no `npm:` key — the npm mapping is resolved from the repository)
+#   - filename must equal slugFor(url): <owner>__<repo>.yml
+#   - category must be one of the registry's CAT_IDS (this one is `ui`)
+#   - description.en is required, single line; description.zh is optional
+#   - tarball must be https on GitHub release hosting and end in .tgz/.tar.gz
+# Verified locally against that module: 0 problems.
+url: https://github.com/tcgbp/dock-flash
+name: tcgbp/dock-flash
+category: ui
+description:
+  en: 'Quick Control panel for DSH Web: a docked or floating shortcut panel whose switches other plugins register through the quickControl service. Includes a theme and skin switcher plus fine-grained NO_PROXY proxy controls, and works with dock-base or standalone.'
+  zh: DSH Web 的快捷控制面板：可停靠或浮动，开关项可由其它插件通过 quickControl 服务注册；内置主题/皮肤切换与细粒度 NO_PROXY 代理控制，可搭配 dock-base 或独立运行。
+tarball: https://github.com/tcgbp/dock-flash/releases/latest/download/dock-flash.tgz
