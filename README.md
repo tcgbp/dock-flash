@@ -46,6 +46,7 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 - 🔌 **Standalone Mode** — Works without dock-base: a ⚡ trigger injected into the configured conversation slot opens a floating popup panel
 - 📝 **Recent Changes** — Auto-records switch operations (30s TTL), displayed in "old value → new value" format
 - 🩺 **Connection Diagnostics** — A read-only multi-line log of recent proxy tests (route taken, redirect chain, timings, body size, socket error code) that persists across runs
+- 🧮 **Reorderable Panel** — A ⇅ icon in the Workbench and Extensions tab headers opens a reorder mode: ▲▼ move groups and switches, and the result persists per browser. Switches that declare a `cluster` move as one unit with a fixed internal order — the System proxy controls are the case that motivated it, since three of the four are hidden until a proxy is configured
 
 ### Host-side Features
 
@@ -150,6 +151,13 @@ interface QuickSwitchDefinition {
   order?: number
   /** Built-in group: 'appearance' | 'layout' | 'system' (only for dock-flash:* items; ignored by third-party switches) */
   group?: string
+  /**
+   * Optional cluster label. Switches sharing a label are reordered as ONE unit
+   * (a single ▲▼ pair) and keep a fixed internal order — their `order` field.
+   * Use it for controls whose meaning depends on staying together, especially
+   * when some of them are conditionally hidden by `visible`.
+   */
+  cluster?: string
 
   // ── Common to toggle / slider / select / buttongroup ──
   getValue?: () => any

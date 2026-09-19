@@ -200,6 +200,37 @@ Two consequences worth knowing:
 - Because no built-in switch carries `group: 'layout'` in **workbench** mode, the Layout subgroup is not rendered there and needs no special-casing: `groupOrder.filter((g) => builtInGroups.has(g))` already skips groups with no switches. In **standalone** mode the group exists and holds `trigger-position` plus `close-on-blur`.
 - The workbench header button paints its own active state imperatively instead of using `useState`, because dock-base may invoke `headerComponent` as a plain render function rather than mounting it as a component — hooks would then be illegal. Do not "tidy this up" into a hook. Its repaint subscription is disposed inside the `ref` callback, which React calls with `null` on unmount.
 
+### Panel ordering: units, one key, one writer
+
+Users can reorder the panel's groups and switches. The mode is entered from an icon in the
+header of every page that has something to rearrange (`page.order`, set where the pages are
+declared — the Changes page has nothing to order and deliberately has no icon), immediately
+left of the collapse chevron, icon-only with the wording in tooltips. Its handler **must**
+`stopPropagation()`, because that header is itself the collapse control.
+
+Four invariants hold this together:
+
+- **One key, one writer.** `dock-flash:panel-order` is written only by `writePanelOrder()` and
+  cleared only by `clearPanelOrder()`. Group keys are scope-qualified — `builtin:<group>` for
+  the Workbench tab, `ext:<source>` for an Extensions group — because the two tabs name groups
+  from different namespaces, and a third-party plugin may legitimately call itself `appearance`.
+- **A unit, not a switch, is what moves.** `groupUnits()` splits a group into units: a plain
+  switch is a unit of one keyed by its id, and switches sharing a `cluster` label are ONE unit
+  keyed by `\0cluster:<label>` — the label rather than the head's id, because `visible()` can
+  hide any member, and a head-keyed unit would change key the instant the head was hidden while
+  another member stayed on screen, losing the saved slot.
+- **Only deviations are stored.** The default order still comes from each switch's `order`
+  field, so a newly installed plugin or a new built-in switch appends to its group. Stale keys
+  are retained when a move writes the list back, so a group or unit that is merely hidden right
+  now keeps its slot; `applyOrder` filters them out for display.
+- **One function decides display order.** `displayUnits()` feeds both the normal view and edit
+  mode — that is the only reason the arrows can be trusted to agree with the result. An
+  untouched built-in group keeps the historical toggles-grid-then-rest look; a customized one
+  renders strictly in the saved order and therefore flattens, because a strict order and a
+  two-bucket split cannot both hold.
+
+`__dockFlashPanelOrder()` prints the order the last render resolved next to what is persisted.
+
 ### Stacking: why this panel needs its own context
 
 In workbench mode dock-base renders the panel inside `.dsh-wb-root`, which is `position: fixed; z-index: 49` and therefore **establishes a stacking context**. Two consequences, pointing in opposite directions:
@@ -436,8 +467,17 @@ When adding a host-side dependency, import it statically and declare it in `pack
 
 ### Optional switch fields
 
-Common to every type: `icon`, `order`, `group`, `label` (string, or `() => string` for i18n), and
-`visible`.
+Common to every type: `icon`, `order`, `group`, `label` (string, or `() => string` for i18n),
+`visible`, and `cluster`.
+
+`cluster: '<label>'` makes switches sharing a label **one reorderable unit** with a fixed
+internal order (their `order` field). Use it for controls whose meaning depends on staying
+together, especially when some are hidden by `visible` — the System proxy controls are the case
+that motivated it (a mode select, the URL, the test button, the log; three of the four appear
+only once a proxy is configured). A cluster's unit key is its **label**, not its first member's
+id: `visible()` can hide any member, so a head-keyed unit would change key the moment the head
+was hidden while another member stayed on screen, and the saved slot would be lost. See "Panel
+ordering: units, one key, one writer" under Architecture.
 
 `visible: () => boolean` drops the switch from the panel while it stays registered — its state,
 its changelog entries and every other reader keep working, so no dispose/re-register dance is
@@ -596,6 +636,13 @@ easiest to break invisibly.
 11. **Probe targets what is displayed**: Change the Test URL and immediately test → the logged
     `▶ <url>` is the new one, not the previous (the URL rides in the request body, so it cannot
     lag the UI).
+12. **Panel ordering**: the ⇅ icon sits in the Workbench *and* Extensions headers, immediately
+    left of the chevron, with no visible text (tooltips only), and clicking it does **not**
+    collapse the tab. Move a group, and a switch inside a group → the normal view matches what
+    edit mode showed, and a refresh keeps it. `↺` restores the default look (toggles grid
+    first). The System proxy controls move as ONE block with a single ▲▼, keeping
+    mode → URL → test → log, and configuring a proxy afterwards puts the newly visible rows
+    back inside that block rather than at the end of the group.
 
 ### Key Observation Points
 
