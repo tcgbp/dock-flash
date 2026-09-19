@@ -350,8 +350,8 @@ This plugin follows the DSH Web style contract: all colors reference `--dsw-alia
 
 | Dependency | Type | Description |
 | --- | --- | --- |
-| `dock-base` ^0.1.2 | peer (optional) | Provides `ctx.workbench` registry services for full workbench integration |
-| `@deepseek-ai/cordis` ^4.0.1 | peer | Plugin framework (bundled with DSH) |
+| `dock-base` >=0.1.2-0 <1.0.0-0 \|\| >=0.2.0-0 <1.0.0-0 | peer (optional) | Provides `ctx.workbench` registry services for full workbench integration |
+| `@deepseek-ai/cordis` >=4.0.0-rc.1 <5.0.0-0 \|\| >=4.0.1-0 <5.0.0-0 | peer | Plugin framework (bundled with DSH) |
 
 ## License
 

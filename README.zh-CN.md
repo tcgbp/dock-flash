@@ -348,8 +348,8 @@ pnpm run typecheck  # 仅类型检查
 
 | 依赖 | 类型 | 说明 |
 | --- | --- | --- |
-| `dock-base` ^0.1.2 | peer（可选） | 提供 `ctx.workbench` 注册表服务，用于完整工作台集成 |
-| `@deepseek-ai/cordis` ^4.0.1 | peer | 插件框架（DSH 自带） |
+| `dock-base` >=0.1.2-0 <1.0.0-0 \|\| >=0.2.0-0 <1.0.0-0 | peer（可选） | 提供 `ctx.workbench` 注册表服务，用于完整工作台集成 |
+| `@deepseek-ai/cordis` >=4.0.0-rc.1 <5.0.0-0 \|\| >=4.0.1-0 <5.0.0-0 | peer | 插件框架（DSH 自带） |
 
 ## 许可证
 
