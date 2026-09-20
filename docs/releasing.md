@@ -8,13 +8,14 @@ while writing code.
 
 ## The release runbook
 
-Run these in order. Which number to use is the `### Which number moves` table in `AGENTS.md` —
-that is a rule and stays there.
+Run these in order. Which number to use is decided by **Which number moves** below — patch for a bug
+fix, minor for anything additive a third party can observe, major for anything removed or renamed.
 
 ```sh
-# 1. Version, in BOTH places — they are not linked and nothing checks them.
-#      package.json          "version"
-#      lib/client.js:53      console.log('[dock-flash] client vX.Y.Z')
+# 1. Version, in BOTH places — they are not linked, so `pnpm run check:docs` asserts them.
+#      package.json        "version"
+#      lib/client.js       const CLIENT_VERSION — one constant, reported by the
+#                          startup log and by __dockFlashOverlay()
 #    Add the CHANGELOG.md row at the same time.
 
 # 2. If src/index.ts changed, rebuild and commit dist/ in the same commit.
@@ -50,6 +51,38 @@ own.
 - Do not try to verify by fetching `releases/latest/download/...` from the browser on the maintainer
   machine: `github.com` is intermittently unreachable there while `api.github.com` is not, so a
   connection reset says nothing about whether the asset is good.
+
+---
+
+## Which number moves
+
+Moved here from `AGENTS.md`, which keeps the one-line rule and points here: it is a release decision,
+not something needed while writing code.
+
+The version is **this package's own** — it says nothing about a sibling's, and nothing compares the
+two (npm, pnpm, the ModuleLoader and dsh-market all treat a plugin's version as private). What
+declares compatibility with dock-base is the `peerDependencies` range, not a major number, so
+`dock-flash 1.x` alongside `dock-base 0.2.2` is a supported pair by construction — and the family is
+uneven anyway (dock-git 0.3.4, dock-files 0.3.0, dock-images 0.1.2, dock-base 0.2.2). **Never
+renumber a released version:** a published tag and Release cannot be recalled, and stepping back from
+`1.x` to `0.x` is not expressible as a non-breaking change for anyone holding a range (`^1.0.0`
+accepts all of 1.x; `^0.2.2` accepts only `0.2.x`).
+
+Increment by what a third party can observe, not by how large the change felt:
+
+| Change | Number |
+|---|---|
+| Bug fix, internal refactor, docs, metadata | **patch** — `1.0.15` → `1.0.16` |
+| A new switch; a new field on `QuickSwitchDefinition` (as `subtitleBlock`, `visible`, `cluster` and `hideLabel` each were); a new switch type (as `log` was); a new service or event | **minor** — `1.0.15` → `1.1.0` |
+| Removing or renaming a published field, switch type, or a switch id other plugins may read; changing a route's response shape | **major** — `1.0.15` → `2.0.0` |
+
+Additive is what makes a minor safe to take: no downstream range needs rewriting for a field that did
+not exist before. The rule counts what **shipped**, not what a branch contained — dropping
+`clusterOpen` in 1.0.15 did not make it a major, because that field never appeared in a published
+version. Note that `1.0.1`–`1.0.15` shipped features as patches (`log`, `subtitleBlock`, `visible`,
+`cluster`, `hideLabel`), and `1.0.0` was declared for a packaging milestone — history squashed,
+`prepare` dropped — rather than for a frozen contract: those numbers are published and stand, and
+this table governs the next one.
 
 ---
 

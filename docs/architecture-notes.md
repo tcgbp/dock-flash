@@ -150,6 +150,177 @@ The standalone panel is unaffected — it is appended to `document.body` at z-in
 
 ---
 
+### The overlay trigger: three reasons the button did not work
+
+The overlay (1.3.0) shipped with a defect that made it invisible in **every** build, and a second one
+that would have survived the first fix.
+
+**1. `appendChild` was handed a React element.** `mountOverlayTrigger()` built the ⚡ glyph with
+`LightningIcon(16)`, which is `h('svg', …)` — a React element *descriptor*, a plain object carrying
+`$$typeof`/`type`/`props`. `el.appendChild()` requires a real `Node`, so it threw `TypeError: Failed
+to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'` on the line **before**
+`overlayEl = el`. The consequences chained: the button was never appended to `<body>`, so
+`__dockFlashOverlay()` reported `overlayElMounted: false` *with the position correctly selected and
+the anchor correctly found* — and because `applyTrigger()` runs before `ctx.inject(['slots'], …)` in
+`apply()`, that throw propagated into `apply()`'s own catch, so the slots callback never ran: **no**
+trigger position worked, and the trigger-position switch was never registered either. One position's
+failure was able to remove the other four.
+
+`LightningIcon()` is unchanged — it is correct everywhere React renders it (the panel's floating
+title bar). The hand-built button got `LightningIconNode()`, which builds the same `svg`/`path` via
+`createElementNS`. The rule worth keeping: **a React element is a child only for a React renderer.**
+
+**2. Acquisition was attempted exactly once.** `positionOverlayTrigger()` hides the button when
+`conversationViewport()` returns null, and that is right — with no session there is no corner to sit
+in. But `apply()` runs during app bootstrap, so at mount time there is *never* a conversation, and
+the old code then did two things nothing could undo: it left the button at its `display:none`
+default, and it attached the `ResizeObserver` only `if (vp)` — that is, only if it had already found
+the element. A geometry observer that was never attached fires nothing, so nothing was left to
+revisit the button. It sat mounted, in the DOM, and permanently invisible until an unrelated window
+resize happened to call `positionOverlayTrigger()` again.
+
+Acquisition is now separate from geometry:
+
+- A subtree `MutationObserver` on `document.body` re-attempts positioning **only while no anchor has
+  been adopted**, so its callback is two property reads (`!overlayAnchor ||
+  !overlayAnchor.isConnected`) and a stream of mutations cannot become a stream of layout reads.
+  `isConnected` is the test on purpose: a new session *replaces* the scroller, and the old node
+  disconnecting is invisible to a `resize` listener.
+- A **bounded** retry (~1.4s, backoff) covers what layout settling does not mutate anything for: a
+  conversation that is in the DOM with a zero box. A zero-size element is not an anchor, and
+  `conversationViewport()` rejects it.
+- The watcher is **not** disconnected once an anchor is found, for the reason above.
+- `applyTrigger()` wraps `mountOverlayTrigger()` in a named, **non-fatal** catch, so a failure is
+  attributed ("overlay trigger failed to mount") rather than swallowed, and cannot take down the slot
+  positions that come after it.
+
+**3. Once it appeared, clicking it did nothing.** The overlay's click handler existed only to swallow
+the click that ends a drag:
+
+```js
+el.addEventListener('click', function (e) {
+  if (dragMoved) { e.preventDefault(); e.stopPropagation() }
+})
+```
+
+It never called `openPanel()`. `QuickTriggerIconButton` is a React button and gets its toggle from its
+own `onClick`; a hand-built element has to ask for it, and this one never did. So the button mounted,
+positioned itself perfectly — the probe printed `ok — element flex at 1236px,84px` — and was inert.
+`handleOutsideClick` already exempts `[data-dock-flash-trigger]`, so the closing half is not racing
+it, and `dragMoved` is cleared by the next `mousedown` rather than by the drag's own end, which is why
+a click straight after a drag still works.
+
+This one is worth noting for *why it was found late*: the first version of the harness asserted the
+end state of the mount and the position arithmetic, both of which were correct, so it passed on a
+button nobody could use. It now drives the gestures — two clicks open then close, a drag is swallowed
+and moves the offset instead, a click after a drag still toggles.
+
+**4. Every one of those fixes was labelled `1.3.0`, which is why they took several rounds to find.** A
+build that cannot name itself cannot be told from the previous one: the browser was being served a
+bundle older than every fix being tested, and "the fix did not work" and "the browser has the old
+code" produced identical symptoms. The decisive measurement is not in the browser at all — compare
+`lib/client.js`'s mtime against the DSH server's `StartTime`; when the file is newer than the server,
+the served snapshot predates it. `CLIENT_VERSION` is now a single constant, it is the **first** field
+`__dockFlashOverlay()` prints, and `pnpm run check:docs` fails when it disagrees with `package.json`.
+
+Verified by evaluating the real `lib/client.js` in a V8 sandbox against a minimal DOM, with the
+`slots` service deliberately never arriving: 18 checks pass on the fixed build — the button mounts
+anyway, becomes visible with no window resize once a conversation appears, clears a 10px
+`scrollbar-gutter` (content-right 1250 → left 1218, not 1226) and gives way to a right-hand turn rail
+(1168). The same harness against the pre-fix line fails 14 of them, with exactly that `appendChild`
+TypeError.
+
+---
+
+### The turn rail: a class test that stopped recognising DSH
+
+`turn-rail-left` (1.0.13) moves DSH's turn navigator to the left gutter. It is gated on
+`turnRailProbe()`, which finds the rail by structural signature rather than by the `eGxaPq_`
+CSS-module hash — hash-based selectors break on every DSH rebuild. The signature it settled on was
+`nav[class$="_frame"]` containing `div[class$="_scroller"]` and at least one `button[class*="_mark"]`.
+
+The two `$=` (ends-with) tests were the mistake, and only in one direction. DSH builds these class
+attributes by **joining** a list:
+
+```js
+const fadeClasses = [styles.scroller]
+if (scrollState.canScrollUp)   fadeClasses.push(styles.fadeTop)
+if (scrollState.canScrollDown) fadeClasses.push(styles.fadeBottom)
+jsx('div', { ref: scrollerRef, className: fadeClasses.join(' '), … })
+```
+
+So a rail that fits carries `"eGxaPq_scroller"` and matches, while a rail long enough to scroll —
+exactly when it is worth moving — carries `"eGxaPq_scroller eGxaPq_fadeBottom"` and does **not**.
+`scroller` read false, `usable` went empty, `reason` became `no-usable-rail`, and `visible` went
+false. That hid the `turn-rail-left` switch and stopped the overlay trigger giving way to the rail,
+and it did so *progressively*: the feature worked in a short conversation and vanished in a long one,
+which is why it was reported as "the feature has been lost" rather than as a bug. It also produced a
+diagnosis that pointed the wrong way — the panel showed the switch as simply absent, with nothing
+saying the rail had not been recognised.
+
+Two lessons, and they pull in opposite directions, so the token has to be chosen per case:
+
+- **`$=` is unsafe on any class attribute DSH may join.** `*=` (contains) is the resilient form.
+- **`*=` is unsafe when the token is a prefix of a sibling class.** `_preview` has exactly that
+  problem — `_previewPrompt` and `_previewResponse` are divs inside the preview card — so the
+  stylesheet keeps `div[class$="_preview"]`; switching it to `*=` would have moved the preview's own
+  text blocks to the left edge alongside the card.
+
+Verified against the running build rather than assumed: the DSH checkout's own
+`@deepseek-ai/dsh-client-ui-chat/lib/client.js` was read to confirm which classes are joined, that
+the mark really is a `<button>`, that the scroller really is a `<div>`, and that `nav[…="_frame"]`
+still matches only the chat nav (the other `<nav>`s carry `_crumbs`, `_nav` and `_panelList`) even
+though eight DSH modules define some `frame` class. The harness's simulated rail now uses that exact
+markup, including the joined fade class, so the suffix version fails three checks there.
+
+---
+
+### The bypass list's grammar, and why each proxy rule exists
+
+Moved here from `AGENTS.md`, which keeps the rules and points here for the detail.
+
+**The accepted grammar** — the one `dsh-http-proxy`'s matcher actually implements, which is what the
+client validator is written against:
+
+- entries split on commas or whitespace;
+- `*` means everything;
+- an optional leading `.` or `*.` means "this host and every subdomain under it";
+- an optional `:port` must equal the URL's port exactly.
+
+**Rejected**, with a message naming the offending entry: a blank or whitespace-only value (the two
+things it could have meant already have their own options — `all-proxy` and `all-bypass` — and an
+empty list is how `all-proxy` is spelled); anything containing `/ ? # @ \`, which catches both a
+pasted proxy URL (`http://…`, a dead entry here, since this switch owns the *bypass* list) and CIDR
+(the matcher has no CIDR support, so `10.0.0.0/8` would sit there as a dead entry); malformed hosts;
+IPv4 octets above 255; and ports outside 1-65535. Accepted values are normalized to a trimmed,
+comma-joined list, and **a rejection changes neither the mode nor the stored list**.
+
+`resolveNoProxy()` returns `undefined` for a **blank** custom value, removing `NO_PROXY` the way
+`all-proxy` does rather than publishing `NO_PROXY=''`. The host enforces that blank rule itself, since
+a value edited straight into `settings.yaml` never passes through the prompt.
+
+**Why the four rules are rules.** They are the residue of four independent defects that had combined
+into a silent total failure of the whole feature — each invisible because a `try/catch` or a
+"returns direct" path swallowed it:
+
+1. `require` does not exist in the ESM host half, so every `require('@deepseek-ai/dsh-http-proxy')`
+   threw — `installProxyFromEnvironment` was **never called**, so changing the mode never affected
+   actual traffic, only the `NO_PROXY` string.
+2. The same throw in `require('@deepseek-ai/schemastery')` happened *inside* the
+   `ctx.inject(['settings'], …)` callback, so `installSection` was never reached and **the
+   `dock-flash` settings namespace was never registered at all**.
+3. `proxyRouteFor(url)` was passed a **string** where it wants a `URL`, and it does not throw on a
+   string — it just answers "direct". Strings are rejected silently; that is why the rule is
+   "pass a `URL`".
+4. `installProxyFromEnvironment`'s disposer was dropped, leaking one `ProxyAgent` per mode change —
+   hence "keep and release the returned disposer".
+
+The cached handle must also be **the same module instance DSH booted with**: `loadProxyModule()`
+resolves DSH's own copy via `createRequire(process.argv[1])`, and a second copy answers
+`DIRECT_ROUTE` forever because the policy state is module-level.
+
+---
+
 ### User preferences live in the host, not the browser
 
 Three preferences — the panel order, the active skin and the standalone trigger position — are
@@ -221,6 +392,31 @@ Two habits follow from that, and they are the general lesson rather than a note 
   and the namespaces actually seen, so the next mismatch is a copy-paste rather than a bisect.
 
 ---
+
+**`describe()` answers `{ ok, value }`, and the namespace list is one level down: `value.namespaces`.**
+
+Each entry is `{ ns, value, base, user, applies, revision, secrets }`, and both spellings are
+accepted (`ns || namespace`, `value || resolved`). **This took three attempts, and the two wrong ones
+both looked right**: reading `desc.value` as the array (it is the view object), then reading
+`desc.namespaces` (one level too high). Both silently found nothing.
+
+The authority is `@deepseek-ai/dsh-client-ui-settings`, which unpacks it as
+`response.ok ? { view: response.value } : …` and then `view.namespaces.find((c) => c.ns === ns)`;
+the generated `typert.remote-client.js` is the other half of that contract. 1.1.3 keeps a regression
+check that runs the two old expressions against a real response and shows them returning `null`, and
+the failure message prints the response keys *and* the `value` keys so a third nesting mistake would
+be visible rather than inferred.
+
+**`settings.update(ns, patch, expectedRevision)` takes three arguments, and the runtime enforces the
+count** even though the wire schema marks the third optional
+(`z.union([z.undefined(), z.number()])`). Calling it with two throws
+`client api: settings/update expected 3 argument(s), got 2`.
+
+The revision is a compare-and-set token: it arrives as `ns.revision` in `describe()` and **changes on
+every successful write**, so it is cached in `_hostRevision`, sent on every write, and refreshed from
+`response.value.revision`. A stale revision fails exactly like a missing one, which is why the refresh
+is not optional. The authority for the pattern is `@deepseek-ai/dsh-client-ui-settings`:
+`expectedRevision ?? pendingRevision ?? snapshot.revision`.
 
 ---
 

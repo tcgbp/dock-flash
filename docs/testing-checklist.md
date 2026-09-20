@@ -10,7 +10,22 @@ rule rather than a step (layout overflow) and points here for the rest.
 ---
 
 
-dock-flash has no committed test suite — verify by eye after changes. Items are grouped where
+**`pnpm run check:overlay` is the one committed check**, and it replaces no item below — it proves
+what is otherwise invisible. It evaluates the real `lib/client.js` in a V8 sandbox against a minimal
+DOM and asserts the standalone overlay trigger's behaviour: the `slots` service **never arrives** (so
+the overlay must mount without it), the conversation appears only **after** the mount (the real
+bootstrap order), and the **gestures** work — two clicks open then close, the click ending a drag is
+swallowed and moves the offset instead, and a click straight after a drag still toggles. Run it after
+touching `applyTrigger()`, `mountOverlayTrigger()`, `positionOverlayTrigger()` or
+`conversationViewport()`; point `DOCK_FLASH_BUNDLE` at another copy to confirm it still fails on a
+broken one. It exists because every failure this trigger has had was invisible — a throw swallowed by
+`apply()`'s catch, an absent element indistinguishable from a position that was never selected, once
+a browser served a bundle older than every fix being tested, and a click handler that only swallowed
+the drag's click, which left the button inert while the probe still reported `ok`. That last one is
+why it asserts the gestures and not only the end state: the mount and the position arithmetic were
+both already correct.
+
+Everything else is verified by eye. Items are grouped where
 one pass covers several concerns, and the proxy block is the most detailed because it is the
 easiest to break invisibly.
 
@@ -90,23 +105,6 @@ easiest to break invisibly.
     ORDER and leaves the row hidden, while `↺` in visibility mode shows every row and leaves
     the order alone. Both survive a refresh AND a different browser, and appear in
     `settings.yaml` as `panelOrder.hidden`.
-13. **Preferences survive the browser, not just the reload** — the point of the host-backed move,
-    and the one check that cannot be done from a single tab:
-    - Move a group, hide a row, pick a skin, and (standalone) change the trigger position. Then open the
-      **same profile in a different browser**, or clear this browser's localStorage and reload →
-      all three come back. That is the whole feature; a reload alone proves nothing, because
-      localStorage would have answered it too.
-    - `settings.yaml` in the profile now carries `panelOrder`, `activeSkin` and
-      `triggerPosition` under the `dock-flash` namespace.
-    - **Upgrade path**: with localStorage holding values the host has never seen, reload → the
-      host console logs `migrating browser-local preferences to host settings: …` once, and the
-      values appear in `settings.yaml`. Reload again → no second log (idempotent, because by then
-      the host is no longer empty).
-    - With no settings service at all, the panel still renders and everything stays in
-      localStorage — no crash, no empty panel.
-    - A bad value typed straight into `settings.yaml` (say `panelOrder` as a list) is refused at
-      load rather than corrupting the namespace, and the panel falls back to its defaults.
-
 14. **Layout overflow — measure it, do not eyeball it.** The panel has no committed
     test suite and no headless browser, so "it looks fine" was the only check a UI change
     ever got — and that is how a horizontal scrollbar survived several releases without
@@ -126,3 +124,85 @@ easiest to break invisibly.
       That single rule is behind every overflow this plugin has actually had; `minWidth: 0`
       on the shrinking box is the fix, and `box-sizing: border-box` is required whenever a
       `minWidth` floor and padding are combined.
+
+15. **The overlay trigger** (standalone, position = Conversation top-right). Open a session first —
+    with no conversation there is no anchor and the button is hidden, which is correct rather than a
+    bug:
+    - It appears 8px inside the conversation's top-right corner, **clear of the scrollbar**. Make the
+      conversation long enough to scroll and confirm the button does not move or overlap it — that
+      is the `scrollbar-gutter: stable` arithmetic, and a guessed width would fail here.
+    - With DSH's turn rail on the right, the button sits left of it. Flip the **Timeline on the
+      Left** switch → the rail moves to the other side and the button returns to the corner.
+    - **Drag it**: the pointer becomes a grab hand, the button follows, and it stops at the
+      conversation's edges — never over the scrollbar, never outside the conversation.
+    - **A drag must not toggle the panel**: press, move more than a few pixels, release → the panel
+      stays as it was. Then click without moving → it opens. That ±3px boundary is the whole
+      difference between the two gestures.
+    - **It follows the layout**: with the button dragged somewhere distinctive, open the right
+      sidebar, drag the left sash, and resize the window. The button keeps its place relative to the
+      conversation corner in all three (this is what the `ResizeObserver` is for; a window `resize`
+      listener would miss the first two).
+    - **It appears on its own, with no interaction.** Reload with the position already set, then open
+      a session — the button must show up without resizing the window. Mounting happens at bootstrap,
+      before any conversation exists, so this is the acquisition path (the `MutationObserver` plus the
+      bounded retry); with a single positioning attempt at mount you get a mounted, in-the-DOM,
+      permanently invisible button.
+    - **Read `__dockFlashOverlay()` and check `clientVersion` FIRST.** It must equal `package.json`'s
+      version. A browser served a stale bundle and a fix that did not work look identical in every
+      other field, and did for several rounds. Then `overlayElMounted: true`, `anchorAdopted: true`,
+      and a verdict starting with `ok`.
+    - **The offset survives a refresh and a different browser**, and appears in `settings.yaml` as
+      `triggerOverlayOffset`.
+
+
+16. **Preferences survive the browser, not just the reload** — the point of the host-backed move,
+    and the one check that cannot be done from a single tab:
+    - Move a group, hide a row, pick a skin, and (standalone) change the trigger position. Then open the
+      **same profile in a different browser**, or clear this browser's localStorage and reload →
+      all three come back. That is the whole feature; a reload alone proves nothing, because
+      localStorage would have answered it too.
+    - `settings.yaml` in the profile now carries `panelOrder`, `activeSkin` and
+      `triggerPosition` under the `dock-flash` namespace.
+    - **Upgrade path**: with localStorage holding values the host has never seen, reload → the
+      host console logs `migrating browser-local preferences to host settings: …` once, and the
+      values appear in `settings.yaml`. Reload again → no second log (idempotent, because by then
+      the host is no longer empty).
+    - With no settings service at all, the panel still renders and everything stays in
+      localStorage — no crash, no empty panel.
+    - A bad value typed straight into `settings.yaml` (say `panelOrder` as a list) is refused at
+      load rather than corrupting the namespace, and the panel falls back to its defaults.
+
+17. **DSH-drift check: does `dock-flash` still recognise DSH's own markup?** Run this after any DSH
+    upgrade, and whenever a feature that used to work "disappears" — because that is what this class
+    of breakage looks like. Nothing is deleted; a selector simply stops matching.
+    - `__dockFlashTurnRail()` with a **long** conversation must report `visible: true`. A short
+      conversation is the wrong test: the rail's scroller is `[scroller, fadeTop?, fadeBottom?]
+      .join(' ')`, so the extra classes only appear once the rail is long enough to scroll — which
+      is exactly when the feature matters. `reason: "no-usable-rail"` while the rail is plainly on
+      screen means a class test has gone stale, and its first consequence is that the **Timeline on
+      the Left** switch is not in the panel at all.
+    - Confirm every class test is `*=` and not `$=`. `$=` (ends-with) breaks the moment DSH joins a
+      second class onto the attribute; `*=` (contains) breaks if the token is a prefix of a sibling
+      class, which is why `div[class$="_preview"]` is the one deliberate exception.
+    - Re-read the markup in DSH's own bundle rather than guessing — the class map and the JSX are
+      both readable in `@deepseek-ai/dsh-client-ui-chat/lib/client.js`, which is how the
+      `nav[…="_frame"]` question ("is it still unique among `<nav>`s?") gets a real answer instead
+      of an assumption.
+    - `pnpm run check:overlay` reproduces DSH's rail markup including the joined fade class, so it
+      catches this one; it cannot catch a token that is renamed outright, which is what this item is
+      for.
+
+18. **A registered control is reachable from BOTH configuration pages, whatever its `visible()`
+    answers.** This is the rule that makes a stood-down switch orderable and hideable at all, and it
+    is easy to regress by moving the `visible()` filter back up into the grouping:
+    - Pick a switch you know is stood down right now (no proxy configured → the proxy probe; no
+      session → the turn-navigation switch). Open `⇅` **and** `◉`: the row must be listed in both,
+      dimmed, with a tooltip saying its plugin is standing it down.
+    - In `◉`, tick it — the choice is remembered even though the row still is not in the normal view.
+      Then untick a *shown* row: it must stay listed in `⇅` too, dimmed with "hidden by you".
+    - `__dockFlashPanelOrder()` is the mechanical form of the same question: a stood-down unit appears
+      in `switches` (the inventory) and in `stoodDown`, and not in `drawn`; its group is absent from
+      `groupsDrawn` while every other group is present. `pnpm run check:overlay` asserts exactly
+      that, including that the normal view still drops a group whose every control is filtered.
+    - The normal view must be **unchanged** by any of this: a stood-down or user-hidden row is
+      invisible there, and no group title floats above nothing.

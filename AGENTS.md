@@ -34,7 +34,7 @@ file buys nothing. `docs/` is not a candidate name, which is why relocation work
 dock-flash/
 ├── src/index.ts          HOST half — settings namespace + proxy toggle (tsc → dist/)
 ├── dist/index.js         Compiled host half
-├── lib/client.js         BROWSER half — quickControl registry + panel + skin system + i18n (~3841 lines, single file, NO build step, organized by #region markers)
+├── lib/client.js         BROWSER half — quickControl registry + panel + skin system + i18n (single file, NO build step, organized by #region markers)
 ├── cordis.patch.yml      Bundle layer — inserts host rows into profile
 ├── package.json          Plugin manifest + dsh.client.inject
 ├── README.md             English docs (canonical)
@@ -48,7 +48,8 @@ dock-flash/
 │   ├── testing-checklist.md    the per-change verification procedure
 │   └── releasing.md            the release and mirror-sync procedure
 └── scripts/              Repo tooling (not published — see `files` in package.json)
-    └── check-docs-size.mjs     `pnpm run check:docs`
+    ├── check-docs-size.mjs     `pnpm run check:docs`
+    └── check-overlay-mount.mjs `pnpm run check:overlay`
 ```
 
 - **Host half** (`src/index.ts`): compiled via `pnpm run build` (tsc). Touch only this file for host-side changes.
@@ -110,7 +111,77 @@ dock-flash can run in two modes:
 
 **Standalone mode** (no dock-base) — injects a ⚡ trigger button through `ctx.slots.inject(<slot>, ...)`, where the slot is chosen by the `trigger-position` switch (`dock-flash:trigger-position`, default `conversation.input.right`). Clicking the trigger toggles a floating QuickControlPanel anchored to the button. The floating panel has a drag-to-move title bar (⠿ grip + ⚡ + the localized `title` string + close-on-blur toggle + × close) and uses `react-dom/client`'s `createRoot`. That toggle and the outside-click handler read the same `localStorage` key, so close-on-blur here behaves exactly as it does in workbench mode.
 
-**`sidebar.footer.action` is deliberately not offered as a trigger position.** It is a shared slot that CordisPanel and other plugins also occupy, and a second occupant produces visual conflicts with them. Do not re-add it to `TRIGGER_POSITIONS`, and keep the fallback in `loadTriggerPosition()` pointing at a conversation slot. Note the trade-off: every remaining position lives inside the conversation UI, so with no session open the trigger is not rendered at all — that is accepted.
+**`sidebar.footer.action` is deliberately not offered as a trigger position.** It is a shared slot that CordisPanel and other plugins also occupy, and a second occupant produces visual conflicts with them. Do not re-add it to `TRIGGER_POSITIONS`, and keep the fallback in `loadTriggerPosition()` pointing at a conversation slot. Note the trade-off: every slot-based position lives inside the conversation UI, so with no session open the trigger is not rendered at all — that is accepted.
+
+### The overlay trigger: the one position that is not a slot
+
+`conversation.overlay` floats a draggable ⚡ inside the conversation's top-right corner. **Its
+`TRIGGER_POSITIONS` entry carries no `slot`, and that absence is the mechanism** — `injectTrigger()`
+takes the overlay path instead of registering into a slot. A slot is a place in DSH's layout, and
+this position exists precisely to sit *over* the conversation rather than be laid out by it, so
+`conversation.session.header.corner` — the nearest thing DSH offers — is not usable even though it
+looks right: it is `kind: "single"` (the renderer keeps only `entriesOfSlot[0]`), so a second
+occupant does not queue, it **disappears**, and `@deepseek-ai/dsh-client-ui-sidebar-right` already
+ships there with its expand button.
+
+Six things must hold together:
+
+- **The anchor is found structurally, never by class name.** `conversationViewport()` matches
+  `div[class*="_scrollBody"]` whose computed `overflow-y` is auto/scroll, then requires a non-zero
+  box inside the viewport and prefers the largest. `wSkVaW_scrollBody` is a CSS-module hash that
+  changes on any DSH rebuild, so matching it would break silently on an unrelated upgrade — the same
+  reasoning as the turn rail, and it carries the same "in the DOM is not on screen" trap.
+- **The scrollbar is cleared by arithmetic, not by a guessed width.** That element declares
+  `scrollbar-gutter: stable`, so the gutter is reserved whether or not a scrollbar is showing, and
+  `rect.width - el.clientWidth` reads it exactly. A guessed constant would be wrong on any platform
+  with a different scrollbar, and would make the button jump when content crossed the scroll
+  threshold.
+- **The turn rail is cleared through `turnRailProbe()`,** not by measuring `nav[class*="_frame"]`
+  again — that function already owns "is the rail visible", "has another plugin taken the surface
+  over", and "which of several candidates is the on-screen one". **Class tests use `*=` and never
+  `$=`**, because DSH joins class lists: the rail's scroller is
+  `[scroller, fadeTop?, fadeBottom?].join(' ')`, so a rail that merely grew stopped matching a
+  suffix test — which hid the `turn-rail-left` switch from the panel and stopped this button giving
+  way to the rail. `_preview` is the one token that must stay `$=`, since `_previewPrompt` and
+  `_previewResponse` are its siblings. Only a rail on the RIGHT competes with this corner; the
+  `turn-rail-left` switch moves it away from the same place, so a left-side rail must not shift the
+  button.
+- **The offset is relative to the conversation corner, and the button is clamped, not the offset.**
+  Storing `{dx, dy}` inward from that corner is what makes the button follow the corner when the
+  right sidebar opens, the sash moves or the window resizes — which is why a `ResizeObserver` on the
+  viewport (not a window `resize` listener) is what keeps it in place, since two of those three never
+  fire one. A drag adjusts the offset; the clamp then holds the RESULT inside the viewport, so a
+  stored offset survives a shrink that the position does not.
+- **The glyph is real DOM, not a React element.** `LightningIcon()` returns `h('svg', …)` — a React
+  element *descriptor*, a plain object — and the hand-built button's `appendChild` needs a `Node`, so
+  it threw `TypeError: parameter 1 is not of type 'Node'` before `overlayEl = el`: the button was
+  never in the DOM, and because the mount precedes `ctx.inject(['slots'], …)`, **no** trigger position
+  worked at all. `LightningIconNode()` builds the same `svg`/`path` via `createElementNS`.
+- **Acquisition is retried, never attempted once.** `apply()` runs before any conversation exists, so
+  positioning at mount finds no anchor, leaves the button hidden, and attaches no `ResizeObserver` —
+  it is attached to an element that does not exist yet. A subtree `MutationObserver` (armed while no
+  anchor is adopted, and **not** disconnected once one is found, because a new session builds a new
+  scroller) plus a bounded retry for a viewport that exists but is not yet laid out. The mount is
+  wrapped in a named, non-fatal catch, because it precedes `ctx.inject(['slots'])`.
+
+> The defects in full, with the measurements and the harness that proves them:
+> [docs/architecture-notes.md](docs/architecture-notes.md).
+
+**Drag reuses the panel's machinery rather than adding a second one.** `beginOverlayDrag()` sets the
+shared `dragging`/`dragSource`/`dragMoved` state, so `ensureGlobalListeners()`'s existing move and
+end handlers apply unchanged — including the ±3px threshold that `dragMoved` records, which the
+overlay's own click handler reads to swallow the click ending a drag. Without that, releasing a drag
+would toggle the panel. The offset is written on release, not per move: a drag is one intent, and a
+host round trip per pixel is not.
+
+**Swallowing the drag's click is the FIRST half of that handler, not the whole of it.**
+`QuickTriggerIconButton` is a React button and gets its toggle from its own `onClick`; a hand-built
+element has to call `openPanel()`/`closePanel()` itself. A handler that stopped at the swallow left a
+button that mounted, positioned itself correctly and did nothing when pressed — so if you touch this
+handler, keep the toggle in it. `handleOutsideClick` already exempts `[data-dock-flash-trigger]`, so
+the closing half is not racing it, and `dragMoved` is cleared by the next `mousedown` rather than by
+the drag's own end — which is why a click straight after a drag still works.
+
 
 ### Mode Detection
 
@@ -132,7 +203,10 @@ The `inject` array is empty (`inject: []`) — workbench is resolved lazily via 
 
 **Critical**: `dsh.client.inject` in `package.json` MUST include `"dock-base"` (the base package name, NOT `"dock-base/client"`). This is NOT a hard dependency — it's a **load-order hint** for the DSH ModuleLoader. When dock-base is installed, `arriveGraphRow()` ensures it loads before dock-flash, so `ctx.get('workbench')` finds the service already registered at `apply()` time. When dock-base is absent, the entry is silently skipped (`graphRows.get('dock-base')` returns `undefined`), and dock-flash enters standalone mode. Without this load-order hint, dock-flash may load before dock-base, causing `ctx.get('workbench')` to return `undefined` even when dock-base IS installed.
 
-**Why `"dock-base"` not `"dock-base/client"`**: The client-side `arriveGraphRow()` (dsh-client-modules/lib/client.js line 265-268) looks up `inject` entries via `this.graphRows.get(packageName)` WITHOUT stripping the `/client` suffix. Graph row keys are base package names (e.g., `"dock-base"`). So `graphRows.get("dock-base/client")` returns `undefined` — the load-order hint is silently ignored. The `external` path (line 259-263) correctly calls `stripClientSuffix()` before lookup, but `inject` does not. Always use the base package name in `dsh.client.inject`.
+**Why the base name**: `arriveGraphRow()` looks up `inject` entries with
+`graphRows.get(packageName)` and never strips the `/client` suffix, while graph-row keys are base
+package names — so `graphRows.get("dock-base/client")` returns `undefined` and the hint is silently
+ignored. (The `external` path *does* strip it first; `inject` does not.)
 
 ### Two-Half Model
 
@@ -179,30 +253,23 @@ The proxy controls are one `cluster`; see "Panel ordering" above and the QuickCo
 
 #### Talking to `@deepseek-ai/dsh-http-proxy`
 
-Four things must hold together, or the mode switch changes nothing: **load it through one cached
-handle** (`loadProxyModule()`, resolving DSH's own copy via `createRequire(process.argv[1])`); **that
-handle must be the same module instance DSH booted with** (a second copy answers `DIRECT_ROUTE`
-forever); **pass a `URL`, not a string** (handed a string it does not throw, it silently reports
-"direct"); and **keep the returned disposer** (ignoring it leaks one `ProxyAgent` and its socket pool
-per mode change — release the previous install before taking a new one). Resolve the policy from the
-ctx service **`launchEnvironment`**, not `process.env`; override only `NO_PROXY`/`no_proxy`. The
-narrow claim to keep honest: this plugin owns the **bypass list**, not the proxy address, and
-installing replaces the process-global dispatcher for everything in the DSH process.
+Four rules, or the mode switch changes nothing: load it through the **one cached handle**
+(`loadProxyModule()`, resolving DSH's own copy) and make sure it is **the instance DSH booted with**
+(a second copy answers `DIRECT_ROUTE` forever); pass a **`URL`**, never a string (handed a string it
+does not throw, it silently reports "direct"); **keep and release the returned disposer** — ignoring
+it leaks one `ProxyAgent` and its socket pool per mode change; and resolve the policy from the
+**`launchEnvironment`** service, not `process.env`, overriding only `NO_PROXY`/`no_proxy`. This plugin
+owns the **bypass list**, not the proxy address, and installing replaces the process-global dispatcher
+for the whole DSH process.
 
-**The bypass list is validated on the way in** (`custom` mode), against the grammar the package
-actually matches with: entries split on commas or whitespace, `*` means everything, an optional
-leading `.`/`*.` means the host and every subdomain under it, an optional `:port` must equal the URL's
-port. Rejected: blank (the two things it could mean have their own options), anything containing
-`/ ? # @ \` — which covers both a pasted proxy URL and CIDR (the matcher has no CIDR support, so
-`10.0.0.0/8` would sit there as a dead entry) — malformed hosts, IPv4 octets above 255, and ports
-outside 1-65535. Accepted values are normalized to a trimmed, comma-joined list; a rejection changes
-neither the mode nor the stored list. `resolveNoProxy()` returns `undefined` for a **blank** custom
-value, removing `NO_PROXY` the way `all-proxy` does rather than publishing `NO_PROXY=''`; the host
-enforces that blank rule itself, since a value edited straight into `settings.yaml` never passes
-through the prompt.
+`custom` values are **validated on the way in** against the grammar the matcher actually implements;
+a rejection changes neither the mode nor the stored list, and a blank value makes `resolveNoProxy()`
+return `undefined` so `NO_PROXY` is removed rather than published empty (the host enforces that blank
+rule too, since a value edited into `settings.yaml` never passes through the prompt).
 
-> The four defects that made the proxy a silent no-op for the entire life of the feature, and the
-> measured detail behind each rule above: [docs/architecture-notes.md](docs/architecture-notes.md).
+> The four defects that made the proxy a silent no-op for the life of the feature, the exact
+> accept/reject grammar, and the reasoning behind each rule above:
+> [docs/architecture-notes.md](docs/architecture-notes.md).
 
 ### Module Loading
 
@@ -252,12 +319,14 @@ Seven invariants:
   the Workbench tab, `ext:<source>` for an Extensions group, because the two tabs name groups from
   different namespaces. Each clear carries the OTHER field through untouched, and neither
   `localStorage.removeItem`s the key: removing it would drop the half it preserves.
-- **Two layers of "not shown", ANDed, never merged.** A switch's `visible()` is the PLUGIN saying "I
-  do not apply right now"; `panelOrder.hidden` is the USER saying "I do not want it". So a user
-  cannot force back a row the plugin has stood down, and a plugin cannot drag back one the user put
-  away. Hidden rows are listed **only** in visibility mode (un-hiding needs them on screen) and
-  filtered on every other surface, which is what keeps the normal view and reorder mode agreeing
-  about what exists.
+- **Two layers of "not shown", ANDed — but only in the normal view.** A switch's `visible()` is the
+  PLUGIN saying "I do not apply right now"; `panelOrder.hidden` is the USER saying "I do not want
+  it". Neither can override the other: a user cannot force back a row the plugin has stood down, and
+  a plugin cannot drag back one the user put away. **Both editing modes are INVENTORIES and list
+  every registered unit**, stood-down and user-hidden ones included, because a row that is not drawn
+  cannot be ordered or hidden — a stood-down switch used to be unreachable in every mode at once,
+  which is how the turn-rail switch was lost. A row the normal view would filter is dimmed in the
+  editing modes and its tooltip names the layer that removed it.
 - **A unit, not a switch, is what moves.** `groupUnits()` splits a group into units: a plain switch
   is a unit of one, and switches sharing a `cluster` label are ONE unit keyed by `\0cluster:<label>`
   — the label, not the head's id, because `visible()` can hide any member, so a head-keyed unit would
@@ -511,13 +580,24 @@ paths; it is null before `apply()`, which `savePrefs()` tolerates.
 
 **`remote` is a typert namespace: it resolves only if the plugin declares it in `inject`.** A client plugin that merely `ctx.get('remote')`s it gets `undefined` — and a typert namespace is not a service, so there is no service lookup to fall back on. This plugin shipped with `inject: []` and therefore never reached the host settings at all; `@deepseek-ai/dsh-client-ui-settings`, which does the same job, declares `inject = ["remote", "remote.settings"]`. **Both names are required** — `remote` alone is not enough. One accessor, `_remoteSettings(ctx)`, is the only reader: it prefers `ctx.remote.settings`, keeps `ctx.get('remote')` as a fallback for an older surface, and every call site (the preference bridge, the proxy read-back, the two proxy writes, the black-hole hand-off) goes through it.
 
-**`describe()` answers `{ ok, value }`, and the view is one level down: `value.namespaces`.** Each entry is `{ ns, value, base, user, applies, revision, secrets }`. The authority is `@deepseek-ai/dsh-client-ui-settings`, which unpacks it as `response.ok ? { view: response.value } : …` and then `view.namespaces.find((c) => c.ns === ns)`; the generated `typert.remote-client.js` is the other half of that contract. **This took three attempts, and the two wrong ones both looked right**: reading `desc.value` as the array (it is the view object), then reading `desc.namespaces` (one level too high). Both silently found nothing. The failure message reports the response keys *and* the `value` keys, so the next nesting mistake is visible instead of inferred, and 1.1.3 keeps a regression check that runs the two old expressions against a real response and shows them returning `null`.
+**`describe()` answers `{ ok, value }`, and the namespace list is one level down at
+`value.namespaces`** — each entry `{ ns, value, base, user, applies, revision, secrets }`, with both
+spellings accepted (`ns || namespace`, `value || resolved`). Getting that nesting wrong is the
+characteristic failure here: it looks right and silently finds nothing, so the failure message prints
+the response keys *and* the `value` keys.
 
-**`settings.update(ns, patch, expectedRevision)` takes three arguments, and the runtime enforces the count** even though the wire schema marks the third optional (`z.union([z.undefined(), z.number()])`). Calling it with two throws `client api: settings/update expected 3 argument(s), got 2`. The revision is a compare-and-set token: it arrives as `ns.revision` in `describe()` and **changes on every successful write**, so it is cached in `_hostRevision`, sent on every write, and refreshed from `response.value.revision`. A stale revision fails exactly like a missing one, which is why the refresh is not optional. The authority for the pattern is `@deepseek-ai/dsh-client-ui-settings`: `expectedRevision ?? pendingRevision ?? snapshot.revision`.
+**`settings.update(ns, patch, expectedRevision)` takes THREE arguments, and the runtime enforces the
+count** — calling it with two throws `client api: settings/update expected 3 argument(s), got 2`,
+even though the wire schema marks the third optional. The revision is a compare-and-set token: it
+arrives as `ns.revision` and **changes on every successful write**, so it is cached in
+`_hostRevision`, sent on every write, and refreshed from `response.value.revision`. A stale revision
+fails exactly like a missing one.
 
-**The descriptor's fields are `ns` and `value` — not `namespace` and `resolved`.** Both spellings
-are accepted (`n.ns || n.namespace`, `ns.value || ns.resolved`) and the descriptor is echoed on
-failure. Two habits follow, and they are the general lesson:
+> The three attempts that nesting took, the authoritative source for each shape above, and the
+> regression check pinning the two wrong expressions:
+> [docs/architecture-notes.md](docs/architecture-notes.md).
+
+Two habits follow, and they are the general lesson:
 
 - **Never let a load path return a bare `false`.** Every exit records a *named* reason, logs it, and
   `__dockFlashPrefs()` reports the host's view beside localStorage's. This is Critical Rule 11's
@@ -525,26 +605,21 @@ failure. Two habits follow, and they are the general lesson:
 - **Print the shape you did not recognise** — the failure message lists the descriptor's keys and the
   namespaces actually seen, so the next mismatch is a copy-paste rather than a bisect.
 
-The Schema types the client's values **loosely on purpose**: `activeSkin` may name a skin absent
-from this machine and `triggerPosition` names a slot the client validates against its own list, so an
-`enum` in the host would make a stored preference un-writable the moment the client's lists change.
-Two schemastery details: **`dict` takes `(value, key)`** (the reverse of how it reads, and wrong only
-at first resolve), and **every level of a nested object needs `.default()`**, or the whole resolve
-fails with `unsupported type "undefined"`. (Unrelated: `Schema.resolve(schema, options)` takes
-**options**, not a value — call `Schema(value)`.) A validation failure rejects **before** anything is
-persisted.
+The Schema types the client's values **loosely on purpose** — an `enum` in the host would make a
+stored preference un-writable the moment the client's lists change. Three schemastery traps:
+**`dict` takes `(value, key)`** (the reverse of how it reads, and wrong only at first resolve);
+**every level of a nested object needs `.default()`**, or the resolve fails with `unsupported type
+"undefined"`; and `Schema.resolve(schema, options)` takes **options**, not a value — call
+`Schema(value)`. A validation failure rejects **before** anything is persisted.
 
 > Migration rules, and the 1.1.0 defect that produced the two habits above:
 > [docs/architecture-notes.md](docs/architecture-notes.md).
 
 ### Preference Persistence
 
-- Active skin is stored in the host settings namespace (`activeSkin`), with `localStorage`
-  (`dock-flash:active-skin`) kept only as a cache — see "User preferences live in the host, not
-  the browser" below
-- The market's `live` theme is written through to both layers on read, but only when it
-  disagrees with the host, so an unchanged value costs no round trip
-- `MutationObserver` on `<head>` re-applies preference when late-loading skins appear
+The market's `live` theme is written through to both layers on read, but only when it disagrees with
+the host, so an unchanged value costs no round trip, and a `MutationObserver` on `<head>` re-applies
+the preference when late-loading skins appear.
 
 ---
 
@@ -582,9 +657,12 @@ exactly one control. See "Panel ordering and visibility: two modes, one writer" 
 
 `visible: () => boolean` drops the switch from the panel while it stays registered — its state,
 its changelog entries and every other reader keep working, so no dispose/re-register dance is
-needed. The panel filters **before grouping**, so a group whose every switch is hidden does not
-render its title above nothing, and `renderSwitch` checks it again as a backstop for other
-callers. The predicate is re-evaluated on every render and the panel re-renders on any
+needed. It is applied at the **row** level and **only in the normal view**: both editing modes list
+every registered control, because one that is not drawn cannot be ordered or hidden (see "Panel
+ordering and visibility"). The normal view also drops a group that would draw no rows, so a title
+never floats above nothing, and `renderSwitch` re-checks the predicate as a backstop for any other
+caller unless it is passed `force` — which is what the editing modes do. The predicate is
+re-evaluated on every render and the panel re-renders on any
 `notifyChange`, which means a switch driven by `visible` **must** notify when its condition
 changes, or it flips only on the next unrelated render. `_fetchProxyStatus()` does this for the
 proxy controls via `notifyChange('dock-flash:system-proxy')`.
@@ -649,6 +727,15 @@ that let three real defects ship. One item in it is a rule, not a step, so it st
   had; `minWidth: 0` on the shrinking box is the fix, and `box-sizing: border-box` is required
   whenever a `minWidth` floor and padding are combined.
 
+### `pnpm run check:overlay`
+
+The **one committed check**: it evaluates the real `lib/client.js` in a V8 sandbox and asserts the
+overlay trigger's **behaviour** — that it mounts with the `slots` service never arriving and the
+conversation appearing only after the mount, and that the gestures work. **Assert the gesture, not
+only the end state**: the first version checked the mount and the position arithmetic, both correct,
+and passed on a button nobody could click. Full procedure:
+[docs/testing-checklist.md](docs/testing-checklist.md).
+
 
 ### Key Observation Points
 
@@ -697,36 +784,20 @@ mismatch, and the `_skinBodyAttrs` cases — are in **[docs/architecture-notes.m
 
 ## Version History Pattern
 
-- Update version in **both** `package.json` (line 3) and `lib/client.js` (line 53: `console.log('[dock-flash] client v0.X.X')`)
+- Update version in **both** `package.json` (line 3) and the single `const CLIENT_VERSION` near the top of `lib/client.js`'s factory — the startup log and `__dockFlashOverlay()` both report it. One constant rather than a literal in the log line, because **a build that cannot name itself cannot be told apart from the previous one**: several rounds of overlay fixes were all labelled `v1.3.0`, so a reload that silently served a stale bundle was indistinguishable from a fix that had not worked. `pnpm run check:docs` asserts the two agree.
 - Both READMEs must stay in sync — same structure, same content, different language
 - No changelog in the READMEs — `CHANGELOG.md` and git log are the history records
 
 ### Which number moves
 
-The version is **this package's own** — it says nothing about a sibling's, and nothing compares
-the two (npm, pnpm, the ModuleLoader and dsh-market all treat a plugin's version as private).
-What declares compatibility with dock-base is the `peerDependencies` range, not a major number,
-so `dock-flash 1.x` alongside `dock-base 0.2.2` is a supported pair by construction — and the
-family is uneven anyway (dock-git 0.3.4, dock-files 0.3.0, dock-images 0.1.2, dock-base 0.2.2).
-**Never renumber a released version:** a published tag and Release cannot be recalled, and
-stepping back from `1.x` to `0.x` is not expressible as a non-breaking change for anyone holding a
-range (`^1.0.0` accepts all of 1.x; `^0.2.2` accepts only `0.2.x`).
-
-Increment by what a third party can observe, not by how large the change felt:
-
-| Change | Number |
-|---|---|
-| Bug fix, internal refactor, docs, metadata | **patch** — `1.0.15` → `1.0.16` |
-| A new switch; a new field on `QuickSwitchDefinition` (as `subtitleBlock`, `visible`, `cluster` and `hideLabel` each were); a new switch type (as `log` was); a new service or event | **minor** — `1.0.15` → `1.1.0` |
-| Removing or renaming a published field, switch type, or a switch id other plugins may read; changing a route's response shape | **major** — `1.0.15` → `2.0.0` |
-
-Additive is what makes a minor safe to take: no downstream range needs rewriting for a field that
-did not exist before. The rule counts what **shipped**, not what a branch contained — dropping
-`clusterOpen` in 1.0.15 did not make it a major, because that field never appeared in a published
-version. Note that `1.0.1`–`1.0.15` shipped features as patches (`log`, `subtitleBlock`,
-`visible`, `cluster`, `hideLabel`), and `1.0.0` was declared for a packaging milestone — history
-squashed, `prepare` dropped — rather than for a frozen contract: those numbers are published and
-stand, and this table governs the next one.
+Increment by what a third party can observe, not by how large the change felt: **patch** for a bug
+fix, refactor, docs or metadata; **minor** for a new switch, a new field on `QuickSwitchDefinition`,
+a new switch type, or a new service or event; **major** for removing or renaming anything published
+(a field, a switch type, a switch id other plugins may read, a route's response shape). Additive is
+what makes a minor safe to take. **Never renumber a released version** — a published tag and Release
+cannot be recalled. The version is this package's own; what declares dock-base compatibility is the
+`peerDependencies` range, not a major number. The full table, the prerelease reasoning and the
+`1.0.x` history: **[docs/releasing.md](docs/releasing.md)**.
 
 A change confined to files outside `files` in `package.json` — `AGENTS.md`, `CHANGELOG.md`,
 `docs/` — is not a release, needs no bump, and commits as `docs:`.
