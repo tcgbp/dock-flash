@@ -208,7 +208,7 @@ declared — the Changes page has nothing to order and deliberately has no icon)
 left of the collapse chevron, icon-only with the wording in tooltips. Its handler **must**
 `stopPropagation()`, because that header is itself the collapse control.
 
-Four invariants hold this together:
+Five invariants hold this together:
 
 - **One key, one writer.** `dock-flash:panel-order` is written only by `writePanelOrder()` and
   cleared only by `clearPanelOrder()`. Group keys are scope-qualified — `builtin:<group>` for
@@ -228,6 +228,20 @@ Four invariants hold this together:
   untouched built-in group keeps the historical toggles-grid-then-rest look; a customized one
   renders strictly in the saved order and therefore flattens, because a strict order and a
   two-bucket split cannot both hold.
+- **A cluster is drawn as one card, and its members are folded — never dropped.** The card
+  (border plus tinted background) carries the head, the members hang off a left rail beneath it,
+  and the same card is drawn in and out of edit mode so the block the ▲▼ moves is the block the
+  user sees. The fold control is the card's **last row, centred**, its arrow pointing the way
+  the click will move the content (`▼` reveals, `▲` tucks away) — keep it there rather than
+  beside the head, where it read as an ornament instead of as the block's edge, and keep it
+  count-free, since a number beside a triangle reads as a badge rather than as a control.
+  `renderCluster()` reads the fold from `clusterIsOpen()`: the user's session toggle,
+  defaulting to OPEN — a fold that started closed would simply reproduce the hidden state it
+  exists to replace, which is the mistake this cost a round of. Reordering forces it open and
+  omits the fold button, because the body is click-through there and a dead control is worse than
+  a long block. The point of the fold over a `visible` gate is that membership never changes
+  shape: the panel's structure and the saved order survive a proxy being configured or removed,
+  and nothing leaves the screen unless the user folds it.
 
 `__dockFlashPanelOrder()` prints the order the last render resolved next to what is persisted.
 
@@ -470,14 +484,17 @@ When adding a host-side dependency, import it statically and declare it in `pack
 Common to every type: `icon`, `order`, `group`, `label` (string, or `() => string` for i18n),
 `visible`, and `cluster`.
 
-`cluster: '<label>'` makes switches sharing a label **one reorderable unit** with a fixed
-internal order (their `order` field). Use it for controls whose meaning depends on staying
-together, especially when some are hidden by `visible` — the System proxy controls are the case
-that motivated it (a mode select, the URL, the test button, the log; three of the four appear
-only once a proxy is configured). A cluster's unit key is its **label**, not its first member's
-id: `visible()` can hide any member, so a head-keyed unit would change key the moment the head
-was hidden while another member stayed on screen, and the saved slot would be lost. See "Panel
-ordering: units, one key, one writer" under Architecture.
+`cluster: '<label>'` makes switches sharing a label **one unit** — one card in the panel, one
+▲▼ pair while reordering, a fixed internal order (their `order` field). Use it for controls
+whose meaning depends on staying together: the System proxy controls are the case that motivated
+it (a mode select, the URL, the test button, the log). **A cluster is shown in full, and folds
+only when the user folds it** — its secondary controls are kept in the DOM and *folded*, never
+gated out by `visible` and never folded by default, because a block that changes shape or starts
+closed is exactly the problem the fold exists to solve. A cluster's unit key is its **label**,
+not its first member's id: `visible()` can still hide a member, so a head-keyed unit would change
+key the moment the head was hidden while another member stayed on screen, and the saved slot
+would be lost. A cluster is never a grid item (`isGridToggle()`) — a compact grid cell holds
+exactly one control. See "Panel ordering: units, one key, one writer" under Architecture.
 
 `visible: () => boolean` drops the switch from the panel while it stays registered — its state,
 its changelog entries and every other reader keep working, so no dispose/re-register dance is
@@ -496,9 +513,10 @@ Per renderer:
 | `subtitleBlock` | `select` | Render `subtitle` as its own full-width, **wrapping** line below the row instead of inside the label column. Use it whenever the value is long enough that the inline variant's ellipsis hides the point — a URL, a path, a command. `S.switchSubtitle` (inline) sets `nowrap` + `text-overflow: ellipsis` because it shares the row with the control; `S.switchSubtitleBlock` drops both and adds `word-break: break-all`. |
 | `tooltip` | `select` | `ⓘ` icon carrying a native `title` attribute |
 | `actionLabel` | `action` | Button text (string, or `() => string`) |
+| `hideLabel` | `action` | Drop the title column and let the button take the whole row. For an action whose button already carries its wording — Test Connection read "测试连接" twice, once as a title and once on the button. The definition keeps `label` either way: that is what the changelog and the panel name the entry with |
 | `getMeta`, `hideWhenEmpty`, `emptyText`, `onClear`, `clearTitle` | `log` | See the `log` row above. `hideWhenEmpty` renders nothing at all while `getLines()` is empty, instead of an empty box; `emptyText` is the placeholder used when it is *not* set |
 
-> **Don't hide a switch's own value behind `tooltip`.** The test URL was once both a subtitle *and* a tooltip of the same string: the tooltip added a hover target and no information, while the subtitle truncated the URL at exactly the part worth reading. If a value matters, give it `subtitleBlock`. `dock-flash:test-url` has since dropped its subtitle line too — it is a bare label + select now, and hides itself while no proxy is configured.
+> **Don't hide a switch's own value behind `tooltip`.** The test URL was once both a subtitle *and* a tooltip of the same string: the tooltip added a hover target and no information, while the subtitle truncated the URL at exactly the part worth reading. If a value matters, give it `subtitleBlock`. `dock-flash:test-url` went further in 1.0.11 and dropped the line entirely — one step too far: with `custom` selected the select says only "Custom", so the address actually in force was the one thing the row did not show. It is back now (`subtitleBlock` + `subtitle: () => _resolveTestUrl()`), inside the proxy cluster's card.
 
 ### Registration Rules
 
@@ -621,15 +639,27 @@ easiest to break invisibly.
    stored list unchanged, while a valid list is normalized to comma-separated form. With a blank
    value written straight into `settings.yaml` instead, the host removes `NO_PROXY` (as `all-proxy`
    does) rather than publishing `NO_PROXY=''` — the host console then logs `NO_PROXY=<removed>`.
-8. **Test URL**: hidden — together with **Test Connection** — whenever no proxy variable is
-   configured (`_httpProxyValue` falsy, i.e. the host reports `httpProxy: null`); both appear as
-   soon as one is. The row itself is a bare label + select: no icon, and no URL line above the
-   Test Connection button. Presets apply on selection and survive a refresh; `custom` prompts,
-   rejects anything not starting `http(s)://` with an alert, and reverts the select.
+8. **Test URL**: a permanent member of the proxy **cluster** and always on screen — the fold is
+   the user's to set, and it starts open. The row is a label + select **plus the effective
+   address on its own wrapping line** (`subtitleBlock` + `subtitle: () => _resolveTestUrl()`),
+   which 1.0.11 removed and this release restored: with `custom` selected the select alone says
+   only "Custom", so the one value the control configures was the one thing it did not show.
+   Presets apply on selection and survive a refresh; `custom` prompts, rejects anything not
+   starting `http(s)://` with an alert, and reverts the select. **Test Connection** below it is
+   `hideLabel`: the button already reads "Test Connection" / "Testing…", so the row is the button
+   alone, full width.
+   The cluster must read as ONE unit: a card (border + tinted background) with the head on it
+   and the members hanging off a left rail beneath, and a single ▲▼ beside the whole card in
+   reorder mode. It is never a grid item — `isGridToggle()` keeps a cluster out of the compact
+   toggle grid, whose cells hold exactly one control.
 9. **Diagnostics log**: **absent entirely before the first test** — no header, no placeholder
-   box. Run Test Connection → it appears with that run's lines (route, response status,
-   header/body timings, body size). Run again → the block is **replaced**, not appended. ✕
-   clears it, which hides the block again. Unlike Recent Changes it does not expire after 30s.
+   box. Press Test Connection → it appears **immediately**, with the in-flight report: a
+   `[stamp] ▶ <url>` line naming the address being tried plus a "Testing…" line, and `⏳` as the
+   header meta, because the probe can take seconds and the log used to stay absent for the whole
+   wait. When the answer lands, that report is **replaced** by the full one (route, response
+   status, header/body timings, body size) in the same shape, so the block does not jump. Run
+   again → replaced again, never appended. ✕ clears it, which hides the block again. Unlike
+   Recent Changes it does not expire after 30s.
 10. **Diagnostics on failure**: A closed port names `ECONNREFUSED` rather than "fetch failed"; a
     redirecting URL lists the chain hop by hop with a final URL; garbage yields `InvalidTestUrl`
     while the route still answers 200 rather than 500.

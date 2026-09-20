@@ -28,8 +28,8 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 | 📐 Layout | Trigger Position | select | Input Left / Input Right / Session Header / Header Utils — where the standalone ⚡ trigger is injected | ✅ |
 | ⚙️ System | Language | buttongroup | 中文 / English — switches DSH global UI language | ✅ |
 | ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control. Custom is validated: host / domain suffix / IP / host:port, comma- or space-separated; blank and CIDR are rejected | ✅ |
-| ⚙️ System | Test URL | select | Google 204 / GitHub / DeepSeek API / Custom — the address the connection test probes. A bare label + select, and hidden together with Test Connection while no proxy is configured | ✅ |
-| ⚙️ System | Diagnostics Log | log | Read-only multi-line report of the **latest** connection test — one fact per line, hidden until the first test, ✕ clears (no 30s expiry) | ✅ |
+| ⚙️ System | Test URL | select | Google 204 / GitHub / DeepSeek API / Custom — the address the connection test probes, with the effective URL printed on its own wrapping line beneath the select (so a custom address is readable). Lives in the proxy cluster, which can be folded | ✅ |
+| ⚙️ System | Diagnostics Log | log | Read-only multi-line report of the **latest** connection test — one fact per line. Appears the instant Test Connection is pressed, starting with the address being tried, and is replaced (never appended) as the run progresses; ✕ clears it, no 30s expiry | ✅ |
 
 > **The Layout group only renders in standalone mode.** In workbench mode `close-on-blur` exists solely as the panel-header toggle, so no built-in switch carries `group: 'layout'` and the category is skipped entirely.
 
@@ -46,7 +46,7 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 - 🔌 **Standalone Mode** — Works without dock-base: a ⚡ trigger injected into the configured conversation slot opens a floating popup panel
 - 📝 **Recent Changes** — Auto-records switch operations (30s TTL), displayed in "old value → new value" format
 - 🩺 **Connection Diagnostics** — A read-only multi-line log of recent proxy tests (route taken, redirect chain, timings, body size, socket error code) that persists across runs
-- 🧮 **Reorderable Panel** — A ⇅ icon in the Workbench and Extensions tab headers opens a reorder mode: ▲▼ move groups and switches, and the result persists per browser. Switches that declare a `cluster` move as one unit with a fixed internal order — the System proxy controls are the case that motivated it, since three of the four are hidden until a proxy is configured
+- 🧮 **Reorderable Panel** — A ⇅ icon in the Workbench and Extensions tab headers opens a reorder mode: ▲▼ move groups and switches, and the result persists per browser. Switches that declare a `cluster` move as one unit with a fixed internal order and are drawn as one card whose members fold — the System proxy controls are the case that motivated it, since they only apply once a proxy is configured
 
 ### Host-side Features
 
@@ -71,7 +71,7 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 | `bodyBytes` / `bodySnippet` | body size, plus the first 200 bytes of a textual body — which is where a corporate proxy's own "blocked" page shows up |
 | `error` | `{ name, message, code, causeName, causeMessage, causeCode, causeErrno }` — the nested undici `cause` is what carries `ENOTFOUND`, `ECONNREFUSED`, `UND_ERR_CONNECT_TIMEOUT`, `DEPTH_ZERO_SELF_SIGNED_CERT`, … |
 
-The panel renders this into the **Diagnostics Log** block, one fact per line, and keeps it across runs so two tests can be compared.
+The panel renders this into the **Diagnostics Log** block, one fact per line. The block appears as soon as the test starts — its first line names the address being tried — and holds the **latest run only**: each test replaces it rather than appending, because the panel is short and a wall of history buries the run just asked for.
 
 > **The test target is a setting, never a constant.** `testUrl` defaults to `https://www.google.com/generate_204` and is stored in the DSH profile on disk, so an internal endpoint can be configured without appearing in this repository.
 
@@ -152,10 +152,11 @@ interface QuickSwitchDefinition {
   /** Built-in group: 'appearance' | 'layout' | 'system' (only for dock-flash:* items; ignored by third-party switches) */
   group?: string
   /**
-   * Optional cluster label. Switches sharing a label are reordered as ONE unit
-   * (a single ▲▼ pair) and keep a fixed internal order — their `order` field.
-   * Use it for controls whose meaning depends on staying together, especially
-   * when some of them are conditionally hidden by `visible`.
+   * Optional cluster label. Switches sharing a label are drawn as ONE card and
+   * reordered as one unit (a single ▲▼ pair), keeping a fixed internal order —
+   * their `order` field. The card is shown in full by default and its members
+   * can be folded behind a centred ▼/▲ toggle on the card's bottom edge: a cluster never disappears on its own, so
+   * the panel's structure and the saved order survive a condition coming or going.
    */
   cluster?: string
 
@@ -175,6 +176,8 @@ interface QuickSwitchDefinition {
   // ── Action-specific ──
   run?: () => void | Promise<void>
   actionLabel?: string
+  /** Drop the title column and let the button fill the row (button carries the wording) */
+  hideLabel?: boolean
 }
 ```
 
