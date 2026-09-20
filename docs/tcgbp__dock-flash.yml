@@ -14,14 +14,15 @@
 #   - tarball must be https on GitHub release hosting and end in .tgz/.tar.gz
 # Verified locally against that module: 0 problems.
 #
-# The tarball is PINNED to v1.1.5 on purpose. 1.1.6 is being reworked, and a pinned URL
-# cannot drift onto it while the fix is prepared (releases/latest/download/ would, the
-# moment 1.1.6 is the newest non-prerelease release). Once a good release is out, switch
-# the line back to .../releases/latest/download/dock-flash.tgz — one line, one PR.
+# The tarball is deliberately the version-free releases/latest/download/ URL. Which release that
+# is stays a release-side decision here rather than an accident of timing: v1.1.6 is marked
+# not-latest while it is reworked and v1.1.5 holds the slot, so this URL serves v1.1.5 today and
+# follows the next good release by itself — no entry change, no pull request. Pinning this line
+# to a tag would trade that for a manual follow-up on every release.
 url: https://github.com/tcgbp/dock-flash
 name: tcgbp/dock-flash
 category: ui
 description:
   en: 'Quick Control panel for DSH Web: a docked or floating shortcut panel whose switches other plugins register through the quickControl service. Includes a theme and skin switcher plus fine-grained NO_PROXY proxy controls, and works with dock-base or standalone.'
   zh: DSH Web 的快捷控制面板：可停靠或浮动，开关项可由其它插件通过 quickControl 服务注册；内置主题/皮肤切换与细粒度 NO_PROXY 代理控制，可搭配 dock-base 或独立运行。
-tarball: https://github.com/tcgbp/dock-flash/releases/download/v1.1.5/dock-flash.tgz
+tarball: https://github.com/tcgbp/dock-flash/releases/latest/download/dock-flash.tgz
