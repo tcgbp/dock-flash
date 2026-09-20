@@ -11,7 +11,7 @@ export const inject = [];
 const DEFAULT_MODE = 'all-proxy';
 const DEFAULT_CUSTOM = '';
 /** A cluster folded state is deliberately *not* here: it is a session toggle. */
-const DEFAULT_PANEL_ORDER = { builtin: [], ext: [], switches: {} };
+const DEFAULT_PANEL_ORDER = { builtin: [], ext: [], switches: {}, hidden: {} };
 const DEFAULT_ACTIVE_SKIN = '';
 const DEFAULT_TRIGGER_POSITION = 'input.right';
 /**
@@ -466,6 +466,7 @@ export function apply(ctx) {
             builtin: Schema.array(Schema.string()).default([]),
             ext: Schema.array(Schema.string()).default([]),
             switches: Schema.dict(Schema.array(Schema.string()), Schema.string()).default({}),
+            hidden: Schema.dict(Schema.array(Schema.string()), Schema.string()).default({}),
         }).default(DEFAULT_PANEL_ORDER);
         const SettingsSchema = Schema.object({
             proxyMode: Schema.string().default(DEFAULT_MODE),

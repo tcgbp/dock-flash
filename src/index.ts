@@ -82,13 +82,24 @@ export interface PanelOrder {
   builtin: string[]
   ext: string[]
   switches: Record<string, string[]>
+  /**
+   * Unit keys the user has hidden, per scope-qualified group key — the same
+   * addressing as `switches`, because a hidden thing is still an ORDERED thing
+   * that merely is not drawn.
+   *
+   * Kept separate from the order on purpose: the two are independent user
+   * intents, so the reorder reset must not restore visibility and the
+   * visibility reset must not restore order. An empty list is the default, so
+   * a newly installed plugin is visible without any action.
+   */
+  hidden: Record<string, string[]>
 }
 
 const DEFAULT_MODE = 'all-proxy'
 const DEFAULT_CUSTOM = ''
 
 /** A cluster folded state is deliberately *not* here: it is a session toggle. */
-const DEFAULT_PANEL_ORDER: PanelOrder = { builtin: [], ext: [], switches: {} }
+const DEFAULT_PANEL_ORDER: PanelOrder = { builtin: [], ext: [], switches: {}, hidden: {} }
 const DEFAULT_ACTIVE_SKIN = ''
 const DEFAULT_TRIGGER_POSITION = 'input.right'
 
@@ -569,6 +580,10 @@ export function apply(ctx: Context) {
       builtin: Schema.array(Schema.string()).default([]),
       ext: Schema.array(Schema.string()).default([]),
       switches: Schema.dict(
+        Schema.array(Schema.string()),
+        Schema.string(),
+      ).default({}),
+      hidden: Schema.dict(
         Schema.array(Schema.string()),
         Schema.string(),
       ).default({}),
