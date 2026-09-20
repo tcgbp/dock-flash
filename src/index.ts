@@ -75,6 +75,25 @@ export interface ProxyConfig {
   activeSkin: string
   /** ⚡ trigger slot for standalone mode; validated against the client's list. */
   triggerPosition: string
+  /**
+   * Where the draggable overlay trigger sits, as an OFFSET from the
+   * conversation viewport's top-right corner rather than absolute screen
+   * coordinates — so opening the right sidebar, dragging the sash or resizing
+   * the window carries the button along with the corner instead of leaving it
+   * behind. Both components measure inward, so a larger value moves it further
+   * from that corner.
+   *
+   * Only meaningful while `triggerPosition` names the overlay entry, but never
+   * cleared when it does not: switching away and back must not lose the place
+   * the user chose.
+   */
+  triggerOverlayOffset: TriggerOverlayOffset
+}
+
+/** Offset of the draggable overlay trigger from the conversation's top-right corner. */
+export interface TriggerOverlayOffset {
+  dx: number
+  dy: number
 }
 
 /** Ordered keys the client reorders groups and switches with. */
@@ -102,6 +121,8 @@ const DEFAULT_CUSTOM = ''
 const DEFAULT_PANEL_ORDER: PanelOrder = { builtin: [], ext: [], switches: {}, hidden: {} }
 const DEFAULT_ACTIVE_SKIN = ''
 const DEFAULT_TRIGGER_POSITION = 'input.right'
+/** Matches the client's OVERLAY_EDGE: 8px inside the conversation's corner. */
+const DEFAULT_TRIGGER_OVERLAY_OFFSET: TriggerOverlayOffset = { dx: 8, dy: 8 }
 
 /**
  * Default test target: the canonical "is there a working network path"
@@ -127,6 +148,7 @@ const entry: ProxyConfig = {
   panelOrder: DEFAULT_PANEL_ORDER,
   activeSkin: DEFAULT_ACTIVE_SKIN,
   triggerPosition: DEFAULT_TRIGGER_POSITION,
+  triggerOverlayOffset: DEFAULT_TRIGGER_OVERLAY_OFFSET,
 }
 
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
@@ -604,6 +626,13 @@ export function apply(ctx: Context) {
       panelOrder: PanelOrderSchema,
       activeSkin: Schema.string().default(DEFAULT_ACTIVE_SKIN),
       triggerPosition: Schema.string().default(DEFAULT_TRIGGER_POSITION),
+      // Every level of a nested object needs `.default()`, or the whole resolve
+      // fails with `unsupported type "undefined"` — both the object and each
+      // number, which is the trap that cost a round in 1.1.0.
+      triggerOverlayOffset: Schema.object({
+        dx: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dx),
+        dy: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dy),
+      }).default(DEFAULT_TRIGGER_OVERLAY_OFFSET),
     })
 
     settingsCtx.settings.installSection(ctx, 'dock-flash', SettingsSchema, entry, {

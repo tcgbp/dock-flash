@@ -14,6 +14,8 @@ const DEFAULT_CUSTOM = '';
 const DEFAULT_PANEL_ORDER = { builtin: [], ext: [], switches: {}, hidden: {} };
 const DEFAULT_ACTIVE_SKIN = '';
 const DEFAULT_TRIGGER_POSITION = 'input.right';
+/** Matches the client's OVERLAY_EDGE: 8px inside the conversation's corner. */
+const DEFAULT_TRIGGER_OVERLAY_OFFSET = { dx: 8, dy: 8 };
 /**
  * Default test target: the canonical "is there a working network path"
  * endpoint. Returns an empty 204, so it measures the path and nothing else —
@@ -34,6 +36,7 @@ const entry = {
     panelOrder: DEFAULT_PANEL_ORDER,
     activeSkin: DEFAULT_ACTIVE_SKIN,
     triggerPosition: DEFAULT_TRIGGER_POSITION,
+    triggerOverlayOffset: DEFAULT_TRIGGER_OVERLAY_OFFSET,
 };
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
 const API_BYPASS_DOMAINS = 'api.deepseek.com,chat.deepseek.com';
@@ -483,6 +486,13 @@ export function apply(ctx) {
             panelOrder: PanelOrderSchema,
             activeSkin: Schema.string().default(DEFAULT_ACTIVE_SKIN),
             triggerPosition: Schema.string().default(DEFAULT_TRIGGER_POSITION),
+            // Every level of a nested object needs `.default()`, or the whole resolve
+            // fails with `unsupported type "undefined"` — both the object and each
+            // number, which is the trap that cost a round in 1.1.0.
+            triggerOverlayOffset: Schema.object({
+                dx: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dx),
+                dy: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dy),
+            }).default(DEFAULT_TRIGGER_OVERLAY_OFFSET),
         });
         settingsCtx.settings.installSection(ctx, 'dock-flash', SettingsSchema, entry, {
             setSource: (current) => {

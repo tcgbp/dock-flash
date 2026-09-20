@@ -84,4 +84,26 @@ if (missing.length > 0) {
   console.log(`  links              ${linkCount} checked across ${docFiles.length} files, all resolve`)
 }
 
+// ── 3. The two version declarations must agree ──────────────────────────
+// `package.json` and `lib/client.js` are not linked, so a bump that touches one
+// and not the other ships a build whose own log lies about what it is — and a
+// build that cannot name itself cannot be told apart from the previous one.
+{
+  const pkgPath = path.join(root, 'package.json')
+  const clientPath = path.join(root, 'lib', 'client.js')
+  if (fs.existsSync(pkgPath) && fs.existsSync(clientPath)) {
+    const pkgVersion = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version
+    const m = /const CLIENT_VERSION = '([^']+)'/.exec(fs.readFileSync(clientPath, 'utf8'))
+    if (!m) {
+      console.error('\n❌ lib/client.js declares no `const CLIENT_VERSION`, so the startup log cannot name the build.')
+      fail = true
+    } else if (m[1] !== pkgVersion) {
+      console.error(`\n❌ version mismatch: package.json is ${pkgVersion}, CLIENT_VERSION is ${m[1]}`)
+      fail = true
+    } else {
+      console.log(`  version            ${pkgVersion} (package.json and CLIENT_VERSION agree)`)
+    }
+  }
+}
+
 process.exit(fail ? 1 : 0)
