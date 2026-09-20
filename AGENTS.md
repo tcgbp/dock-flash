@@ -470,6 +470,10 @@ consulted **once** in `apply()`, and `savePrefs()` writes memory + localStorage 
 The host wins once it has answered. `_prefCtx` holds the context for writers called from render
 paths; it is null before `apply()`, which `savePrefs()` tolerates.
 
+**`remote` is a typert namespace: it resolves only if the plugin declares it in `inject`.** A client plugin that merely `ctx.get('remote')`s it gets `undefined` — and a typert namespace is not a service, so there is no service lookup to fall back on. This plugin shipped with `inject: []` and therefore never reached the host settings at all; `@deepseek-ai/dsh-client-ui-settings`, which does the same job, declares `inject = ["remote", "remote.settings"]`. **Both names are required** — `remote` alone is not enough. One accessor, `_remoteSettings(ctx)`, is the only reader: it prefers `ctx.remote.settings`, keeps `ctx.get('remote')` as a fallback for an older surface, and every call site (the preference bridge, the proxy read-back, the two proxy writes, the black-hole hand-off) goes through it.
+
+**`describe()` answers `{ writable, hasDocument, namespaces: [...] }`** — the list is under `namespaces`, not on the response itself, and each entry is `{ ns, value, base, user, applies, revision, secrets }`. (Verified against the generated `typert.remote-client.js`, which is the authority for this surface.) Both `namespaces`/`value` and the older `value`/`resolved` spellings are accepted, and the response keys are echoed on failure.
+
 **The descriptor's fields are `ns` and `value` — not `namespace` and `resolved`.** Both spellings
 are accepted (`n.ns || n.namespace`, `ns.value || ns.resolved`) and the descriptor is echoed on
 failure. Two habits follow, and they are the general lesson:
