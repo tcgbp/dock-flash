@@ -118,3 +118,25 @@ entirely.
 A `node -e` one-liner cannot write a temp file here: this shell runs Git for Windows, where `/tmp`
 resolves to `C:\tmp`. Write scratch files inside the repository and delete them afterwards.
 
+---
+
+## Listing on dsh-market
+
+dsh-market reads its catalog from the curated **awesome-dsh-plugin** registry, so being installable
+from a Release is not the same as being listed. The entry to submit is already written and validated:
+
+**[docs/tcgbp__dock-flash.yml](tcgbp__dock-flash.yml)**
+
+Copy it to `data/plugins/tcgbp__dock-flash.yml` in a fork of
+`https://github.com/awesome-dsh-plugin/awesome-dsh-plugin` and open a PR. The file's own comments
+record the rules the registry's validator enforces — the filename must equal `slugFor(url)`, only
+`url`/`name`/`category`/`description`/`tarball` are allowed, and `tarball` must be an https GitHub
+Release URL ending in `.tgz`.
+
+**Two things about it are deliberately not fixed here:** the `tarball` line is the version-free
+`releases/latest/download/` URL, so **no entry edit is needed per release**; and the repo must carry
+the `dsh-plugin` topic, which it does. The registry also applies a **repo-age gate** — check the
+GitHub mirror's `created_at` before submitting, because a PR from a repository younger than that
+window is rejected on age rather than on content.
+
+

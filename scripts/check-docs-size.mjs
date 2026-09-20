@@ -53,20 +53,35 @@ if (present.length === 0) {
   }
 }
 
-// ── 2. Every docs/ pointer in AGENTS.md must resolve ────────────────────
+// ── 2. Every internal doc link must resolve ─────────────────────────────
 // Relocation is only safe while the pointers are real; a rename would silently orphan a rule.
+// Links resolve relative to the CONTAINING file, so AGENTS.md's `docs/x.md` and a docs/ file's
+// bare `x.md` are both handled by resolving against the file's own directory.
 const agents = path.join(root, 'AGENTS.md')
-if (fs.existsSync(agents)) {
-  const text = fs.readFileSync(agents, 'utf8')
-  const targets = new Set()
-  for (const m of text.matchAll(/\]\((docs\/[^)\s]+|[A-Z][A-Za-z.-]*\.md)\)/g)) targets.add(m[1])
-  const missing = [...targets].filter((t) => !fs.existsSync(path.join(root, t)))
-  if (missing.length > 0) {
-    console.error(`\n❌ AGENTS.md points at ${missing.length} file(s) that do not exist: ${missing.join(', ')}`)
-    fail = true
-  } else {
-    console.log(`  pointers           ${targets.size} checked, all resolve`)
+const docFiles = [agents, ...(fs.existsSync(path.join(root, 'docs'))
+  ? fs.readdirSync(path.join(root, 'docs')).filter((f) => f.endsWith('.md')).map((f) => path.join(root, 'docs', f))
+  : [])].filter((p) => fs.existsSync(p))
+
+let linkCount = 0
+const missing = []
+for (const file of docFiles) {
+  const text = fs.readFileSync(file, 'utf8')
+  for (const m of text.matchAll(/\]\(([^)\s]+)\)/g)) {
+    const href = m[1]
+    // Skip absolute URLs, mailto, and pure anchors — only repo-relative paths are ours to verify.
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || href.startsWith('/')) continue
+    const target = href.split('#')[0]
+    if (!target || !/\.(md|ya?ml|json|mjs|ts|js)$/.test(target)) continue
+    linkCount++
+    if (!fs.existsSync(path.resolve(path.dirname(file), target))) missing.push(`${rel(file)} -> ${href}`)
   }
+}
+if (missing.length > 0) {
+  console.error(`\n❌ ${missing.length} link(s) point at files that do not exist:`)
+  for (const m of missing) console.error(`   ${m}`)
+  fail = true
+} else {
+  console.log(`  links              ${linkCount} checked across ${docFiles.length} files, all resolve`)
 }
 
 process.exit(fail ? 1 : 0)

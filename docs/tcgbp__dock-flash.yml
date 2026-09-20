@@ -14,11 +14,15 @@
 #   - tarball must be https on GitHub release hosting and end in .tgz/.tar.gz
 # Verified locally against that module: 0 problems.
 #
-# The tarball is deliberately the version-free releases/latest/download/ URL. Which release that
-# is stays a release-side decision here rather than an accident of timing: v1.1.6 is marked
-# not-latest while it is reworked and v1.1.5 holds the slot, so this URL serves v1.1.5 today and
-# follows the next good release by itself — no entry change, no pull request. Pinning this line
-# to a tag would trade that for a manual follow-up on every release.
+# The tarball is deliberately the version-free releases/latest/download/ URL. Which release that is
+# stays a release-side decision rather than something this file has to follow: publishing a new
+# Release moves the URL by itself, so the entry needs no edit and no pull request per release.
+# Pinning it to a tag would trade that for a manual follow-up every time.
+#
+# Submission state, checked 2026-09-20: the GitHub repo carries the required `dsh-plugin` topic and
+# /releases/latest serves v1.2.0 with dock-flash.tgz attached, so the entry below is ready as-is. The
+# one prerequisite that is not ours to satisfy is the registry's repo-age gate — the GitHub mirror was
+# created 2026-09-19, so a PR may be rejected as too new until that window has passed.
 url: https://github.com/tcgbp/dock-flash
 name: tcgbp/dock-flash
 category: ui
