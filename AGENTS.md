@@ -725,6 +725,36 @@ form and each carries its own example, so they are not repeated here — check t
 - Both READMEs must stay in sync — same structure, same content, different language
 - No changelog in the READMEs — `CHANGELOG.md` and git log are the history records
 
+### Which number moves
+
+The version is **this package's own** — it says nothing about a sibling's, and nothing compares
+the two (npm, pnpm, the ModuleLoader and dsh-market all treat a plugin's version as private).
+What declares compatibility with dock-base is the `peerDependencies` range, not a major number,
+so `dock-flash 1.x` alongside `dock-base 0.2.2` is a supported pair by construction — and the
+family is uneven anyway (dock-git 0.3.4, dock-files 0.3.0, dock-images 0.1.2, dock-base 0.2.2).
+**Never renumber a released version:** a published tag and Release cannot be recalled, and
+stepping back from `1.x` to `0.x` is not expressible as a non-breaking change for anyone holding a
+range (`^1.0.0` accepts all of 1.x; `^0.2.2` accepts only `0.2.x`).
+
+Increment by what a third party can observe, not by how large the change felt:
+
+| Change | Number |
+|---|---|
+| Bug fix, internal refactor, docs, metadata | **patch** — `1.0.15` → `1.0.16` |
+| A new switch; a new field on `QuickSwitchDefinition` (as `subtitleBlock`, `visible`, `cluster` and `hideLabel` each were); a new switch type (as `log` was); a new service or event | **minor** — `1.0.15` → `1.1.0` |
+| Removing or renaming a published field, switch type, or a switch id other plugins may read; changing a route's response shape | **major** — `1.0.15` → `2.0.0` |
+
+Additive is what makes a minor safe to take: no downstream range needs rewriting for a field that
+did not exist before. The rule counts what **shipped**, not what a branch contained — dropping
+`clusterOpen` in 1.0.15 did not make it a major, because that field never appeared in a published
+version. Note that `1.0.1`–`1.0.15` shipped features as patches (`log`, `subtitleBlock`,
+`visible`, `cluster`, `hideLabel`), and `1.0.0` was declared for a packaging milestone — history
+squashed, `prepare` dropped — rather than for a frozen contract: those numbers are published and
+stand, and this table governs the next one.
+
+A change confined to files outside `files` in `package.json` — `AGENTS.md`, `CHANGELOG.md`,
+`docs/` — is not a release, needs no bump, and commits as `docs:`.
+
 ### Where the history lives
 
 The release-by-release narrative is in **`CHANGELOG.md`**. It used to live here as a
