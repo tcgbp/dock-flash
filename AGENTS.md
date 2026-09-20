@@ -524,6 +524,26 @@ A validation failure **rejects before anything is persisted**, so a bad write ca
 `settings.yaml`; it also means a client bug that sends the wrong shape fails loudly instead of
 silently storing garbage.
 
+**The descriptor's fields are `ns` and `value` — not `namespace` and `resolved`.** 1.1.0 read
+`n.namespace === 'dock-flash'` and `ns.resolved`; both were wrong, so the lookup returned
+undefined for every namespace, every host value read as absent, and the loader failed down a path
+that logged nothing. One wrong field name produced three separate-looking symptoms at once — no
+migration log, the order not saving, the trigger position not saving — because they were one
+silent miss. **The same spelling sat in the proxy sync path**, where `describe()` was consulted on
+every startup and never matched, so the proxy switches never picked up the host's `proxyMode`/`testUrl`
+after a refresh; local and host values agreed in the common case, which is why it survived
+unnoticed. Both spellings are accepted now (`n.ns || n.namespace`, `ns.value || ns.resolved`),
+and the descriptor is echoed in the failure message so a future rename arrives as data.
+
+Two habits follow from that, and they are the general lesson rather than a note about this API:
+
+- **Never let a load path return a bare `false`.** The first version of `loadHostPreferences()`
+  did, on four different branches, and the failure was indistinguishable from "there was nothing
+  to load". Every exit now records a *named* reason, logs it, and `__dockFlashPrefs()` reports the
+  host's view beside localStorage's. This is Critical Rule 11's silent `require` in a new place.
+- **Print the shape you did not recognise.** The failure message lists the descriptor's own keys
+  and the namespaces actually seen, so the next mismatch is a copy-paste rather than a bisect.
+
 ### Preference Persistence
 
 - Active skin is stored in the host settings namespace (`activeSkin`), with `localStorage`
