@@ -786,6 +786,9 @@ form and each carries its own example, so they are not repeated here — check t
 | Hardcoding an environment-specific endpoint | An internal address published in the public repository | Make it a setting; keep built-in presets generic. Recovery needs `git filter-branch` **and** platform-side repository deletion — force-push only moves refs, and the old commits stay fetchable by SHA |
 | Injecting raw error text into a single-line log block | One message spills over many lines and destroys the alignment | Collapse with `_oneLine(v, max)` before pushing the line |
 | A diagnostic readout that answers a different question than the test | "Is a proxy active" and "what did the test do" disagree | Probe the same target in both: `proxyRouteForUrl()` takes the resolved `testUrl` |
+| A glyph wider than its font box | A 2-4px overflow that survives every structural fix | `▶` (U+25B6) and `▼`/`▲` are WIDE glyphs: at 10px their ink is ~13px while an inline box reserves ~10px. Give the glyph an explicit `inline-flex` box (`width`/`height` in px) instead of trusting font metrics — and give both states of a rotating glyph the same box, or the row shifts when it flips |
+| `minWidth: 0` applied to a `flex: none` element | Looks like a shrink fix, is a no-op | `flex: none` means `flex-shrink: 0`, so the box can never shrink and `minWidth` has nothing to act on. Check the flex shorthand before adding the property; a no-op fix is worse than none, because it reads as solved |
+| Diagnosing from the shape of the DOM tree | Fixing the wrong element confidently | The live element carries its own evidence — `__dockFlashOverflow()` prints each overflow's `text`, which is how a `⇅▶` button group was told apart from the title the tree depth suggested. Read the text before forming the hypothesis |
 
 ---
 
