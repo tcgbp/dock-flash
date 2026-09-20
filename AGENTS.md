@@ -219,7 +219,7 @@ Users can reorder the panel's groups and switches, from an icon in the header of
 something to rearrange (not the Changes page), immediately left of the collapse chevron, icon-only,
 its handler calling `stopPropagation()` because that header is itself the collapse control.
 
-Five invariants:
+Six invariants:
 
 - **One key, one writer, and the writer is the preference bridge.** The order lives in the host
   settings namespace (`panelOrder`); `writePanelOrder()`/`clearPanelOrder()` are its only writers and
@@ -246,6 +246,13 @@ Five invariants:
   dead control is worse than a long block. Membership never changes shape — that is the point of a
   fold over a `visible` gate: the panel's structure and the saved order survive a proxy being
   configured or removed.
+- **A destructive or non-obvious action gets a receipt, and the receipt names the tab.** `↺` and the
+  `⇅` **exit** both replace the tab title with a sentence for ~1.6s. The notice holds the tab id and
+  a `kind`, never a boolean, so only the pressed tab renames. Only `⇅`'s exit direction reports —
+  entering already shows feedback (the arrows appear, the glyph flips), and it reads `orderEdit`
+  *before* toggling to tell the two directions apart. `↺`'s tooltip is per tab because the
+  disabled-plugin records live under `ext:*` alone, so the warning belongs to the Extensions tab and
+  would be a false claim on Workbench.
 
 `__dockFlashPanelOrder()` prints the order the last render resolved next to what is persisted.
 
