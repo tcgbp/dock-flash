@@ -10,6 +10,10 @@ export const name = 'dock-flash';
 export const inject = [];
 const DEFAULT_MODE = 'all-proxy';
 const DEFAULT_CUSTOM = '';
+/** A cluster folded state is deliberately *not* here: it is a session toggle. */
+const DEFAULT_PANEL_ORDER = { builtin: [], ext: [], switches: {} };
+const DEFAULT_ACTIVE_SKIN = '';
+const DEFAULT_TRIGGER_POSITION = 'input.right';
 /**
  * Default test target: the canonical "is there a working network path"
  * endpoint. Returns an empty 204, so it measures the path and nothing else —
@@ -27,6 +31,9 @@ const entry = {
     proxyMode: DEFAULT_MODE,
     customNoProxy: DEFAULT_CUSTOM,
     testUrl: DEFAULT_TEST_URL,
+    panelOrder: DEFAULT_PANEL_ORDER,
+    activeSkin: DEFAULT_ACTIVE_SKIN,
+    triggerPosition: DEFAULT_TRIGGER_POSITION,
 };
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
 const API_BYPASS_DOMAINS = 'api.deepseek.com,chat.deepseek.com';
@@ -446,16 +453,37 @@ export function apply(ctx) {
         });
     }
     // When the settings service is available, register the dock-flash
-    // namespace and watch for proxy preference changes.
+    // namespace: the proxy preference the host acts on, plus the user
+    // preferences the client previously kept in localStorage.
     ctx.inject(['settings'], (settingsCtx) => {
-        const ProxySchema = Schema.object({
+        /**
+         * `dict`'s arguments are (value, key) — value schema first, contrary to how
+         * the call reads. Nested objects need `.default()` at every level: a
+         * property whose schema resolves to `undefined` fails the whole thing with
+         * `unsupported type "undefined"`, which surfaced while building this.
+         */
+        const PanelOrderSchema = Schema.object({
+            builtin: Schema.array(Schema.string()).default([]),
+            ext: Schema.array(Schema.string()).default([]),
+            switches: Schema.dict(Schema.array(Schema.string()), Schema.string()).default({}),
+        }).default(DEFAULT_PANEL_ORDER);
+        const SettingsSchema = Schema.object({
             proxyMode: Schema.string().default(DEFAULT_MODE),
             customNoProxy: Schema.string().default(DEFAULT_CUSTOM),
             testUrl: Schema.string().default(DEFAULT_TEST_URL),
             // Keep the old field so legacy clients don't break; migrated on read.
             useProxy: Schema.boolean().default(true),
+            // Client-owned preferences. The host stores them and never interprets
+            // them, so they are typed loosely on purpose: `activeSkin` names a skin
+            // that may not be installed on this machine, and `triggerPosition` names
+            // a slot the client validates against its own TRIGGER_POSITIONS list.
+            // Pinning either to an enum here would make a stored preference
+            // un-writable the moment the client's lists change.
+            panelOrder: PanelOrderSchema,
+            activeSkin: Schema.string().default(DEFAULT_ACTIVE_SKIN),
+            triggerPosition: Schema.string().default(DEFAULT_TRIGGER_POSITION),
         });
-        settingsCtx.settings.installSection(ctx, 'dock-flash', ProxySchema, entry, {
+        settingsCtx.settings.installSection(ctx, 'dock-flash', SettingsSchema, entry, {
             setSource: (current) => {
                 source = current;
             },

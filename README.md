@@ -45,8 +45,8 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 - 🛡️ **Error Boundaries** — All panel components are wrapped in `PanelErrorBoundary` to prevent render errors from crashing the entire dock-base WorkbenchRoot
 - 🔌 **Standalone Mode** — Works without dock-base: a ⚡ trigger injected into the configured conversation slot opens a floating popup panel
 - 📝 **Recent Changes** — Auto-records switch operations (30s TTL), displayed in "old value → new value" format
-- 🩺 **Connection Diagnostics** — A read-only multi-line log of recent proxy tests (route taken, redirect chain, timings, body size, socket error code) that persists across runs
-- 🧮 **Reorderable Panel** — A ⇅ icon in the Workbench and Extensions tab headers opens a reorder mode: ▲▼ move groups and switches, and the result persists per browser. Switches that declare a `cluster` move as one unit with a fixed internal order and are drawn as one card whose members fold — the System proxy controls are the case that motivated it, since they only apply once a proxy is configured
+- 🩺 **Connection Diagnostics** — A read-only multi-line log of the **latest** proxy test (route taken, redirect chain, timings, body size, socket error code), one fact per line. It appears the moment the test starts — first line naming the address being tried — and is **replaced** by the full report when the answer lands, never appended to
+- 🧮 **Reorderable Panel** — A ⇅ icon in the Workbench and Extensions tab headers opens a reorder mode: ▲▼ move groups and switches, and the result is saved in your DSH profile, so it follows you to another browser or machine. Switches that declare a `cluster` move as one unit with a fixed internal order and are drawn as one card whose members fold — the System proxy controls are the case that motivated it, since they only apply once a proxy is configured
 
 ### Host-side Features
 
@@ -315,7 +315,7 @@ The skin switcher requires [dsh-market](https://github.com/AKS1st/dsh-market) to
 
 ### Preference Persistence
 
-Skin selection is saved to `localStorage` and automatically restored on page load.
+Skin selection, panel order and the standalone trigger position are saved to the **host settings namespace** (`dock-flash` in your profile's `settings.yaml`), and restored on load. `localStorage` is kept only as a cache, so these preferences follow you to another browser or machine rather than staying behind with the browser profile. Values that predate this (still in `localStorage` only) are migrated into the profile once, on first load.
 
 > For implementation details, switching mechanisms, exclusion rationale, and technical constraints, see [AGENTS.md](./AGENTS.md).
 

@@ -221,10 +221,15 @@ left of the collapse chevron, icon-only with the wording in tooltips. Its handle
 
 Five invariants hold this together:
 
-- **One key, one writer.** `dock-flash:panel-order` is written only by `writePanelOrder()` and
-  cleared only by `clearPanelOrder()`. Group keys are scope-qualified — `builtin:<group>` for
-  the Workbench tab, `ext:<source>` for an Extensions group — because the two tabs name groups
-  from different namespaces, and a third-party plugin may legitimately call itself `appearance`.
+- **One key, one writer — and the writer is now the preference bridge.** The order lives in the
+  host settings namespace (`panelOrder`), with localStorage demoted to a cache;
+  `writePanelOrder()` and `clearPanelOrder()` remain its only writers and both go through
+  `savePrefs()`. That function writes all three layers in one call — memory (so the panel
+  updates now), localStorage (so a reload shows the right thing before the host answers) and the
+  host (so the order survives a different browser, which is the entire reason it moved). Group
+  keys are scope-qualified — `builtin:<group>` for the Workbench tab, `ext:<source>` for an
+  Extensions group — because the two tabs name groups from different namespaces, and a
+  third-party plugin may legitimately call itself `appearance`.
 - **A unit, not a switch, is what moves.** `groupUnits()` splits a group into units: a plain
   switch is a unit of one keyed by its id, and switches sharing a `cluster` label are ONE unit
   keyed by `\0cluster:<label>` — the label rather than the head's id, because `visible()` can
@@ -469,10 +474,63 @@ When adding a host-side dependency, import it statically and declare it in `pack
 |---|---|---|
 | Mineradio | `dsh.ui-mineradio.enabled` | `data-dsh-aqua` |
 
+### User preferences live in the host, not the browser
+
+Three preferences — the panel order, the active skin and the standalone trigger position — are
+**user** preferences, not browser ones. They used to sit only in localStorage, so a second
+browser, a cleared cache or another machine lost them while `proxyMode` right beside them
+survived; a panel where half the settings travel and half do not is the bug, not the storage
+choice. They now live in the `dock-flash` settings namespace (`panelOrder`, `activeSkin`,
+`triggerPosition`) with localStorage demoted to a **cache**.
+
+The layer that does this (`#region Preferences`) is shaped by one constraint: **every reader is
+synchronous and runs on a render path** (`readPanelOrder()` is called while painting the panel),
+while the host is only reachable through an async `remote.settings` call. So:
+
+- **Reads come from memory.** `_hostPrefs` caches what the host last said; readers consult it
+  first and fall back to localStorage until it has answered (and when there is no settings
+  service at all — a profile without one still works, browser-local).
+- **The host is consulted once, in `apply()`**, via `loadHostPreferences()`. It resolves, the
+  listeners fire, and the panel re-renders with the authoritative values. Nothing blocks the
+  first paint on it.
+- **Writes go to all three layers in one call** — `savePrefs()` updates memory (so the UI is
+  right immediately), localStorage (so a reload is right before the host answers) and the host
+  (so it outlives the browser). The host write is fire-and-forget: the UI must not wait on a
+  round trip, and a failure only means the value stays browser-local.
+- **The host wins once it has answered.** localStorage is a cache, never the authority — that is
+  the whole point of the move.
+
+`_prefCtx` holds the plugin context for these writers, because they are called from render paths
+and switch handlers that never receive `ctx`. It is null before `apply()`, which `savePrefs()`
+tolerates (the write then lands in memory and localStorage only).
+
+**The Schema types the client's values loosely on purpose.** `activeSkin` may name a skin that is
+not installed on this machine and `triggerPosition` names a slot the client validates against its
+own `TRIGGER_POSITIONS`; pinning either to an `enum` in the host would make a stored preference
+un-writable the moment the client's lists change. Validation stays on the side that owns the
+list.
+
+Two schemastery details cost real time and are worth not rediscovering:
+
+- **`dict`'s arguments are `(value, key)`** — value schema first, which is the opposite of how
+  `dict(string(), array(string()))` reads. The wrong order does not throw at definition time; it
+  throws on the first resolve, as `expected array but got <first key>`.
+- **Every level of a nested object needs `.default()`.** A property whose schema resolves to
+  `undefined` fails the whole resolve with `unsupported type "undefined"` — including the outer
+  object. (Unrelated trap, same session: `Schema.resolve(schema, options)` takes **options** as
+  its second argument, not a value; call the schema — `Schema(value)` — to validate.)
+
+A validation failure **rejects before anything is persisted**, so a bad write cannot corrupt
+`settings.yaml`; it also means a client bug that sends the wrong shape fails loudly instead of
+silently storing garbage.
+
 ### Preference Persistence
 
-- Active skin saved to `localStorage` (`dock-flash:active-skin`)
-- Restored 300ms after page load (`_scheduleSkinRestore`)
+- Active skin is stored in the host settings namespace (`activeSkin`), with `localStorage`
+  (`dock-flash:active-skin`) kept only as a cache — see "User preferences live in the host, not
+  the browser" below
+- The market's `live` theme is written through to both layers on read, but only when it
+  disagrees with the host, so an unchanged value costs no round trip
 - `MutationObserver` on `<head>` re-applies preference when late-loading skins appear
 
 ---
@@ -689,6 +747,22 @@ easiest to break invisibly.
     first). The System proxy controls move as ONE block with a single ▲▼, keeping
     mode → URL → test → log, and configuring a proxy afterwards puts the newly visible rows
     back inside that block rather than at the end of the group.
+13. **Preferences survive the browser, not just the reload** — the point of the host-backed move,
+    and the one check that cannot be done from a single tab:
+    - Move a group, pick a skin, and (standalone) change the trigger position. Then open the
+      **same profile in a different browser**, or clear this browser's localStorage and reload →
+      all three come back. That is the whole feature; a reload alone proves nothing, because
+      localStorage would have answered it too.
+    - `settings.yaml` in the profile now carries `panelOrder`, `activeSkin` and
+      `triggerPosition` under the `dock-flash` namespace.
+    - **Upgrade path**: with localStorage holding values the host has never seen, reload → the
+      host console logs `migrating browser-local preferences to host settings: …` once, and the
+      values appear in `settings.yaml`. Reload again → no second log (idempotent, because by then
+      the host is no longer empty).
+    - With no settings service at all, the panel still renders and everything stays in
+      localStorage — no crash, no empty panel.
+    - A bad value typed straight into `settings.yaml` (say `panelOrder` as a list) is refused at
+      load rather than corrupting the namespace, and the panel falls back to its defaults.
 
 ### Key Observation Points
 
