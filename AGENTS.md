@@ -247,8 +247,8 @@ Five invariants hold this together:
   beside the head, where it read as an ornament instead of as the block's edge, and keep it
   count-free, since a number beside a triangle reads as a badge rather than as a control.
   `renderCluster()` reads the fold from `clusterIsOpen()`: the user's session toggle,
-  defaulting to OPEN — a fold that started closed would simply reproduce the hidden state it
-  exists to replace, which is the mistake this cost a round of. Reordering forces it open and
+  defaulting to FOLDED — the head row alone, with the card's last row as the way back.
+  Reordering forces it open and
   omits the fold button, because the body is click-through there and a dead control is worse than
   a long block. The point of the fold over a `visible` gate is that membership never changes
   shape: the panel's structure and the saved order survive a proxy being configured or removed,
@@ -498,10 +498,12 @@ Common to every type: `icon`, `order`, `group`, `label` (string, or `() => strin
 `cluster: '<label>'` makes switches sharing a label **one unit** — one card in the panel, one
 ▲▼ pair while reordering, a fixed internal order (their `order` field). Use it for controls
 whose meaning depends on staying together: the System proxy controls are the case that motivated
-it (a mode select, the URL, the test button, the log). **A cluster is shown in full, and folds
-only when the user folds it** — its secondary controls are kept in the DOM and *folded*, never
-gated out by `visible` and never folded by default, because a block that changes shape or starts
-closed is exactly the problem the fold exists to solve. A cluster's unit key is its **label**,
+it (a mode select, the URL, the test button, the log). **A cluster opens folded — head row only
+— and unfolds when the user asks.** Its members are kept registered and rendered, only *folded*:
+never gated out by `visible`, and never removed, because a block that changes shape is exactly
+the problem the fold exists to solve. Folding by default is what keeps such a block from
+dominating a panel this short; it is not the hidden state it replaced, because the fold's own
+control is on screen. A cluster's unit key is its **label**,
 not its first member's id: `visible()` can still hide a member, so a head-keyed unit would change
 key the moment the head was hidden while another member stayed on screen, and the saved slot
 would be lost. A cluster is never a grid item (`isGridToggle()`) — a compact grid cell holds
@@ -650,8 +652,11 @@ easiest to break invisibly.
    stored list unchanged, while a valid list is normalized to comma-separated form. With a blank
    value written straight into `settings.yaml` instead, the host removes `NO_PROXY` (as `all-proxy`
    does) rather than publishing `NO_PROXY=''` — the host console then logs `NO_PROXY=<removed>`.
-8. **Test URL**: a permanent member of the proxy **cluster** and always on screen — the fold is
-   the user's to set, and it starts open. The row is a label + select **plus the effective
+8. **Test URL**: a permanent member of the proxy **cluster**, which **opens folded — the head
+   row only — and unfolds when the user asks**, the fold being theirs to set from then on for
+   the session. Check that switching the mode inside a folded cluster does **not** spring it
+   open, and that entering reorder mode unfolds it. The row is a label + select **plus the
+   effective
    address on its own wrapping line** (`subtitleBlock` + `subtitle: () => _resolveTestUrl()`),
    which 1.0.11 removed and this release restored: with `custom` selected the select alone says
    only "Custom", so the one value the control configures was the one thing it did not show.

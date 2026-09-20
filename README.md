@@ -154,8 +154,8 @@ interface QuickSwitchDefinition {
   /**
    * Optional cluster label. Switches sharing a label are drawn as ONE card and
    * reordered as one unit (a single ▲▼ pair), keeping a fixed internal order —
-   * their `order` field. The card is shown in full by default and its members
-   * can be folded behind a centred ▼/▲ toggle on the card's bottom edge: a cluster never disappears on its own, so
+   * their `order` field. The card opens folded to its head row and its members
+   * can be revealed behind a centred ▼/▲ toggle on the card's bottom edge: a cluster never disappears on its own, so
    * the panel's structure and the saved order survive a condition coming or going.
    */
   cluster?: string
