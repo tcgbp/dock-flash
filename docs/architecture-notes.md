@@ -221,3 +221,70 @@ Two habits follow from that, and they are the general lesson rather than a note 
   and the namespaces actually seen, so the next mismatch is a copy-paste rather than a bisect.
 
 ---
+
+---
+
+### Glyph metrics: why every icon here declares an explicit box
+
+`AGENTS.md` states the rule ("a glyph wider than its font box"); this is the measurement behind it.
+
+An inline element reserves roughly `font-size` of advance width for the text it contains, regardless
+of what the glyph actually needs. Every glyph this panel uses exceeds that reservation, so every icon
+box is declared in pixels instead of being left to font metrics.
+
+Measured with .NET `MeasureString` at 11px (the header’s size) — the offline half of checklist item 14,
+usable without a browser:
+
+| Glyph | Segoe UI | Segoe UI Symbol | Yu Gothic UI | reserved |
+|---|---|---|---|---|
+| `⇅` reorder | 14.62 | 18.17 | 19.99 | ~11 |
+| `◉` visibility | 13.19 | 17.90 | 19.99 | ~11 |
+| `✓` done | 21.50 | 16.20 | 19.99 | ~11 |
+| `↺` reset | 15.92 | 17.72 | 17.71 | ~11 |
+| `▶` chevron | 13.19 | 17.90 | 19.99 | ~11 |
+| `●` box on | 14.01 | 17.90 | 19.99 | ~11 |
+| `○` box off | 17.90 | 17.90 | 19.99 | ~11 |
+
+**The pixel value cannot be derived from a single font, and that is the whole point.** The stack is the
+user’s, and the spread across the fonts a Windows browser may pick is about 1.4x: `⇅` is 14.6px in
+Segoe UI but 20.0px in Yu Gothic UI, and `✓` runs the other way — widest in Segoe UI and Consolas at
+21.5px, narrower in Segoe UI Symbol at 16.2px. So the box is sized for the WIDEST glyph of each set
+that swaps (22px covers `✓` on the header buttons, 18px covers `○` on the visibility boxes), and both
+states of a control get the same box. Otherwise the control resizes at the moment it is clicked and
+slides its neighbour sideways under the pointer that just pressed it.
+
+The header’s two `orderIconBtn` states were the last to get this treatment. 1.1.10 measured the header,
+found `overX: 3` on the button group, and fixed the *title* (ellipsis + `minWidth: 0`) and the *chevron*
+(a 14px box) while leaving the buttons themselves on font metrics — so the reported group was only
+half fixed, and 1.2.0 added a third button carrying the widest glyph of the set.
+
+An earlier guess in this file’s history put `▶`’s ink at "about 13px at a 10px font size" from the
+rendered look rather than from a measurement. The number happened to be close, but the method is why
+the header shipped half-fixed for two releases: `MeasureString` is one command and settles it.
+
+---
+
+## Common pitfalls, in full
+
+`AGENTS.md` keeps a short index of these; the full table lives here because it had grown to
+4.8 KB of war stories whose rules are stated as Critical Rules or architecture sections elsewhere.
+Read this when a symptom looks familiar and you want the case that produced the rule.
+
+| Pitfall | Symptom | Fix |
+|---|---|---|
+| Two plugin IDs mapping to same `_skinBodyAttrs` key | Phantom duplicate entries in skin dropdown | Each attribute must map to exactly one plugin ID |
+| `data-skin-chrome` value ≠ package name | Duplicate entries while that skin is active | Phase 1b uses the raw attribute as the plugin ID; if a skin sets its style-element id (`claude-style-skin-style`) rather than its package name, Phase 4 rediscovers it under a different ID. Cross-reference `_bootIds` and strip `-style`/`-chrome`/`-css`; also add the skin to `_skinBodyAttrs` |
+| `React.createRoot` instead of `require('react-dom/client').createRoot` | Standalone panel renders nothing — no React root | `createRoot` is not on the `react` package. Workbench mode gets a root from dock-base; standalone mode must create its own |
+| `registerActivityBarItem()` without `pluginId` | Listed in Settings but no "Open" button | `pluginEntryItem()` matches `pluginId ?? id`, and the fallback is `'dock-flash:quick-control'`, which never equals `'dock-flash'`. Add `pluginId: 'dock-flash'` |
+| `L('key')` (a function) for `registerPlugin` title/description | Plugin card shows a blank name and description | `createPluginCard` renders those as React children and never calls `resolveSettingText()`. Unlike `registerPanel` / `registerActivityBarItem`, `registerPlugin` needs **static strings** |
+| `"<pkg>/client"` in `dsh.client.inject` | Load-order hint silently ignored: wrong load order, or a third-party switch that never appears | `arriveGraphRow()` does not strip `/client` for inject lookups. Use the base names — `"dock-base"`, `"dock-flash"` |
+| `exports.inject = ['quickControl']` for third-party integration | Plugin fails to load when dock-flash is absent | Pattern B: `exports.inject = []` + dual discovery |
+| Half-implemented dual discovery | The switch registers twice, or never appears when the third party loads first | Both halves are required — the `registered` guard, and `ctx.on('dock-flash:ready')` alongside `ctx.get('quickControl')` |
+| Running the GraphFlow installer in this repo | `AGENTS.md` replaced by GraphFlow's own "for Claude Code" notes | It writes `AGENTS.md` unconditionally. `git checkout -- AGENTS.md`, keep those notes in `CLAUDE.md`, verify with `grep -c dock-flash AGENTS.md` (healthy: dozens, clobbered: 0) |
+| Hardcoding an environment-specific endpoint | An internal address published in the public repository | Make it a setting; keep built-in presets generic. Recovery needs `git filter-branch` **and** platform-side repository deletion — force-push only moves refs, and the old commits stay fetchable by SHA |
+| Injecting raw error text into a single-line log block | One message spills over many lines and destroys the alignment | Collapse with `_oneLine(v, max)` before pushing the line |
+| A diagnostic readout that answers a different question than the test | "Is a proxy active" and "what did the test do" disagree | Probe the same target in both: `proxyRouteForUrl()` takes the resolved `testUrl` |
+| A glyph wider than its font box | A 2-4px overflow that survives every structural fix | **Every glyph in this panel is wider than the ~`font-size` an inline element reserves for it.** Give each a pixel `inline-flex` box, sized for the WIDEST glyph of any set that swaps, with the same box in both states. **Do not derive the number from one font** — the spread across a user’s stack is ~1.4x. Measure with .NET `MeasureString`: the offline half of checklist item 14 — table in [docs/architecture-notes.md](docs/architecture-notes.md) |
+| `minWidth: 0` applied to a `flex: none` element | Looks like a shrink fix, is a no-op | `flex: none` means `flex-shrink: 0`, so the box can never shrink and `minWidth` has nothing to act on. Check the flex shorthand before adding the property; a no-op fix is worse than none, because it reads as solved |
+| An emoji-capable glyph chosen for a small icon | A full-colour glyph, at a size the colour-emoji font picks, sitting beside monochrome `⇅`/`↺`/`▶` | `☑`/`☐`/`👁` are emoji-presentation code points and render through Segoe UI Emoji on Windows. Prefer plain geometric shapes from the family already in use (`●`/`○`/`◉`), which carry no emoji presentation |
+| Diagnosing from the shape of the DOM tree | Fixing the wrong element confidently | The live element carries its own evidence — `__dockFlashOverflow()` prints each overflow's `text`, which is how a `⇅▶` button group was told apart from the title the tree depth suggested. Read the text before forming the hypothesis |

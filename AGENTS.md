@@ -213,19 +213,37 @@ plain render function, which would make hooks illegal. Do not "tidy this up" int
 > The full linkage chain, and why the Layout group disappears in workbench mode:
 > [docs/architecture-notes.md](docs/architecture-notes.md).
 
-### Panel ordering: units, one key, one writer
+### Panel ordering and visibility: two modes, one writer
 
-Users can reorder the panel's groups and switches, from an icon in the header of every page that has
-something to rearrange (not the Changes page), immediately left of the collapse chevron, icon-only,
-its handler calling `stopPropagation()` because that header is itself the collapse control.
+Users can reorder the panel's groups and switches, and hide individual rows, from icons in the
+header of every page that has something to rearrange (not the Changes page), immediately left of the
+collapse chevron, icon-only, each handler calling `stopPropagation()` because that header is itself
+the collapse control.
 
-Six invariants:
+**Entering either mode opens its tab.** The header is reachable while a tab is folded (`isOpen` gates the body only), so both mode buttons call `ensureTabOpen(page.id)` — open if collapsed, no-op if open, never closing — and do so AFTER `stopPropagation()`, or the header’s own `toggleTab` re-collapses it in the same click.
 
-- **One key, one writer, and the writer is the preference bridge.** The order lives in the host
-  settings namespace (`panelOrder`); `writePanelOrder()`/`clearPanelOrder()` are its only writers and
-  both go through `savePrefs()` — memory + localStorage + host in one call. Group keys are
-  scope-qualified: `builtin:<group>` for the Workbench tab, `ext:<source>` for an Extensions group,
-  because the two tabs name groups from different namespaces.
+**Two modes, mutually exclusive by construction, not by a guard**: `◉` opens visibility, `⇅`
+reordering, and while either is open **the other's entry button is not rendered** — header `◉ ⇅ ▶`
+idle, `✓ ↺ ▶` in either mode, no state where a row has both a ▲▼ pair and a hide box. Do not merge them: two adjacent small controls, one of
+which makes a row vanish, is a mis-click that removes the row you were about to move. `↺` is a single button whose
+action follows the open mode, and **each mode resets only its own half** — order and visibility are
+independent intents, so there is deliberately no combined "restore everything".
+
+Seven invariants:
+
+- **One key, one writer, and the writer is the preference bridge.** Order AND visibility both live
+  in the host settings namespace (`panelOrder`, as `switches` and `hidden`); `writePanelOrder()`,
+  `clearPanelOrder()` and `clearPanelHidden()` are the only writers and all go through `savePrefs()`
+  — memory + localStorage + host in one call. Group keys are scope-qualified: `builtin:<group>` for
+  the Workbench tab, `ext:<source>` for an Extensions group, because the two tabs name groups from
+  different namespaces. Each clear carries the OTHER field through untouched, and neither
+  `localStorage.removeItem`s the key: removing it would drop the half it preserves.
+- **Two layers of "not shown", ANDed, never merged.** A switch's `visible()` is the PLUGIN saying "I
+  do not apply right now"; `panelOrder.hidden` is the USER saying "I do not want it". So a user
+  cannot force back a row the plugin has stood down, and a plugin cannot drag back one the user put
+  away. Hidden rows are listed **only** in visibility mode (un-hiding needs them on screen) and
+  filtered on every other surface, which is what keeps the normal view and reorder mode agreeing
+  about what exists.
 - **A unit, not a switch, is what moves.** `groupUnits()` splits a group into units: a plain switch
   is a unit of one, and switches sharing a `cluster` label are ONE unit keyed by `\0cluster:<label>`
   — the label, not the head's id, because `visible()` can hide any member, so a head-keyed unit would
@@ -546,7 +564,7 @@ control is on screen. A cluster's unit key is its **label**,
 not its first member's id: `visible()` can still hide a member, so a head-keyed unit would change
 key the moment the head was hidden while another member stayed on screen, and the saved slot
 would be lost. A cluster is never a grid item (`isGridToggle()`) — a compact grid cell holds
-exactly one control. See "Panel ordering: units, one key, one writer" under Architecture.
+exactly one control. See "Panel ordering and visibility: two modes, one writer" under Architecture.
 
 `visible: () => boolean` drops the switch from the panel while it stays registered — its state,
 its changelog entries and every other reader keep working, so no dispose/re-register dance is
@@ -728,9 +746,20 @@ easiest to break invisibly.
     first). The System proxy controls move as ONE block with a single ▲▼, keeping
     mode → URL → test → log, and configuring a proxy afterwards puts the newly visible rows
     back inside that block rather than at the end of the group.
+    **Collapsed tab**: fold a tab, press either mode button — it opens AND turns the mode
+    on in one click, without re-collapsing.
+    **Visibility mode**: the idle header reads `◉ ⇅ ▶`; opening EITHER mode turns it into
+    `✓ ↺ ▶` with the other mode’s entry gone — confirm there is no state with both a ▲▼
+    pair and a hide box on one row. Untick a row → it leaves the normal view AND reorder
+    mode, but stays listed here so it can come back. Hide a whole CLUSTER → ONE box hides
+    the entire card, not its members one at a time. Then the two resets, which must not
+    overlap: with both a customized order and a hidden row, `↺` in reorder mode restores the
+    ORDER and leaves the row hidden, while `↺` in visibility mode shows every row and leaves
+    the order alone. Both survive a refresh AND a different browser, and appear in
+    `settings.yaml` as `panelOrder.hidden`.
 13. **Preferences survive the browser, not just the reload** — the point of the host-backed move,
     and the one check that cannot be done from a single tab:
-    - Move a group, pick a skin, and (standalone) change the trigger position. Then open the
+    - Move a group, hide a row, pick a skin, and (standalone) change the trigger position. Then open the
       **same profile in a different browser**, or clear this browser's localStorage and reload →
       all three come back. That is the whole feature; a reload alone proves nothing, because
       localStorage would have answered it too.
@@ -781,21 +810,18 @@ form and each carries its own example, so they are not repeated here — check t
 
 | Pitfall | Symptom | Fix |
 |---|---|---|
-| Two plugin IDs mapping to same `_skinBodyAttrs` key | Phantom duplicate entries in skin dropdown | Each attribute must map to exactly one plugin ID |
-| `data-skin-chrome` value ≠ package name | Duplicate entries while that skin is active | Phase 1b uses the raw attribute as the plugin ID; if a skin sets its style-element id (`claude-style-skin-style`) rather than its package name, Phase 4 rediscovers it under a different ID. Cross-reference `_bootIds` and strip `-style`/`-chrome`/`-css`; also add the skin to `_skinBodyAttrs` |
-| `React.createRoot` instead of `require('react-dom/client').createRoot` | Standalone panel renders nothing — no React root | `createRoot` is not on the `react` package. Workbench mode gets a root from dock-base; standalone mode must create its own |
-| `registerActivityBarItem()` without `pluginId` | Listed in Settings but no "Open" button | `pluginEntryItem()` matches `pluginId ?? id`, and the fallback is `'dock-flash:quick-control'`, which never equals `'dock-flash'`. Add `pluginId: 'dock-flash'` |
-| `L('key')` (a function) for `registerPlugin` title/description | Plugin card shows a blank name and description | `createPluginCard` renders those as React children and never calls `resolveSettingText()`. Unlike `registerPanel` / `registerActivityBarItem`, `registerPlugin` needs **static strings** |
-| `"<pkg>/client"` in `dsh.client.inject` | Load-order hint silently ignored: wrong load order, or a third-party switch that never appears | `arriveGraphRow()` does not strip `/client` for inject lookups. Use the base names — `"dock-base"`, `"dock-flash"` |
-| `exports.inject = ['quickControl']` for third-party integration | Plugin fails to load when dock-flash is absent | Pattern B: `exports.inject = []` + dual discovery |
-| Half-implemented dual discovery | The switch registers twice, or never appears when the third party loads first | Both halves are required — the `registered` guard, and `ctx.on('dock-flash:ready')` alongside `ctx.get('quickControl')` |
-| Running the GraphFlow installer in this repo | `AGENTS.md` replaced by GraphFlow's own "for Claude Code" notes | It writes `AGENTS.md` unconditionally. `git checkout -- AGENTS.md`, keep those notes in `CLAUDE.md`, verify with `grep -c dock-flash AGENTS.md` (healthy: dozens, clobbered: 0) |
-| Hardcoding an environment-specific endpoint | An internal address published in the public repository | Make it a setting; keep built-in presets generic. Recovery needs `git filter-branch` **and** platform-side repository deletion — force-push only moves refs, and the old commits stay fetchable by SHA |
-| Injecting raw error text into a single-line log block | One message spills over many lines and destroys the alignment | Collapse with `_oneLine(v, max)` before pushing the line |
-| A diagnostic readout that answers a different question than the test | "Is a proxy active" and "what did the test do" disagree | Probe the same target in both: `proxyRouteForUrl()` takes the resolved `testUrl` |
-| A glyph wider than its font box | A 2-4px overflow that survives every structural fix | `▶` (U+25B6) and `▼`/`▲` are WIDE glyphs: at 10px their ink is ~13px while an inline box reserves ~10px. Give the glyph an explicit `inline-flex` box (`width`/`height` in px) instead of trusting font metrics — and give both states of a rotating glyph the same box, or the row shifts when it flips |
-| `minWidth: 0` applied to a `flex: none` element | Looks like a shrink fix, is a no-op | `flex: none` means `flex-shrink: 0`, so the box can never shrink and `minWidth` has nothing to act on. Check the flex shorthand before adding the property; a no-op fix is worse than none, because it reads as solved |
-| Diagnosing from the shape of the DOM tree | Fixing the wrong element confidently | The live element carries its own evidence — `__dockFlashOverflow()` prints each overflow's `text`, which is how a `⇅▶` button group was told apart from the title the tree depth suggested. Read the text before forming the hypothesis |
+| `React.createRoot` instead of `require('react-dom/client').createRoot` | Standalone panel renders nothing — no React root | `createRoot` is not on the `react` package; standalone mode must create its own |
+| `registerActivityBarItem()` without `pluginId` | Listed in Settings but no "Open" button | `pluginEntryItem()` matches `pluginId ?? id`, whose fallback never equals `'dock-flash'`. Add `pluginId: 'dock-flash'` |
+| `L('key')` (a function) for `registerPlugin` title/description | Blank name and description on the plugin card | `createPluginCard` renders those as React children and never calls `resolveSettingText()`. `registerPlugin` needs **static strings** |
+| `"<pkg>/client"` in `dsh.client.inject` | Load-order hint silently ignored; a third-party switch never appears | `arriveGraphRow()` does not strip `/client` for inject lookups. Use base names — `"dock-base"`, `"dock-flash"` |
+| `minWidth: 0` on a `flex: none` element | Looks like a shrink fix, is a no-op | `flex: none` is `flex-shrink: 0`, so there is nothing to act on. A no-op fix is worse than none — it reads as solved |
+| A glyph wider than its font box | A 2-4px overflow that survives every structural fix | Size a pixel `inline-flex` box for the WIDEST glyph of any set that swaps, same box in both states, never derived from one font. See [notes](docs/architecture-notes.md) |
+| An emoji-capable glyph as a small icon | A full-colour glyph beside monochrome `⇅`/`↺`/`▶` | `☑`/`☐` and an eye are emoji-presentation code points and render through the colour-emoji font on Windows. Prefer plain geometric shapes: `●`, `○`, `◉` |
+| Diagnosing from the shape of the DOM tree | Fixing the wrong element confidently | The live element carries its own evidence — `__dockFlashOverflow()` prints each overflow's `text`. Read it before forming the hypothesis |
+| Running the GraphFlow installer in this repo | `AGENTS.md` replaced by GraphFlow's own notes | It writes `AGENTS.md` unconditionally. `git checkout -- AGENTS.md`, keep those notes in `CLAUDE.md`, verify `grep -c dock-flash AGENTS.md` |
+
+The rest — skin-scan duplicates, hardcoded endpoints, log-line injection, the diagnostic-target
+mismatch, and the `_skinBodyAttrs` cases — are in **[docs/architecture-notes.md](docs/architecture-notes.md)**.
 
 ---
 
