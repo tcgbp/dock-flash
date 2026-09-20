@@ -1,10 +1,59 @@
 # dock-flash — publishing and repository sync
 
-The release procedure. `AGENTS.md` keeps only the three rules that must never be got wrong,
-because this is a PROCEDURE: you need it when cutting a release, not while writing code.
+The release procedure and the repository-sync rules. `AGENTS.md` keeps only the three sync rules
+that must never be got wrong, because this is a PROCEDURE: you need it when cutting a release, not
+while writing code.
 
 ---
 
+## The release runbook
+
+Run these in order. Which number to use is the `### Which number moves` table in `AGENTS.md` —
+that is a rule and stays there.
+
+```sh
+# 1. Version, in BOTH places — they are not linked and nothing checks them.
+#      package.json          "version"
+#      lib/client.js:53      console.log('[dock-flash] client vX.Y.Z')
+#    Add the CHANGELOG.md row at the same time.
+
+# 2. If src/index.ts changed, rebuild and commit dist/ in the same commit.
+pnpm run build
+
+# 3. Commit and push to Gitee (the authoritative remote), then mirror.
+git push origin master
+#    dispatch the mirror and confirm the tree hash matches — see below
+
+# 4. Build the release artifact. `pnpm pack` writes dock-flash-<version>.tgz; the
+#    GitHub Release asset must be named dock-flash.tgz, because the dsh-market
+#    registry entry's tarball URL is releases/latest/download/dock-flash.tgz.
+pnpm pack && mv dock-flash-<version>.tgz dock-flash.tgz
+
+# 5. Tag and push the tag, then mirror again — the tag needs its own dispatch.
+git tag -a v<version> -m "<summary>"
+git push origin v<version>
+
+# 6. Create the Release and upload the asset (see the API snippets below).
+```
+
+**The tarball is gitignored on purpose.** Both `dock-flash.tgz` and `dock-flash-<version>.tgz` are in
+`.gitignore`, so it can never be committed — a stale tarball in the tree is how a release ships the
+previous build, and it is reproducible from the tagged commit at any time. Nothing else needs editing
+per release: the registry entry points at `releases/latest`, so it follows the newest Release on its
+own.
+
+**Always verify the release end to end**, because none of it errors loudly:
+
+- `/repos/<owner>/<repo>/releases/latest` reports the expected tag, and lists the asset.
+- Download the asset back through `api.github.com` and `cmp` it against the local build. Byte
+  equality is the only proof the upload was not truncated.
+- Do not try to verify by fetching `releases/latest/download/...` from the browser on the maintainer
+  machine: `github.com` is intermittently unreachable there while `api.github.com` is not, so a
+  connection reset says nothing about whether the asset is good.
+
+---
+
+## Repository sync
 
 **Gitee is authoritative; GitHub is a mirror of it.**
 
@@ -36,3 +85,36 @@ Two details of that workflow must not be "simplified":
 - The workflow file is committed **to Gitee as well**, for the same reason: after a mirror push GitHub's default branch is exactly Gitee's tree, so anything living only on GitHub is wiped.
 
 GitHub disables scheduled workflows after roughly 60 days without repository activity — if the mirror looks stale, check the Actions tab first.
+
+---
+
+## Creating the Release and uploading the asset
+
+Both go through `api.github.com` with the same credential the mirror dispatch uses. Write the JSON
+body to a file and pass it with `-d @file`: an inline heredoc is easy to get subtly wrong, and the
+Release is not idempotent — a malformed request fails as a 422, but a partially-applied one leaves
+work to clean up.
+
+```sh
+tok=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')
+
+# Create the Release. target_commitish is master; the tag must already exist on GitHub.
+curl -sS -X POST -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/tcgbp/dock-flash/releases -d @release.json
+#   -> note the returned "id" and "upload_url"
+
+# Upload the asset. Content-Type must be application/gzip, and the ?name= is what
+# the registry URL depends on.
+curl -sS -X POST -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" \
+  -H "Content-Type: application/gzip" --data-binary @dock-flash.tgz \
+  "https://uploads.github.com/repos/tcgbp/dock-flash/releases/<id>/assets?name=dock-flash.tgz"
+```
+
+The upload response carries a `digest` (`sha256:…`) and the asset `size` — check both against the
+local file. To read the bytes back, request the asset by id with
+`Accept: application/octet-stream` from `api.github.com`, which avoids the blocked `github.com` host
+entirely.
+
+A `node -e` one-liner cannot write a temp file here: this shell runs Git for Windows, where `/tmp`
+resolves to `C:\tmp`. Write scratch files inside the repository and delete them afterwards.
+
