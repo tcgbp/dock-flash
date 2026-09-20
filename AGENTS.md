@@ -738,6 +738,26 @@ easiest to break invisibly.
     - A bad value typed straight into `settings.yaml` (say `panelOrder` as a list) is refused at
       load rather than corrupting the namespace, and the panel falls back to its defaults.
 
+14. **Layout overflow — measure it, do not eyeball it.** The panel has no committed
+    test suite and no headless browser, so "it looks fine" was the only check a UI change
+    ever got — and that is how a horizontal scrollbar survived several releases without
+    anyone writing it down as a defect. Run `__dockFlashOverflow()` in the browser console
+    (panel open) after any change that touches sizing, padding, flex or a fixed width:
+    - It reports **only dock-flash's own subtree** by default and returns
+      `{ ok: true, overflowing: 0 }` when clean. `ok: false` lists the offending elements
+      with `overX`/`overY` and their computed `overflowX`/`minWidth`, sorted by severity.
+    - **Measure at two window widths, one of them narrow.** Overflow is a function of
+      container width, so a single size proves nothing: the same markup that fits at
+      1600px can overflow at 1100px. The narrow pass is the one that finds the bug.
+    - `__dockFlashOverflow(true)` scans the whole page instead. Use it to answer "is this
+      scrollbar even mine?" before hunting inside the plugin — the answer has been no
+      before, and the container that overflowed belonged to DSH (`pI_x6G_rightbarCol` at
+      `clientWidth: 0` holding 577px of content).
+    - **A flex item's default `min-width: auto` means "never narrower than my content".**
+      That single rule is behind every overflow this plugin has actually had; `minWidth: 0`
+      on the shrinking box is the fix, and `box-sizing: border-box` is required whenever a
+      `minWidth` floor and padding are combined.
+
 ### Key Observation Points
 
 - **Browser DevTools console**: `[dock-flash]` prefixed logs for client-side events
