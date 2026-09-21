@@ -46,7 +46,8 @@ dock-flash/
 ├── docs/                 Long-form notes and procedures — NOT injected, read on demand
 │   ├── architecture-notes.md   the "why" behind rules, and measurements
 │   ├── testing-checklist.md    the per-change verification procedure
-│   └── releasing.md            the release and mirror-sync procedure
+│   ├── releasing.md            the release and mirror-sync procedure
+│   └── skin-system.md          scan phases, skin categories, preference bridge
 └── scripts/              Repo tooling (not published — see `files` in package.json)
     ├── check-docs-size.mjs     `pnpm run check:docs`
     └── check-overlay-mount.mjs `pnpm run check:overlay`
@@ -515,14 +516,11 @@ matched by name or by repo), so listing a package it would refuse does not merel
 WEDGES the dropdown: a failed activation must release the optimistic `_pendingSkinId` or
 `_getActiveSkinId()` echoes it back forever. `_skinAllowed(id)` is the ONE predicate — call it from
 **all five** entry paths into `_scanInstalledSkins()`: managed (0), `style[data-plugin]` (1a),
-`style[data-skin-chrome]` (1b), body attributes (2), boot manifest / graph rows (4). **1.4.2 gated only
-the market-`installed` merge and the skin still appeared**, because the same package also injects its own
-`<style data-plugin>` tag — the same lesson Critical Rule 8 already records for `_skinExclude`. Two more
-rules hold: **a package the market does not list PASSES** (a plugin-local CSS skin it has never heard of
-must stay; only a KNOWN non-theme is dropped), and on ANY activation failure **clear `_pendingSkinId`,
-notify, and warn with the market's own wording**. `dsh-client-liang-intensity-skin` is the worked
-example — [docs/architecture-notes.md](docs/architecture-notes.md) also records why such a plugin cannot
-be deactivated from here, and the three harness blind spots that let the first fix ship green.
+`style[data-skin-chrome]` (1b), body attributes (2), boot manifest / graph rows (4). Gating the market
+merge alone is not enough: the same package injects its own `<style data-plugin>` tag. **A package the
+market does not list PASSES** (a plugin-local CSS skin must stay; only a KNOWN non-theme is dropped).
+`dsh-client-liang-intensity-skin` is the worked example —
+[docs/architecture-notes.md](docs/architecture-notes.md) has the measurements.
 
 ### 9. Never Use CSS `zoom` on `<html>` Element
 
@@ -570,87 +568,38 @@ When adding a host-side dependency, import it statically and declare it in `pack
 
 ## Skin System Architecture
 
-### 5-Layer Scan
+**Five phases, one predicate.** A skin enters the dropdown through phase 0 (managed), 1a
+(`style[data-plugin]`), 1b (`style[data-skin-chrome]`), 2 (body attributes) or 4 (`__DSH_BOOT__` /
+`graphRows`). Every filter is therefore stated ONCE and called from all five — `_skinExclude` for
+plugins that must never be listed, and `_skinAllowed` for the market's theme classification. **A
+filter applied to four of the five leaks through the fifth**: 1.4.2 gated only the market merge and
+`dsh-client-liang-intensity-skin` still appeared via 1a and 4.
 
-| Phase | Source | What It Finds |
-|---|---|---|
-| 0 | Managed skin registry | Skins with own lifecycle (Mineradio) — detected via config/DOM |
-| 1a | `<style data-plugin>` / `<link data-plugin>` | DSH runner-injected styles, deduplicated by package name |
-| 1b | `<style data-skin-chrome>` | Styles created by plugins inside `ctx.effect()` |
-| 2 | Body/HTML attributes | Attribute-only skins (`data-dsh-*`) |
-| 3 | _(removed)_ | Old manual list deleted |
-| 4 | `__DSH_BOOT__` / `graphRows` + dsh-market API | Installed-but-inactive plugins |
+- **Excluded, never listed**: bloom-theme, black-hole, theme-manager, `dsh-skin-market` (the market
+  itself — supplies the list and is not a skin) and any `timeline` plugin, which looks exactly like a
+  CSS skin to the DOM scan while not being one. `_skinExclude` also protects THEM: deactivation
+  REMOVES a style element (Critical Rule 2), which would strip their own stylesheet.
+- **Managed skins** (Mineradio) have their own lifecycle and cannot be toggled by touching style tags;
+  `_toggleManagedSkin()` writes the plugin's private key and drives the cross-tab `storage` event
+  (Critical Rule 3).
+- **Without dsh-market the skin switcher is not registered at all** — `_registerSkinSwitch()` runs
+  only from `_refreshMarketThemes()` on success, because disabled themes are invisible to the DOM scan
+  and the list would be incomplete.
 
-### Skin Categories
+**User preferences are host settings, not localStorage keys** — localStorage is a cache, never the
+authority. Adding one means touching all four places: `SettingsSchema` in `src/index.ts` with a
+`.default()`, the mapping in the client's `loadHostPreferences()`, a read from `_hostPrefs`, and a
+write through `savePrefs()`. `triggerOverlayOffset` shipped declared-and-read but **never mapped**, so
+a host-held value was silently ignored on load — the mapping list IS the contract.
 
-| Category | Example | Toggle Mechanism |
-|---|---|---|
-| **Managed** | Mineradio | iframe → `storage` event → `onStorage` → `sync()` → `mount()`/`unmount()` |
-| **CSS** | maid-atelier, official-homepage | `el.remove()` deactivation + `mod.import()` / `<script>` reactivation |
-| **Excluded** | bloom-theme, black-hole, theme-manager, any `timeline` plugin | Filtered by `_skinExclude`, never appear in dropdown |
+**`remote` is a typert namespace and resolves only if declared in `inject`** — both `"remote"` and
+`"remote.settings"`; a plugin that merely `ctx.get('remote')`s it gets `undefined`. `describe()`
+answers `{ ok, value }` with the namespace list at `value.namespaces`, and
+`settings.update(ns, patch, expectedRevision)` takes **three** arguments.
 
-> **A timeline plugin is not a skin, and `_skinExclude` is what keeps it out.** `dsh-codex-timeline` matches `_skinHint` through its `codex` token — a token that exists for a real Codex-style skin — and injects `<style data-plugin="dsh-codex-timeline">`, i.e. it looks exactly like a CSS skin to the DOM scan. It must not be listed: the switcher deactivates a skin by **removing** its style element (Critical Rule 2), which would strip that plugin's own stylesheet. `_skinExclude`'s `timeline` entry and `_timelineOwner()`'s `/timeline/i` are the same notion — "another plugin owns the turn rail" — and the turn-rail switch stands down when either reports it.
-
-> **Without dsh-market**: the skin switcher is not registered at all — `_registerSkinSwitch()` is only called from `_refreshMarketThemes()` on success. Without market, disabled themes are invisible to DOM scan and the list would be incomplete.
-
-### Managed Skin Configuration
-
-| Skin | localStorage Key | Activation Attribute |
-|---|---|---|
-| Mineradio | `dsh.ui-mineradio.enabled` | `data-dsh-aqua` |
-
-### User preferences live in the host, not the browser
-
-`panelOrder`, `activeSkin` and `triggerPosition` are **host settings**, not localStorage keys —
-localStorage is a **cache**, never the authority. The layer (`#region Preferences`) is shaped by one
-constraint: every reader is synchronous and on a render path, while the host is only reachable
-through an async `remote.settings` call. So reads come from `_hostPrefs` (memory), the host is
-consulted **once** in `apply()`, and `savePrefs()` writes memory + localStorage + host in one call.
-The host wins once it has answered. `_prefCtx` holds the context for writers called from render
-paths; it is null before `apply()`, which `savePrefs()` tolerates.
-
-**`remote` is a typert namespace: it resolves only if the plugin declares it in `inject`.** A client plugin that merely `ctx.get('remote')`s it gets `undefined` — and a typert namespace is not a service, so there is no service lookup to fall back on. This plugin shipped with `inject: []` and therefore never reached the host settings at all; `@deepseek-ai/dsh-client-ui-settings`, which does the same job, declares `inject = ["remote", "remote.settings"]`. **Both names are required** — `remote` alone is not enough. One accessor, `_remoteSettings(ctx)`, is the only reader: it prefers `ctx.remote.settings`, keeps `ctx.get('remote')` as a fallback for an older surface, and every call site (the preference bridge, the proxy read-back, the two proxy writes, the black-hole hand-off) goes through it.
-
-**`describe()` answers `{ ok, value }`, and the namespace list is one level down at
-`value.namespaces`** — each entry `{ ns, value, base, user, applies, revision, secrets }`, with both
-spellings accepted (`ns || namespace`, `value || resolved`). Getting that nesting wrong is the
-characteristic failure here: it looks right and silently finds nothing, so the failure message prints
-the response keys *and* the `value` keys.
-
-**`settings.update(ns, patch, expectedRevision)` takes THREE arguments, and the runtime enforces the
-count** — calling it with two throws `client api: settings/update expected 3 argument(s), got 2`,
-even though the wire schema marks the third optional. The revision is a compare-and-set token: it
-arrives as `ns.revision` and **changes on every successful write**, so it is cached in
-`_hostRevision`, sent on every write, and refreshed from `response.value.revision`. A stale revision
-fails exactly like a missing one.
-
-> The three attempts that nesting took, the authoritative source for each shape above, and the
-> regression check pinning the two wrong expressions:
-> [docs/architecture-notes.md](docs/architecture-notes.md).
-
-Two habits follow, and they are the general lesson:
-
-- **Never let a load path return a bare `false`.** Every exit records a *named* reason, logs it, and
-  `__dockFlashPrefs()` reports the host's view beside localStorage's. This is Critical Rule 11's
-  silent `require` in a new place.
-- **Print the shape you did not recognise** — the failure message lists the descriptor's keys and the
-  namespaces actually seen, so the next mismatch is a copy-paste rather than a bisect.
-
-The Schema types the client's values **loosely on purpose** — an `enum` in the host would make a
-stored preference un-writable the moment the client's lists change. Three schemastery traps:
-**`dict` takes `(value, key)`** (the reverse of how it reads, and wrong only at first resolve);
-**every level of a nested object needs `.default()`**, or the resolve fails with `unsupported type
-"undefined"`; and `Schema.resolve(schema, options)` takes **options**, not a value — call
-`Schema(value)`. A validation failure rejects **before** anything is persisted.
-
-> Migration rules, and the 1.1.0 defect that produced the two habits above:
-> [docs/architecture-notes.md](docs/architecture-notes.md).
-
-### Preference Persistence
-
-The market's `live` theme is written through to both layers on read, but only when it disagrees with
-the host, so an unchanged value costs no round trip, and a `MutationObserver` on `<head>` re-applies
-the preference when late-loading skins appear.
+> The phase and category tables, the managed-skin configuration, and the full preference-bridge
+> reference — the `describe()` nesting, the schemastery traps, and why the host wins:
+> [docs/skin-system.md](docs/skin-system.md).
 
 ---
 
