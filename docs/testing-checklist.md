@@ -153,16 +153,55 @@ easiest to break invisibly.
       and a verdict starting with `ok`.
     - **The offset survives a refresh and a different browser**, and appears in `settings.yaml` as
       `triggerOverlayOffset`.
+    - **The size control**: raise *Trigger Button Size* and the button grows in place — glyph and
+      corner radius with it, not just the box. With **Conversation top-right** selected the full
+      24–64px range is available; drag the enlarged button to all four edges and confirm it is still
+      clamped inside the conversation, still clear of the scrollbar, and still giving way to the turn
+      rail (the rail side wins the `Math.min`, so at 64px it sits noticeably left of the corner).
+      Then switch to a slot position: the row must read **48** — the size actually in force — and the
+      button in the input row must shrink to match rather than overflow its row. Switch back to the
+      overlay and the 64 is still there: the clamp is a display rule, not a write.
+    - **The minimum is the default**: the slider's leftmost value is 24, which is what every release
+      to 1.3.x drew. There is no way to shrink the entry point.
+    - **Read `__dockFlashOverlay()` after a reload and check `sizeSource`** — it must say `host`.
+      A `localStorage/default` reading after a refresh means the size is not actually travelling with
+      you (the host answered too late, or the read-back broke), which a single reload cannot otherwise
+      reveal because the cache would answer for it. `triggerSizeStored` is what you stored and
+      `triggerSize` is what is in force; they differ legitimately at a slot position.
+    - **While the panel is OPEN the button must be visible above it.** The panel is z-index 99998 and
+      the overlay button 99997 by design, so moving the slider with the panel up used to look like a
+      change that only took effect after closing it — the panel was covering the only element whose
+      appearance changes. `raiseOverlayAbovePanel()` lifts the button to 99999 while the panel it owns
+      is open and drops it back to 99997 on close. Check both directions: open the panel, move the
+      slider, and the button grows **immediately**; then close it and confirm the panel is on top
+      again and the button was not left raised over it.
+    - **A resize with the panel open must not close it or lose the anchor**: the panel stays open,
+      stays anchored below the button, and the button stays above it.
+
+    - **Do this at ALL FIVE positions, not just the overlay.** The overlay and the four slot positions
+      (input left/right, session header actions/utilities) resize through two entirely different
+      mechanisms — the overlay is a plain DOM node resized imperatively, the slot button is a React
+      component that recomputes its style during render — and they have been out of step twice: once
+      because the panel covered the overlay, and once because the slot button subscribed to the host
+      preference bridge but not to the registry, so only the overlay moved. Switch the position and
+      move the slider again each time; a slot position showing its **old** size means the registry
+      subscription in `QuickTriggerIconButton` is gone. `pnpm run check:overlay` section 14 covers
+      exactly this, and its negative control (subscription removed) fails it.
+    - **The per-position ceiling must not overwrite the stored value**: set 64 at the overlay, switch to
+      a slot position (the row correctly reads 48), nudge the slider, then switch back — the 64 must
+      still be there. Losing it means `setValue` is storing a value clamped to the *current position's*
+      ceiling instead of the absolute one.
 
 
 16. **Preferences survive the browser, not just the reload** — the point of the host-backed move,
     and the one check that cannot be done from a single tab:
-    - Move a group, hide a row, pick a skin, and (standalone) change the trigger position. Then open the
+    - Move a group, hide a row, pick a skin, and (standalone) change the trigger position and the
+      trigger button size. Then open the
       **same profile in a different browser**, or clear this browser's localStorage and reload →
-      all three come back. That is the whole feature; a reload alone proves nothing, because
+      all of them come back. That is the whole feature; a reload alone proves nothing, because
       localStorage would have answered it too.
-    - `settings.yaml` in the profile now carries `panelOrder`, `activeSkin` and
-      `triggerPosition` under the `dock-flash` namespace.
+    - `settings.yaml` in the profile now carries `panelOrder`, `activeSkin`, `triggerPosition`,
+      `triggerSize` and `triggerOverlayOffset` under the `dock-flash` namespace.
     - **Upgrade path**: with localStorage holding values the host has never seen, reload → the
       host console logs `migrating browser-local preferences to host settings: …` once, and the
       values appear in `settings.yaml`. Reload again → no second log (idempotent, because by then

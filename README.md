@@ -26,6 +26,7 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 | 🎨 Appearance | Log Download | toggle | Show/hide the session log download button | ✅ |
 | 📐 Layout | Close on Blur | buttongroup | Off / On — auto-close the panel when clicking outside. Also a toggle in the panel header (both modes) | ✅ |
 | 📐 Layout | Trigger Position | select | Input Left / Input Right / Session Header / Header Utils — where the standalone ⚡ trigger goes — or **Conversation top-right**, a floating button inside the conversation you can drag anywhere within it | ✅ |
+| 📐 Layout | Trigger Button Size | slider | 24–64 px — how big the standalone ⚡ entry point is drawn, glyph and corner radius included. The draggable **Conversation top-right** position allows the full range; the slot positions cap at **48px** so the button still fits the input row, and the row shows the size actually in force. The minimum is the previous fixed size, so the control only ever enlarges it | ✅ |
 | ⚙️ System | Language | buttongroup | 中文 / English — switches DSH global UI language | ✅ |
 | ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control. Custom is validated: host / domain suffix / IP / host:port, comma- or space-separated; blank and CIDR are rejected | ✅ |
 | ⚙️ System | Test URL | select | Google 204 / GitHub / DeepSeek API / Custom — the address the connection test probes, with the effective URL printed on its own wrapping line beneath the select (so a custom address is readable). Lives in the proxy cluster, which can be folded | ✅ |
@@ -33,7 +34,7 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 
 > **The Layout group only renders in standalone mode.** In workbench mode `close-on-blur` exists solely as the panel-header toggle, so no built-in switch carries `group: 'layout'` and the category is skipped entirely.
 
-> **Dock layout is not configured here.** Dock edge, auto-hide, reserve space and icon scaling are dock-base's own settings — dock-flash deliberately does not duplicate them. In the Layout group dock-flash owns only `trigger-position` and `close-on-blur`, both standalone-only.
+> **Dock layout is not configured here.** Dock edge, auto-hide, reserve space and icon scaling are dock-base's own settings — dock-flash deliberately does not duplicate them. In the Layout group dock-flash owns only `trigger-position`, `trigger-size` and `close-on-blur`, all standalone-only.
 
 > **Turn Rail only offers itself while DSH's own rail is what you see.** It stays hidden with no session open, in a session without turns, while DSH's own `@container (width<=900px)` rule hides the rail, and when another timeline plugin owns it — `dsh-codex-timeline` enhances the native rail in place, so the rail on screen is its surface and dock-flash must not fight it for the same edge. Type `__dockFlashTurnRail()` in the browser console to print the decision and its reason.
 
@@ -315,7 +316,7 @@ The skin switcher requires [dsh-market](https://github.com/AKS1st/dsh-market) to
 
 ### Preference Persistence
 
-Skin selection, panel order and the standalone trigger position are saved to the **host settings namespace** (`dock-flash` in your profile's `settings.yaml`), and restored on load. `localStorage` is kept only as a cache, so these preferences follow you to another browser or machine rather than staying behind with the browser profile. Values that predate this (still in `localStorage` only) are migrated into the profile once, on first load.
+Skin selection, panel order, the standalone trigger position, the trigger button size and the dragged overlay position are saved to the **host settings namespace** (`dock-flash` in your profile's `settings.yaml`), and restored on load. `localStorage` is kept only as a cache, so these preferences follow you to another browser or machine rather than staying behind with the browser profile. Values that predate this (still in `localStorage` only) are migrated into the profile once, on first load.
 
 > For implementation details, switching mechanisms, exclusion rationale, and technical constraints, see [AGENTS.md](./AGENTS.md).
 
@@ -342,7 +343,7 @@ dsh plugin --profile my-profile add dock-base
 dsh --profile my-profile
 ```
 
-**Without dock-base**: dock-flash runs in standalone mode — a ⚡ trigger button is injected into the conversation slot picked by the `trigger-position` switch (default: input right). Click it to open the quick control popup panel (Appearance, Layout — trigger position — and System switches). The shared `sidebar.footer.action` slot is deliberately not offered, because other plugins occupy it too.
+**Without dock-base**: dock-flash runs in standalone mode — a ⚡ trigger button is injected into the conversation slot picked by the `trigger-position` switch (default: input right), drawn at the size set by `trigger-size` (default 24px, up to 48px in a slot or 64px at the draggable **Conversation top-right** position). Click it to open the quick control popup panel (Appearance, Layout — trigger position and size — and System switches). The shared `sidebar.footer.action` slot is deliberately not offered, because other plugins occupy it too.
 
 **With dock-base**: dock-flash integrates into the workbench — the ⚡ icon appears in the activity bar, and the panel can be opened as a sidebar or floating window with the Appearance and System switches. Dock layout properties (dock edge, auto-hide, reserve space, icon scaling) are configured in dock-base's own settings, not here.
 

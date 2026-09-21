@@ -6,12 +6,46 @@ while writing code.
 
 ---
 
+## The two confirmation gates — ask first, both times
+
+**A release is never cut on the agent's own initiative.** Two gates, each one the maintainer's
+decision. `AGENTS.md` carries this as a rule because a fully-verified change is still not finished
+here; the detail lives here because it is procedure.
+
+| Gate | When | What to do |
+|---|---|---|
+| **1. The version** | Before touching `package.json` / `CLIENT_VERSION`, or writing the `CHANGELOG.md` row | Stop. State what is ready, name the version you would choose and why (per "Which number moves" below), and wait for an answer. |
+| **2. The release** | Before `pnpm pack`, the tag, the push, or the GitHub Release | Ask again. Gate 1's approval does **not** carry over. |
+
+Three consequences worth stating outright, because each has been got wrong:
+
+- **A clean diff is not approval.** "The work is done and every check passes" describes the tree; it
+  is not a decision about the tree. The bump is a separate act with a separate owner.
+- **Do not edit a version string opportunistically.** "I was in `package.json` anyway" is exactly the
+  move gate 1 exists to stop. Until gate 1 is answered both files keep the **last released** version
+  and no new `CHANGELOG.md` row is added.
+- **Nothing is published by accident while the gates hold.** Step 1 and steps 3-6 below are the only
+  things that make a release observable, and gate 2 sits in front of all of them. A rejected or
+  pending proposal leaves the repository exactly as it was.
+
+Why two gates rather than one: **a published version cannot be recalled** (see "Never renumber a
+released version"). Revision is free before the number exists and impossible after it, so the check
+is placed as late as it can usefully be — one "shall I release?" asked early, before the change has
+even been reviewed, would not cover the tag.
+
+---
+
 ## The release runbook
 
-Run these in order. Which number to use is decided by **Which number moves** below — patch for a bug
-fix, minor for anything additive a third party can observe, major for anything removed or renamed.
+Run these in order — **after both gates above are answered**. Which number to use is decided by
+**Which number moves** below — patch for a bug fix, minor for anything additive a third party can
+observe, major for anything removed or renamed.
 
 ```sh
+# 0. BOTH gates answered (see above): version approved, and release authorised.
+#    Do not start here without them — step 1 edits the version, and everything
+#    after step 3 is observable and cannot be taken back.
+
 # 1. Version, in BOTH places — they are not linked, so `pnpm run check:docs` asserts them.
 #      package.json        "version"
 #      lib/client.js       const CLIENT_VERSION — one constant, reported by the

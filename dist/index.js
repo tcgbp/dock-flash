@@ -17,6 +17,14 @@ const DEFAULT_TRIGGER_POSITION = 'input.right';
 /** Matches the client's OVERLAY_EDGE: 8px inside the conversation's corner. */
 const DEFAULT_TRIGGER_OVERLAY_OFFSET = { dx: 8, dy: 8 };
 /**
+ * Matches the client's TRIGGER_SIZE_MIN — which is also its default and the
+ * size every release up to 1.3.x shipped. The minimum and the default being the
+ * same number is deliberate: the control can only make the button LARGER, so an
+ * upgrade changes nothing until the user asks, and there is no way to shrink
+ * the entry point down to something hard to hit.
+ */
+const DEFAULT_TRIGGER_SIZE = 24;
+/**
  * Default test target: the canonical "is there a working network path"
  * endpoint. Returns an empty 204, so it measures the path and nothing else —
  * and it is unreachable without a working proxy on networks that need one,
@@ -37,6 +45,7 @@ const entry = {
     activeSkin: DEFAULT_ACTIVE_SKIN,
     triggerPosition: DEFAULT_TRIGGER_POSITION,
     triggerOverlayOffset: DEFAULT_TRIGGER_OVERLAY_OFFSET,
+    triggerSize: DEFAULT_TRIGGER_SIZE,
 };
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
 const API_BYPASS_DOMAINS = 'api.deepseek.com,chat.deepseek.com';
@@ -493,6 +502,9 @@ export function apply(ctx) {
                 dx: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dx),
                 dy: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dy),
             }).default(DEFAULT_TRIGGER_OVERLAY_OFFSET),
+            // No min/max on purpose — see the field's comment: the range belongs to
+            // the client, and it moves with the selected trigger position.
+            triggerSize: Schema.number().default(DEFAULT_TRIGGER_SIZE),
         });
         settingsCtx.settings.installSection(ctx, 'dock-flash', SettingsSchema, entry, {
             setSource: (current) => {

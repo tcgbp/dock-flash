@@ -230,6 +230,148 @@ anyway, becomes visible with no window resize once a conversation appears, clear
 (1168). The same harness against the pre-fix line fails 14 of them, with exactly that `appendChild`
 TypeError.
 
+### The trigger button's size: one number, stated once
+
+1.4.0 made the entry point's edge length a preference, and the interesting part is not the control —
+it is that the number used to be written down **nine times**. `OVERLAY_SIZE = 24` was read in six
+places by the positioning arithmetic, and three glyph sizes had been chosen independently (16 for the
+overlay, 14 for a header slot, 16 for an input slot). Nothing tied any of them to the box that was
+actually drawn.
+
+That matters because of what those six sites DO. `positionOverlayTrigger()` measures the button: the
+clamp is `contentRight - SIZE`, the scrollbar clearance is arithmetic on `contentRight`, and the
+turn-rail give-way is `railLeft - SIZE - 8`. A constant that disagrees with the rendered box does not
+produce a slightly-too-small button — it computes a position for a button of a different size, which
+is how the entry point ends up over the rail or outside the conversation. This is the same class of
+failure as the two that had already made the button invisible (the React-descriptor `appendChild`,
+and positioning being attempted once before an anchor existed), and it is why the size went into a
+single accessor rather than being threaded around as a parameter.
+
+`effectiveTriggerSize()` is the only reader. `triggerIconSize()` is `round(size * 2/3)` and
+`triggerRadius()` is `round(size / 4)`, chosen so that the default 24 reproduces the old 16px glyph
+and 6px radius **exactly** — the derivation had to be a no-op at the historical value, or the
+"cosmetic" control would have shipped a visual change nobody asked for.
+
+**Why the ceiling depends on the position.** A slot button shares its row with DSH's own controls, so
+it stops at 48px. `conversation.overlay` competes with nothing: it floats over the conversation and is
+clamped into it, and its only real constraints — never cover the scrollbar, never cover the turn rail
+— are already enforced by `positionOverlayTrigger()` for *any* size. So the draggable position is
+allowed 64px, which is the point of offering it. This is why the host schema carries
+`triggerSize: Schema.number().default(24)` with **no min/max**: the range is a client rule that moves
+with the selected position, and pinning it in the schema would make a stored value un-writable the
+moment the client's range changed — precisely the 1.1.0 lesson, already recorded for `activeSkin` and
+`triggerPosition`.
+
+The clamp is applied to what is **displayed and drawn**, never to what is stored: set 64 on the
+overlay, switch to a slot position, and the row reads 48 while `settings.yaml` still holds 64 — switch
+back and it is 64 again. `__dockFlashOverlay()` therefore reports three separate facts
+(`triggerSize`, `triggerSizeStored`, `triggerSizeRange`), because a user seeing 48 after setting 64
+should be able to read why rather than guess.
+
+Two smaller decisions worth keeping:
+
+- **The positioning reads the stored value, not `getBoundingClientRect()`.** The function runs from
+  the `ResizeObserver` and from the drag loop, and right after a style write the rendered box is one
+  frame stale — measuring it would clamp against the previous size. Reading the preference is the
+  same number the element was just drawn with.
+- **Resizing reuses the existing `<svg>` node** (`setAttribute('width'|'height', …)`) instead of
+  rebuilding the button. The element carries its own `mousedown`/`click`/`mouseenter` listeners, so
+  replacing its child would be an avoidable rebuild of a live element — and the click handler is
+  where this button was once found to be inert.
+
+`check:overlay` proves the coupling rather than the arithmetic in isolation: it resizes the real
+bundle's button and asserts the geometry follows. At 36px the expected `left` is **1156**, not 1214 —
+the rail's `Math.min` side wins — and that is exactly the property worth pinning, because it only
+holds if the give-way arithmetic and the box read the same size.
+
+#### Why the read-back needed two halves, and a test for each ordering
+
+Writing the test for the host-backed size is what exposed the second defect, and it is a shape that
+would have shipped invisibly: **`apply()` starts the `describe()` round trip at the TOP and installs
+the standalone trigger at the BOTTOM.** So `loadHostPreferences()` resolves *after*
+`mountStandaloneSlotTrigger()` has already captured its values — which means
+
+- a host that answers **late** needs a `_subscribePrefs()` handler, or the value arrives after
+  everything that reads it has run, and
+- a host that answers **early** needs the same handler **called once at install**, because
+  `_emitPrefs()` has already fired for the last listener and the subscription would never hear
+  anything.
+
+`triggerPosition` had survived this ordering by accident, because its reader is a *function* called
+later; a value captured into a closure variable has no such luck. Both halves are now present for
+`triggerSize` and `triggerOverlayOffset`, and section 12 of the harness drives the late case with a
+`describe()` held open until the button is mounted — the only way to reach it deterministically.
+
+The same work turned up a smaller reporting bug: `_overlayState.sizeStored` was clamped with the
+**minimum** as its ceiling, so it read 24 for every stored value above the minimum and could not
+answer "is my 64 being held back, or lost?" — the one question the field exists for.
+
+### "The size only applies after I close the panel"
+
+This was reported from use, and the honest answer is that it always applied — the panel was covering
+the proof. Three things had to be untangled, and the first two were my own wrong guesses, which is
+why they are recorded here.
+
+**The stacking is deliberate.** The standalone panel is `z-index: 99998` and the overlay button
+`99997`, so the panel draws over the trigger it was opened from. At the original fixed 24px nobody
+could see this; the moment the size became settable it read as a delayed effect, because the only
+element whose appearance changes is the one underneath.
+
+**The obvious fix was a no-op, and measuring is what showed it.** `positionPanel()`'s overlay branch
+anchors at `rect.bottom + 6` — the button's *bottom* edge — so the panel never overlapped the button
+in the first place. Rewriting the clearance as "the button's own height" produced
+`rect.bottom + rect.height + 6`, **double-counting the height** and pushing the panel a full
+button-height too far down. The harness caught that immediately (panel top 218 where 154 was
+expected), which is the entire argument for asserting geometry instead of eyeballing it. The change
+was reverted to the original arithmetic with a comment recording why it is already correct.
+
+**What actually fixes it** is `raiseOverlayAbovePanel()`: the button is lifted to `z-index: 99999`
+for exactly as long as the panel it owns is open, and lowered to `99997` on close. That keeps the
+panel's relationship to its anchor untouched, keeps the button out of the panel's way the rest of the
+time (a permanently-raised button would sit over the panel's own header), and makes the one control
+that must be watchable while the panel is up actually watchable. It is called *after* the panel's
+`display` is set, and `applyTriggerSize()` already re-runs `positionPanel()` while open so a live
+resize carries the panel with the button.
+
+Only the overlay needs the lift: a slot button lives in DSH's own layout and this panel never covers
+it.
+
+#### The same report had a second cause, in the four slot positions
+
+The lift above fixed the overlay only. The other four positions were broken for an unrelated reason —
+and it is the more instructive of the two, because the code read as correct and its own comment
+claimed the mechanism was in place.
+
+`QuickTriggerIconButton` computes its size during render, so it needs a re-render when the size
+changes. It subscribed to `_subscribePrefs`, which fires when the HOST answers or when a migration
+lands — while the comment above the switch said "the slot button repaints when the registry version
+bumps". **It did not subscribe to the registry at all.** Those are two different events: the slider's
+`setValue` calls `registry.notifyChange`, the panel listens for that, and the button did not. The
+result was precisely the reported asymmetry — the overlay (imperative, same closure) resized at once,
+while the four slot positions kept their old size until something unrelated repainted them.
+
+Both subscriptions are present now, and neither implies the other: the registry covers a slider move,
+`_subscribePrefs` covers a host value arriving late.
+
+**The harness could not have caught this, and that mattered more than the bug.** Its React stub was
+`useEffect: () => {}` — a no-op — so nothing a component registered inside an effect was observable,
+and no assertion over rendered output would ever have noticed a missing subscription. The stub now runs
+effects, keeps their cleanups (so a re-render genuinely re-subscribes instead of stacking), and routes
+a state-setter call back to the test; the assertion fires the registry event and requires the slot
+button to have ASKED to re-render.
+
+That last word is load-bearing. The first version of this test re-rendered the component by hand and
+**passed on a build with the subscription deleted** — measured, by pointing `DOCK_FLASH_BUNDLE` at a
+patched copy. A test that supplies the very mechanism it is meant to be checking proves nothing, so the
+assertion was rewritten to depend on the component's own subscription; the negative control now fails
+that one check and nothing else.
+
+The same test surfaced a third defect in passing: `setValue` stored the value clamped to the **current
+position's** ceiling, so nudging the slider at a slot position permanently destroyed a larger value the
+overlay was entitled to (set 64 on the overlay, switch to a slot, touch the slider, and the 64 was
+gone). The store is bounded by the absolute ceiling alone; the per-position clamp belongs to
+`getValue()`, which is what draws and displays.
+
 ---
 
 ### The turn rail: a class test that stopped recognising DSH

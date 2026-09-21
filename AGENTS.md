@@ -152,6 +152,15 @@ Six things must hold together:
   viewport (not a window `resize` listener) is what keeps it in place, since two of those three never
   fire one. A drag adjusts the offset; the clamp then holds the RESULT inside the viewport, so a
   stored offset survives a shrink that the position does not.
+- **The button's size is `effectiveTriggerSize()`; no size literal may reappear in the positioning
+  arithmetic.** The clamp, the scrollbar clearance and the turn-rail give-way all measure the BUTTON,
+  so a constant that disagrees with the drawn box parks the entry point over the rail or outside the
+  conversation — the same silent failure as the two that once hid it entirely. Icon size
+  (`triggerIconSize()`, 2/3) and radius (`triggerRadius()`, 1/4) derive from it and reproduce the
+  historical 16px/6px exactly at the default 24. **The ceiling follows the selected position** — 48px
+  in a slot (it shares that row), 64px at the draggable overlay (it competes with nothing) — and it
+  clamps what is drawn, never what is stored, so the host schema carries no min/max. The positioning
+  reads the stored value, not the rendered box, which is a frame stale after a resize.
 - **The glyph is real DOM, not a React element.** `LightningIcon()` returns `h('svg', …)` — a React
   element *descriptor*, a plain object — and the hand-built button's `appendChild` needs a `Node`, so
   it threw `TypeError: parameter 1 is not of type 'Node'` before `overlayEl = el`: the button was
@@ -787,6 +796,21 @@ mismatch, and the `_skinBodyAttrs` cases — are in **[docs/architecture-notes.m
 - Update version in **both** `package.json` (line 3) and the single `const CLIENT_VERSION` near the top of `lib/client.js`'s factory — the startup log and `__dockFlashOverlay()` both report it. One constant rather than a literal in the log line, because **a build that cannot name itself cannot be told apart from the previous one**: several rounds of overlay fixes were all labelled `v1.3.0`, so a reload that silently served a stale bundle was indistinguishable from a fix that had not worked. `pnpm run check:docs` asserts the two agree.
 - Both READMEs must stay in sync — same structure, same content, different language
 - No changelog in the READMEs — `CHANGELOG.md` and git log are the history records
+
+### Releasing needs the maintainer's confirmation — twice
+
+**Never cut a release on your own initiative.** Two gates, each the maintainer's decision:
+
+1. **Before bumping the version** — stop and ask. A finished change, passing checks and a clean diff
+   are **not** approval to version it. State the version you would choose and why, then wait.
+2. **Before tagging, pushing, or publishing** — ask again. Gate 1's approval does not carry over.
+
+Until gate 1 is answered, `package.json` and `CLIENT_VERSION` keep the **last released** version and
+no new `CHANGELOG.md` row is written. **Never edit a version string opportunistically** — "I was in
+the file anyway" is the exact move this rule exists to stop. The reason it is a rule: a published
+version cannot be recalled, so revision is free before the number exists and impossible after.
+
+> The rationale and the runbook step it gates: [docs/releasing.md](docs/releasing.md).
 
 ### Which number moves
 

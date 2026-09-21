@@ -88,6 +88,18 @@ export interface ProxyConfig {
    * the user chose.
    */
   triggerOverlayOffset: TriggerOverlayOffset
+  /**
+   * Edge length of the standalone trigger button, in px.
+   *
+   * Client-owned, like the three preferences above: the host stores it and
+   * never interprets it, because the legal RANGE is the client's — it depends
+   * on which trigger position is selected (a slot button must fit the input
+   * row, the draggable overlay may be larger). Pinning it to a min/max here
+   * would make a stored preference un-writable the moment the client's range
+   * changes, which is the 1.1.0 lesson this namespace already records for
+   * `activeSkin` and `triggerPosition`.
+   */
+  triggerSize: number
 }
 
 /** Offset of the draggable overlay trigger from the conversation's top-right corner. */
@@ -123,6 +135,14 @@ const DEFAULT_ACTIVE_SKIN = ''
 const DEFAULT_TRIGGER_POSITION = 'input.right'
 /** Matches the client's OVERLAY_EDGE: 8px inside the conversation's corner. */
 const DEFAULT_TRIGGER_OVERLAY_OFFSET: TriggerOverlayOffset = { dx: 8, dy: 8 }
+/**
+ * Matches the client's TRIGGER_SIZE_MIN — which is also its default and the
+ * size every release up to 1.3.x shipped. The minimum and the default being the
+ * same number is deliberate: the control can only make the button LARGER, so an
+ * upgrade changes nothing until the user asks, and there is no way to shrink
+ * the entry point down to something hard to hit.
+ */
+const DEFAULT_TRIGGER_SIZE = 24
 
 /**
  * Default test target: the canonical "is there a working network path"
@@ -149,6 +169,7 @@ const entry: ProxyConfig = {
   activeSkin: DEFAULT_ACTIVE_SKIN,
   triggerPosition: DEFAULT_TRIGGER_POSITION,
   triggerOverlayOffset: DEFAULT_TRIGGER_OVERLAY_OFFSET,
+  triggerSize: DEFAULT_TRIGGER_SIZE,
 }
 
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
@@ -633,6 +654,9 @@ export function apply(ctx: Context) {
         dx: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dx),
         dy: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dy),
       }).default(DEFAULT_TRIGGER_OVERLAY_OFFSET),
+      // No min/max on purpose — see the field's comment: the range belongs to
+      // the client, and it moves with the selected trigger position.
+      triggerSize: Schema.number().default(DEFAULT_TRIGGER_SIZE),
     })
 
     settingsCtx.settings.installSection(ctx, 'dock-flash', SettingsSchema, entry, {
