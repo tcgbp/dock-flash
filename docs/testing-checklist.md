@@ -57,7 +57,13 @@ easiest to break invisibly.
    `no-store`); confirm in the Network panel that a second dropdown open does **not** re-fetch it,
    and that with the registry unreachable the list is **unchanged** (every package stays listed —
    hiding real skins is the worse failure).
-   Sections 16–17 of `pnpm run check:overlay` pin both, including a negative control for each.
+   - **Check the four OTHER entry paths, not just the market list.** A skin reaches the dropdown
+     through five routes, and 1.4.2 gated only the market one — so `dsh-client-liang-intensity-skin`
+     survived, because it also injects its own `<style data-plugin="…">` tag. The fastest manual
+     check: with a plugin installed, run `document.querySelectorAll('head style[data-plugin]')` in
+     the console and confirm **every** id in it that is also market-installed appears (or does not)
+     consistently with the dropdown. Sections 16–17 of `pnpm run check:overlay` pin all five paths,
+     and its negative control (gates removed) fails on the DOM-scan path specifically.
 3. **Skin preference**: Set a skin, refresh → it restores after ~300ms.
 4. **Language**: Toggle → every label updates immediately, including inside the log block.
 5. **Sidebar sash**: Drag it with dock-flash enabled → the width resizes correctly (nothing has

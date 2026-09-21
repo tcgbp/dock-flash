@@ -509,17 +509,20 @@ installed-skin list and was also offered as one of the skins, labelled `Market` 
 put every real skin at risk. A derived label makes such an entry look deliberate, so the list is
 asserted rather than eyeballed: `check:overlay` section 15 drives the real scan and pins the dropdown.
 
-**A market-sourced candidate must also pass the MARKET's own classification.** The market refuses
-`/use-skin` for anything outside its theme set (`category: theme` in the registry, matched by name or
-by repo) — so listing a package it would refuse does not merely add a dead entry, it WEDGES the
-dropdown, because a failed activation must release the optimistic `_pendingSkinId` or
-`_getActiveSkinId()` echoes it back forever. `_isMarketThemePackage()` handles this, and three rules
-hold: apply it to **market-`installed` candidates only** (a DOM-scanned plugin skin has nothing to
-classify against); treat **`'unknown'` as PASS** (a registry we could not read tells us nothing, and
-hiding real skins is worse than showing a dead one); and on ANY activation failure **clear
-`_pendingSkinId`, notify, and warn with the market's own wording**. `dsh-client-liang-intensity-skin`
-is the worked example — see [docs/architecture-notes.md](docs/architecture-notes.md), which also
-records why such a plugin cannot be deactivated from here at all.
+**A market-sourced candidate must also pass the MARKET's own classification — in EVERY phase.** The
+market refuses `/use-skin` for anything outside its theme set (`category: theme` in the registry,
+matched by name or by repo), so listing a package it would refuse does not merely add a dead entry, it
+WEDGES the dropdown: a failed activation must release the optimistic `_pendingSkinId` or
+`_getActiveSkinId()` echoes it back forever. `_skinAllowed(id)` is the ONE predicate — call it from
+**all five** entry paths into `_scanInstalledSkins()`: managed (0), `style[data-plugin]` (1a),
+`style[data-skin-chrome]` (1b), body attributes (2), boot manifest / graph rows (4). **1.4.2 gated only
+the market-`installed` merge and the skin still appeared**, because the same package also injects its own
+`<style data-plugin>` tag — the same lesson Critical Rule 8 already records for `_skinExclude`. Two more
+rules hold: **a package the market does not list PASSES** (a plugin-local CSS skin it has never heard of
+must stay; only a KNOWN non-theme is dropped), and on ANY activation failure **clear `_pendingSkinId`,
+notify, and warn with the market's own wording**. `dsh-client-liang-intensity-skin` is the worked
+example — [docs/architecture-notes.md](docs/architecture-notes.md) also records why such a plugin cannot
+be deactivated from here, and the three harness blind spots that let the first fix ship green.
 
 ### 9. Never Use CSS `zoom` on `<html>` Element
 

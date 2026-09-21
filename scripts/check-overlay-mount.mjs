@@ -97,6 +97,37 @@ class El {
   getAttribute(k) { return this._attrs.has(k) ? this._attrs.get(k) : null }
   hasAttribute(k) { return this._attrs.has(k) }
   removeAttribute(k) { this._attrs.delete(k) }
+  /**
+   * `dataset` — the property the bundle actually reads for element attributes
+   * (`el.dataset.plugin`, `style.dataset.plugin`, `body.dataset.liangSkin`).
+   *
+   * A stub with only getAttribute() throws `Cannot read properties of undefined`
+   * the moment a scan phase touches these, which is why the DOM scan had never run
+   * here. camelCase maps to data-kebab-case in both directions, as the real DOM
+   * does; the event `dataset` uses the same Proxy in the real bundle, so this is
+   * exercised whenever the split-view drag handles fire.
+   */
+  get dataset() {
+    const self = this
+    return new Proxy({}, {
+      get(_t, k) {
+        if (typeof k === 'symbol') return undefined
+        return self.getAttribute('data-' + String(k).replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())) ?? undefined
+      },
+      set(_t, k, v) {
+        self.setAttribute('data-' + String(k).replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()), v)
+        return true
+      },
+      has(_t, k) {
+        return typeof k !== 'symbol' &&
+          self.getAttribute('data-' + String(k).replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())) !== null
+      },
+      deleteProperty(_t, k) {
+        self.removeAttribute('data-' + String(k).replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()))
+        return true
+      },
+    })
+  }
   appendChild(child) {
     if (!child || typeof child !== 'object' || !(child instanceof El)) {
       throw new TypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.")
@@ -135,7 +166,23 @@ class El {
 function setConnected(el, on) { el.isConnected = on; for (const c of el.children) setConnected(c, on) }
 
 function matches(el, sel) {
-  const m = /^([a-zA-Z]*)(?:\[([\w-]+)(?:([*$^]?)=["']([^"']*)["'])?\])?$/.exec(sel.trim())
+  // SELECTOR LISTS. A real `querySelectorAll('head style[data-plugin], head
+  // link[data-plugin]')` matches either branch; a stub that only understood single
+  // selectors returned NOTHING for that string, so the bundle's DOM scan (phase 1a)
+  // silently found no skins in the harness — and every assertion about "which skins
+  // are listed" was really only testing the market-extra path. That is how a leak
+  // through phase 1a passed a check written to catch it.
+  const s = String(sel).trim()
+  if (s.includes(',')) return s.split(',').some((part) => matches(el, part.trim()))
+  // DESCENDANT SELECTORS. `head style[data-plugin]` means "a style[data-plugin]
+  // that is a descendant of a head", NOT "an element that is both". Since
+  // `El.querySelectorAll` already scopes the search to the receiver's descendants,
+  // the leading ancestor is satisfied by construction and is dropped here. Without
+  // this the bundle's phase-1a scan matched nothing in the harness — every "which
+  // skins are listed" assertion was silently testing only the market-extra path.
+  const descendant = /^([a-zA-Z]+)\s+(.+)$/.exec(s)
+  if (descendant) return matches(el, descendant[2])
+  const m = /^([a-zA-Z]*)(?:\[([\w-]+)(?:([*$^]?)=["']([^"']*)["'])?\])?$/.exec(s)
   if (!m) return false
   const [, tag, attr, op, val] = m
   if (tag && el.tagName !== tag.toUpperCase()) return false
@@ -524,7 +571,7 @@ check('overlay button is hidden while there is no conversation', !!(btn && btn.s
 console.log('\n=== 2. __dockFlashOverlay() before a conversation exists ===')
 const probe1 = sandbox.window.__dockFlashOverlay()
 console.log('  ' + JSON.stringify(probe1, null, 2).split('\n').join('\n  '))
-check('probe reports the build version first', probe1.clientVersion === '1.4.2', probe1.clientVersion)
+check('probe reports the build version first', probe1.clientVersion === '1.4.3', probe1.clientVersion)
 check('probe: mounted but no anchor yet', probe1.overlayElMounted === true && probe1.anchorFound === false)
 check('probe: the anchor watcher is armed', probe1.anchorWatcher === 'waiting-for-anchor', probe1.anchorWatcher)
 
@@ -1159,6 +1206,13 @@ console.log('\n=== 15. the skin list excludes the market plugin ===')
     'dsh-skin-market',          // THE MARKET — must be gone
     'dsh-theme-mineradio',      // managed (phase 0) — must not double up
     'dsh-codex-timeline',       // not a skin at all
+    // The reported leak, and the reason this list MUST contain it: this package
+    // injects `<style data-plugin="dsh-client-liang-intensity-skin">` from its own
+    // apply(), so the DOM scan (phase 1a) discovers it too — a second entry path
+    // the market-classification gate did not cover when it was first added. Real
+    // plugins leave real style tags, and a harness that only enumerates names
+    // tests half of the scan.
+    'dsh-client-liang-intensity-skin',
   ]
   for (const id of candidates) head.appendChild(mkStyleTag(id))
 
@@ -1215,6 +1269,17 @@ console.log('\n=== 16. the skin list follows the market classification ===')
   const first = readOptions()
 
   check('a package the market does NOT classify as a theme is dropped',
+    !first.values.includes('dsh-client-liang-intensity-skin'), JSON.stringify(first.values))
+  // ...and it must be dropped EVEN THOUGH it leaves a `<style data-plugin>` tag
+  // behind. This is the check the first version of the gate lacked: the
+  // market-extra path and the DOM-scan path are separate entry routes into this
+  // list, and covering only the former is why the leak survived a release that
+  // claimed to fix it. Assert the tag is REALLY there, or the check would pass for
+  // the wrong reason.
+  check('the harness really did plant a <style data-plugin> tag for it (the DOM path is exercised)',
+    head.querySelectorAll('style[data-plugin="dsh-client-liang-intensity-skin"]').length === 1,
+    'style tags in head: ' + head.querySelectorAll('style[data-plugin]').length)
+  check('...and the DOM-scan path drops it too',
     !first.values.includes('dsh-client-liang-intensity-skin'), JSON.stringify(first.values))
   check('...while a theme from the same market list stays', first.values.includes('open-sea-skin'),
     JSON.stringify(first.values))

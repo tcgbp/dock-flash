@@ -494,6 +494,56 @@ megabyte per page load:
   brief window where a would-be-rejected entry can still be shown — accepted as the cheaper error,
   because the alternative is a switcher that is empty until a megabyte arrives.
 
+### One filter, every phase — and a harness that could not see the phase it was testing
+
+1.4.2 added the market-classification gate to `_marketThemeExtras()` and stopped there. It shipped,
+and the user could still see `Liang Intensity` in the dropdown. The gate was correct; it was applied
+to **one of five** entry paths.
+
+The five, in `_scanInstalledSkins()`: managed skins (phase 0), `style[data-plugin]` (1a),
+`style[data-skin-chrome]` (1b), known body attributes (2), and the boot manifest / graph rows (4).
+1.4.2 covered none of them — it covered the market-`installed` merge that sits *beside* the scan. The
+package in question injects `<style data-plugin="dsh-client-liang-intensity-skin">` from its own
+`apply()` and is in the boot manifest, so phases 1a and 4 found it with only `_skinHint` in front of
+them.
+
+`_skinAllowed(id)` is now the single predicate all five call. This is Critical Rule 8's discipline
+applied to a second filter: `_skinExclude` already had to be checked in every phase for exactly this
+reason, and the lesson did not transfer on its own. It returns true for a package the market does not
+list, so plugin-local CSS skins the market has never heard of still appear — only a package the market
+KNOWS and classifies as non-theme is dropped.
+
+#### The harness was the real defect
+
+Three independent blind spots meant `check:overlay` **could not have caught this**, and the first one
+is the reason a green suite was meaningless here:
+
+- **`matches()` understood a single selector only.** The bundle's DOM scan asks for
+  `'head style[data-plugin], head link[data-plugin]'`, so the stub returned **nothing** and phase 1a
+  never ran in the harness at all. Every "which skins are listed" assertion was silently testing the
+  market-extra path — the one path that *was* gated.
+- **`dataset` was not implemented.** Once phase 1a did run, it threw immediately on
+  `el.dataset.plugin` — the property the scan actually reads. A stub with only `getAttribute()` is
+  not a DOM for code that uses property accessors.
+- **`head style[data-plugin]` is a descendant selector**, not a tag-plus-attribute test. The leading
+  `head` is satisfied by construction (the receiver IS the ancestor), so it has to be stripped;
+  treating it as the element's own tag made it match nothing.
+
+The evidence that this is fixed is not that the suite is green — it was green before, too. It is the
+**negative control**: with all five `_skinAllowed` calls removed (byte-for-byte the 1.4.2 shape),
+`DOCK_FLASH_BUNDLE` pointing at that copy now fails *"a package the market does NOT classify as a
+theme is dropped"*, and the pair of assertions that place a real `<style data-plugin>` tag in the DOM
+fails with it. Before the stub fixes, that same control passed.
+
+Two habits generalise, and both are cheap:
+
+- **A filter is only as wide as the narrowest place it is applied.** When a check has to hold for
+  something with several entry paths into a list, put it in ONE predicate and call it from every path,
+  rather than repeating it and hoping.
+- **A stub that returns nothing is indistinguishable from a feature with nothing to find.** Assert
+  that the harness's own scaffolding did its job — that the tag is really in the DOM, that the selector
+  really matched — before trusting any assertion about the result.
+
 ### The turn rail: a class test that stopped recognising DSH
 
 `turn-rail-left` (1.0.13) moves DSH's turn navigator to the left gutter. It is gated on
