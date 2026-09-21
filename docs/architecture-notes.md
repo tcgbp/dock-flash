@@ -374,6 +374,46 @@ gone). The store is bounded by the absolute ceiling alone; the per-position clam
 
 ---
 
+### The skin list offered the market as a skin
+
+`dsh-skin-market` is the plugin that SUPPLIES the installed-skin list, and for a while it was also
+offered as an entry IN it — labelled **"Market"**, and disabled, so picking it did nothing. The
+mechanism is worth recording because the filter that let it through is load-bearing and must not be
+narrowed.
+
+`_isThemeName()` is `_skinHint.test(name) && !_skinExclude.test(name)`. `_skinHint` contains a bare
+`skin` token, which is what makes every `<name>-skin` package discoverable — it is the token doing
+the most work in that regex. `dsh-skin-market` matches it, so the market qualified as a theme. The
+label then came from `_labelFromId()`, which strips a `dsh-` prefix and a trailing `-skin`:
+`dsh-skin-market` → **`Market`**. That transformation is correct for its real job (it turns
+`dsh-theme-mineradio` into something readable) and is exactly what made the bug hard to place: the
+entry looked like a deliberately-named third skin rather than the market wearing a derived label.
+
+**The fix is by NAME, not by narrowing `skin`.** Adding the market to `_skinExclude` — the existing
+mechanism, already consulted by all five scan phases and by `_isThemeName()` — removes it from every
+path at once, while touching the `skin` token would risk every real skin package. The `timeline`
+entry set this precedent for the same reason.
+
+Both `dsh-skin-market` and its `/client` form are listed, because the DOM scan canonicalises some
+ids and not others, and an exclusion that only covers one spelling is the kind of half-measure that
+looks fixed until a specific scan phase reaches it.
+
+#### Two harness gaps this exposed, both of the silent kind
+
+Neither is in the plugin — both are in `check:overlay` — but the second is the same failure SHAPE
+the codebase warns about elsewhere, so it belongs here.
+
+- **The sandbox had no `URL`.** The bundle builds every request URL with
+  `new URL(path, document.baseURI)` **inside a try/catch**, because a request must never break
+  `apply()`. A sandbox missing `URL` therefore does not error: the throw is swallowed and the request
+  is never made, so the market never answered and the skin switch never registered.
+- **`document.baseURI` was missing too**, which fails identically and for the same reason. Both are
+  now provided, as the browser provides them.
+
+The lesson generalises past this plugin: **a deliberately non-fatal try/catch around a request makes a
+missing sandbox global indistinguishable from a server that said no.** Assert the request happened, not
+just its absence of errors.
+
 ### The turn rail: a class test that stopped recognising DSH
 
 `turn-rail-left` (1.0.13) moves DSH's turn navigator to the left gutter. It is gated on

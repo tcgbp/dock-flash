@@ -37,6 +37,12 @@ easiest to break invisibly.
    persists after the retry loop. `bloom-theme` / `black-hole` / `theme-manager` never appear in
    the dropdown. Claude Style appears exactly once while active *and* exactly once after
    switching away (no `data-skin-chrome` phantom).
+   **`dsh-skin-market` must NOT be in the list** — it supplies the skin list and is not a skin. It
+   appears as **"Market"** (or "Market (未启用)") because `_labelFromId()` strips `dsh-` and a trailing
+   `-skin`; picking it does nothing, since the market's own registry row is disabled. Removing it is
+   `_skinExclude`'s job, **by name** — narrowing the bare `skin` token in `_skinHint` would take every
+   real `<name>-skin` package with it. The whole list must be read, not spot-checked: a derived label
+   makes a wrong entry look deliberate. `pnpm run check:overlay` section 15 pins the result.
 3. **Skin preference**: Set a skin, refresh → it restores after ~300ms.
 4. **Language**: Toggle → every label updates immediately, including inside the log block.
 5. **Sidebar sash**: Drag it with dock-flash enabled → the width resizes correctly (nothing has

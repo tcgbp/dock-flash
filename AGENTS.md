@@ -502,6 +502,13 @@ Every skin discovery phase (1a, 1b, 2, 4) must filter excluded plugins. Missing 
 if (_skinExclude.test(id)) continue
 ```
 
+**Exclude the market itself, and never narrow the `skin` token.** `dsh-skin-market` supplies the
+installed-skin list and was also offered as one of the skins, labelled `Market` by `_labelFromId()`
+(strip `dsh-`, strip trailing `-skin`). The bare `skin` token in `_skinHint` is what makes every
+`<name>-skin` package discoverable, so the market is excluded **by name** — narrowing the token would
+put every real skin at risk. A derived label makes such an entry look deliberate, so the list is
+asserted rather than eyeballed: `check:overlay` section 15 drives the real scan and pins the dropdown.
+
 ### 9. Never Use CSS `zoom` on `<html>` Element
 
 Setting `style.zoom` on `document.documentElement` — even at 100% (`zoom: 1`) — distorts the browser coordinate system. `getBoundingClientRect()` and `clientX`/`clientY` in mouse events no longer map 1:1 to screen pixels, silently breaking DSH Web's sidebar sash drag and other pointer-based interactions.

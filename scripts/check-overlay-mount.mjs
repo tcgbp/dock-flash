@@ -163,6 +163,13 @@ const documentStub = {
   documentElement,
   head,
   body,
+  // `new URL(path, document.baseURI)` is how the bundle builds EVERY request URL,
+  // and both call sites sit inside a try/catch (a deliberate design: a request
+  // must never break `apply()`). The consequence in a sandbox that omits
+  // `baseURI` is that the throw is swallowed and the request is never made — so
+  // the market never answers, the skin switch never registers, and NO skin
+  // behaviour is testable. Supplying it is what the browser does anyway.
+  baseURI: 'http://127.0.0.1:3080/',
   createElement: (t) => new El(t),
   createElementNS: (_ns, t) => new El(t),
   querySelector: (s) => (matches(documentElement, s) ? documentElement : null) || body.querySelector(s) || head.querySelector(s),
@@ -229,10 +236,41 @@ const sandbox = {
   requestAnimationFrame: (fn) => setTimeout(() => fn(Date.now()), 0),
   cancelAnimationFrame: (id) => clearTimeout(id),
   document: documentStub,
+  // The bundle builds request URLs with `new URL(path, document.baseURI)` inside
+  // a try/catch, so a sandbox WITHOUT `URL` silently skips the market fetch —
+  // which in turn means the skin switch never registers and no skin behaviour is
+  // testable at all. Providing it (as the browser does) is what makes section 15
+  // possible.
+  URL,
+  URLSearchParams,
   localStorage: localStorageStub,
   navigator: { userAgent: 'harness', language: 'zh-CN', languages: ['zh-CN'] },
   location: { href: 'http://127.0.0.1:3080/', origin: 'http://127.0.0.1:3080', search: '', hostname: '127.0.0.1' },
-  fetch: () => Promise.reject(new Error('harness: no network')),
+  // The market API is the ONLY thing that registers the skin switch, and the
+  // harness has no network. Answering `/dsh-market/installed` with a realistic
+  // body is what makes section 15 possible at all — and the body deliberately
+  // includes the market plugin ITSELF, because that is the entry being filtered.
+  fetch: (url) => {
+    const u = String(url)
+    if (u.indexOf('/dsh-market/installed') !== -1) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          installed: {
+            'open-sea-skin': 'github:d-dev0101/open-sea-skin#abc',
+            'dsh-skin-market': 'github:x/dsh-skin-market#def',
+          },
+          activation: {
+            'open-sea-skin': { state: 'live' },
+            // Disabled in the market's own registry, which is why picking it in
+            // the skin dropdown could never do anything.
+            'dsh-skin-market': { state: 'disabled' },
+          },
+        }),
+      })
+    }
+    return Promise.reject(new Error('harness: no network'))
+  },
   getComputedStyle: getComputedStyleStub,
   MutationObserver: MutationObserverStub,
   ResizeObserver: ResizeObserverStub,
@@ -431,7 +469,7 @@ check('overlay button is hidden while there is no conversation', !!(btn && btn.s
 console.log('\n=== 2. __dockFlashOverlay() before a conversation exists ===')
 const probe1 = sandbox.window.__dockFlashOverlay()
 console.log('  ' + JSON.stringify(probe1, null, 2).split('\n').join('\n  '))
-check('probe reports the build version first', probe1.clientVersion === '1.4.0', probe1.clientVersion)
+check('probe reports the build version first', probe1.clientVersion === '1.4.1', probe1.clientVersion)
 check('probe: mounted but no anchor yet', probe1.overlayElMounted === true && probe1.anchorFound === false)
 check('probe: the anchor watcher is armed', probe1.anchorWatcher === 'waiting-for-anchor', probe1.anchorWatcher)
 
@@ -1036,6 +1074,60 @@ console.log('\n=== 14. the SLOT trigger resizes when the slider moves ===')
   posSwitch.setValue('conversation.overlay')
   check('back at the overlay the stored 64 is still in force',
     sizeSwitch.getValue() === 64, String(sizeSwitch.getValue()))
+}
+
+// ── the skin list must not offer the market itself ──────────────────────────
+// `dsh-skin-market` is the plugin that SUPPLIES this list, and its name contains
+// `skin`, so `_isThemeName()` accepted it and `_labelFromId()` turned it into
+// **"Market"** — an entry that does nothing when picked, because the market is not
+// a visual state and its own registry row is disabled. The four real skins around
+// it must survive, which is why the exclusion is by NAME and not by narrowing the
+// `skin` token: that token is what makes every `<name>-skin` package discoverable.
+console.log('\n=== 15. the skin list excludes the market plugin ===')
+{
+  // Drive the REAL scan through the DOM: phase 1a reads
+  // `head style[data-plugin]`, so one tag per candidate is all it takes. This
+  // exercises the actual filter chain (`_skinHint` + `_skinExclude`), which a
+  // test of the bare regexes would not.
+  const mkStyleTag = (id) => {
+    const el = new El('style')
+    el.setAttribute('data-plugin', id)
+    return el
+  }
+  const candidates = [
+    'open-sea-skin',            // a real skin; label derives to "Open Sea"
+    'dsh-skin-market',          // THE MARKET — must be gone
+    'dsh-theme-mineradio',      // managed (phase 0) — must not double up
+    'dsh-codex-timeline',       // not a skin at all
+  ]
+  for (const id of candidates) head.appendChild(mkStyleTag(id))
+
+  // The market answer drives registration and is a microtask chain; give it a
+  // turn so `dock-flash:skin` exists by the time the options are read.
+  await new Promise((r) => setTimeout(r, 20))
+
+  // The switch's options are a function, so nothing is scanned until it is called
+  // — which is exactly when the user opens the dropdown.
+  const skinSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:skin')
+  if (!skinSwitch) {
+    check('the skin switch is registered (needs a market answer)', false, 'no dock-flash:skin switch')
+  } else {
+    const opts = typeof skinSwitch.options === 'function' ? skinSwitch.options() : skinSwitch.options
+    const values = opts.map((o) => o.value)
+    const labels = opts.map((o) => String(typeof o.label === 'function' ? o.label() : o.label))
+
+    check('the market plugin is NOT offered as a skin',
+      !values.includes('dsh-skin-market'), JSON.stringify(values))
+    check('...and nothing is labelled "Market"',
+      !labels.some((l) => l === 'Market'), JSON.stringify(labels))
+    check('a real skin in the same scan IS offered', values.includes('open-sea-skin'),
+      JSON.stringify(values))
+    check('...with its derived label', labels.includes('Open Sea'), JSON.stringify(labels))
+    check('the timeline plugin is still excluded', !values.includes('dsh-codex-timeline'),
+      JSON.stringify(values))
+    check('"default" is still first', opts[0] && opts[0].value === 'default',
+      opts[0] && String(opts[0].value))
+  }
 }
 
 console.log('\n' + (failures.length === 0 ? '✅ ALL CHECKS PASSED' : '❌ FAILURES: ' + failures.join('; ')))
