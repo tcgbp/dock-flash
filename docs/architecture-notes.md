@@ -414,6 +414,86 @@ The lesson generalises past this plugin: **a deliberately non-fatal try/catch ar
 missing sandbox global indistinguishable from a server that said no.** Assert the request happened, not
 just its absence of errors.
 
+### The skin list now follows the market's classification, not a name guess
+
+`dsh-client-liang-intensity-skin` was offered as a skin, and selecting it made every LATER selection
+appear not to work. Two separate defects, one root cause: dock-flash and the market disagree about
+what counts as a theme.
+
+**The market decides, and it said no.** `/dsh-market/use-skin` admits a name only from its own theme
+set (`dshmarket/lib/routes.js:2060`), built by name-or-repo from the registry
+(`dshmarket/lib/themes.js:49-68`). Measured on this machine, this package fails both rules: the
+catalog's entry for its repository is named **`dsh-liang-skin`**, which is not the installed package
+name, and the installed spec is the bare version `"0.1.6"` rather than `github:owner/repo`. So the
+request was answered **400 `not an installed theme`** and nothing on the market side was activated or
+deactivated. (The skin-market catalog separately classifies the package as `interactive`.)
+
+**The market also installed it that way**, which is the corroboration that settles it: its install path
+branches on the category and hot-mounts anything that is not a theme (`routes.js:4530`), and
+`<profile>/.dsh-market/hot-3.yml` carries this plugin. It arrived from the Themes tab but as a
+non-theme install — the two are not the same thing, and only the second one governs `use-skin`.
+
+**Defect 1 — the list.** `_isThemeName()` is `_skinHint.test(name) && !_skinExclude.test(name)`: a
+NAME heuristic, so a package the market classifies otherwise still looked like a skin. The fix is not
+another name rule but delegation — `_isMarketThemePackage(name, spec)` reimplements the market's two
+rules against `/dsh-market/registry`, and `_marketThemeExtras()` drops only what that call
+positively rejects.
+
+Two details of that gate are load-bearing:
+
+- **Applied to market-`installed` candidates only, never inside `_isThemeName()`.** A plugin skin
+  found by the DOM scan has no catalog entry to classify against; subjecting it to this would hide
+  every skin the market does not know about.
+- **`'unknown'` PASSES.** When the index is missing (never fetched) or failed, the answer is "keep
+  it". A registry we could not read tells us nothing about any package, and "nothing is a theme" would
+  empty the switcher over a transient network error. The harness asserts this explicitly by running a
+  bundle whose registry request always rejects.
+
+**Defect 2 — the wedge, which is the symptom people actually reported.** `setValue()` sets
+`_pendingSkinId` optimistically so the click shows immediately, and `_getActiveSkinId()` returns it
+while set. Success reloads the page and rebuilds the value from the market; **failure used to clear
+nothing**, so the dropdown stayed pinned to a theme that was never activated and echoed it back over
+every later selection. `_activateThemeViaMarket()` now releases the selection on every failure path
+(clear pending, notify, warn with the market's own wording), and a `_skinActivationGen` counter stops
+a superseded request from releasing a NEWER selection. It is deliberately separate from
+`_applySkinGen`: that one guards the in-page CSS path, and sharing a counter would let one mechanism
+cancel the other.
+
+Note the shape of this defect, because it is the recurring one in this codebase: a value that is
+**fetched, recorded, and then never read** (as `triggerOverlayOffset` was), and a **failure path that
+reports but does not restore state** (as `_activateThemeViaMarket` did). Both look correct at the
+line where the work happens.
+
+#### Why the plugin cannot simply be made to yield
+
+The tempting fix — "keep offering it, but deactivate it when another skin is chosen" — is not
+available. Measured against the installed 0.1.6:
+
+- It boots `enabled: true` and **deletes its own** `dsh-liang-intensity-skin.enabled` key at
+  startup, so writing that key does nothing.
+- Its `storage` listener ignores every key except `BIND_EFFORT_KEY`.
+- It re-asserts the host theme through `theme.setTheme()` on every frame update.
+- `_deactivateCssSkin()` removes `style[data-plugin]` and `[data-plugin]:not(style)` nodes, but its
+  presenter re-adds them.
+
+There is no writable external switch. It belongs to the market's non-theme lifecycle, so the correct
+behaviour is to stop listing it — its own toggle is where it always was.
+
+#### The cost of delegating, and how it is bounded
+
+`/dsh-market/registry` is the only HTTP source for the classification
+(`/dsh-market/installed` carries no category field; `/dsh-skin-market/*` is 404 in this profile
+because `dshmarket` is what is mounted). It is **~1.1 MB / 0.46 s and served
+`cache-control: no-store`**, so the browser will not cache it. Three things keep that from being a
+megabyte per page load:
+
+- **Lazy**: started from `options()` (the first read of the skin list), never from `apply()`.
+- **Per-session cache** in `sessionStorage`, 6 h TTL. `no-store` constrains HTTP caches; it does not
+  stop us keeping our own copy for the tab, and `check:overlay` asserts exactly one fetch.
+- **Non-blocking**: the list renders immediately and is refined when the index lands. That leaves a
+  brief window where a would-be-rejected entry can still be shown — accepted as the cheaper error,
+  because the alternative is a switcher that is empty until a megabyte arrives.
+
 ### The turn rail: a class test that stopped recognising DSH
 
 `turn-rail-left` (1.0.13) moves DSH's turn navigator to the left gutter. It is gated on

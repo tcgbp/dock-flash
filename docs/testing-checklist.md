@@ -43,6 +43,21 @@ easiest to break invisibly.
    `_skinExclude`'s job, **by name** — narrowing the bare `skin` token in `_skinHint` would take every
    real `<name>-skin` package with it. The whole list must be read, not spot-checked: a derived label
    makes a wrong entry look deliberate. `pnpm run check:overlay` section 15 pins the result.
+   **And the list must follow the MARKET's classification, not a name guess.** A package the market
+   does not classify as a theme (`category: theme`, matched by name or by repo) cannot be activated —
+   `/dsh-market/use-skin` answers **400 `not an installed theme`** — so offering it is not just a dead
+   row, it WEDGES the dropdown, because a refused activation used to leave `_pendingSkinId` set and
+   `_getActiveSkinId()` echoes it back over every later choice. `dsh-client-liang-intensity-skin` is
+   that case. Two checks:
+   - every entry in the dropdown must be genuinely activatable — pick it, and the row must end up
+     showing what is actually live (not stuck on the pick, and not silently reverted);
+   - a refused pick must **log the market's own reason** (`[dock-flash] the market refused to
+     activate "…" — not an installed theme`) and leave the rest of the list usable.
+   The classification is fetched once per session from `/dsh-market/registry` (~1.1 MB,
+   `no-store`); confirm in the Network panel that a second dropdown open does **not** re-fetch it,
+   and that with the registry unreachable the list is **unchanged** (every package stays listed —
+   hiding real skins is the worse failure).
+   Sections 16–17 of `pnpm run check:overlay` pin both, including a negative control for each.
 3. **Skin preference**: Set a skin, refresh → it restores after ~300ms.
 4. **Language**: Toggle → every label updates immediately, including inside the log block.
 5. **Sidebar sash**: Drag it with dock-flash enabled → the width resizes correctly (nothing has

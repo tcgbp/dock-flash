@@ -193,6 +193,11 @@ body.isConnected = true
 head.isConnected = true
 
 const store = new Map()
+/** Separate from `store`: sessionStorage is per-TAB, which is the lifetime the
+ *  classification cache relies on, so the two must not be the same map. */
+const sessionStore = new Map()
+/** How many times the (megabyte) registry endpoint was asked for. */
+let registryFetches = 0
 const localStorageStub = {
   getItem: (k) => (store.has(k) ? store.get(k) : null),
   setItem: (k, v) => store.set(k, String(v)),
@@ -244,6 +249,17 @@ const sandbox = {
   URL,
   URLSearchParams,
   localStorage: localStorageStub,
+  // The classification index caches into sessionStorage. Its absence is swallowed
+  // by the bundle's own try/catch (deliberately), so without this stub every page
+  // load would re-fetch 1.1 MB in the harness — and, worse, the "fetched only
+  // once per session" assertion below would be testing nothing.
+  sessionStorage: {
+    getItem: (k) => (sessionStore.has(k) ? sessionStore.get(k) : null),
+    setItem: (k, v) => sessionStore.set(k, String(v)),
+    removeItem: (k) => sessionStore.delete(k),
+    clear: () => sessionStore.clear(),
+    get length() { return sessionStore.size },
+  },
   navigator: { userAgent: 'harness', language: 'zh-CN', languages: ['zh-CN'] },
   location: { href: 'http://127.0.0.1:3080/', origin: 'http://127.0.0.1:3080', search: '', hostname: '127.0.0.1' },
   // The market API is the ONLY thing that registers the skin switch, and the
@@ -259,14 +275,53 @@ const sandbox = {
           installed: {
             'open-sea-skin': 'github:d-dev0101/open-sea-skin#abc',
             'dsh-skin-market': 'github:x/dsh-skin-market#def',
+            // The reported case: installed from a SPEC THAT IS A BARE VERSION, so
+            // the market's repo rule cannot match it either, and the catalog knows
+            // it as `dsh-liang-skin` (a name that is not this package).
+            'dsh-client-liang-intensity-skin': '0.1.6',
+            // Same package shape but installed from its repo — the market's SECOND
+            // rule matches this one, so it must stay listed.
+            'dsh-repo-installed-skin': 'github:kingOfSoySauce/dsh-liang-skin#976fcbf',
           },
           activation: {
             'open-sea-skin': { state: 'live' },
             // Disabled in the market's own registry, which is why picking it in
             // the skin dropdown could never do anything.
             'dsh-skin-market': { state: 'disabled' },
+            'dsh-client-liang-intensity-skin': { state: 'live' },
+            'dsh-repo-installed-skin': { state: 'disabled' },
           },
         }),
+      })
+    }
+    if (u.indexOf('/dsh-market/registry') !== -1) {
+      registryFetches++
+      // Minimal but structurally real: the derivation reads `registry.plugins`,
+      // and each entry carries `name`/`category`/`url`. `category` is accepted as
+      // a bare string here on purpose — the market's own `pluginCategories()`
+      // takes either shape, so the harness must exercise both.
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          registry: {
+            plugins: [
+              { name: 'open-sea-skin', category: ['theme'], url: 'https://github.com/d-dev0101/open-sea-skin' },
+              // The liang entry as the REAL catalog has it: a theme, under a name
+              // that is not the installed package name — reachable only by repo.
+              { name: 'dsh-liang-skin', category: ['theme'], url: 'https://github.com/kingOfSoySauce/dsh-liang-skin' },
+              // Bare-string category, and not a theme.
+              { name: 'dsh-skin-market', category: 'tool', url: 'https://github.com/x/dsh-skin-market' },
+            ],
+          },
+        }),
+      })
+    }
+    if (u.indexOf('/dsh-market/use-skin') !== -1) {
+      // The market refuses any name outside its theme set, with exactly this body.
+      return Promise.resolve({
+        ok: false,
+        status: 400,
+        json: () => Promise.resolve({ error: 'not an installed theme' }),
       })
     }
     return Promise.reject(new Error('harness: no network'))
@@ -469,7 +524,7 @@ check('overlay button is hidden while there is no conversation', !!(btn && btn.s
 console.log('\n=== 2. __dockFlashOverlay() before a conversation exists ===')
 const probe1 = sandbox.window.__dockFlashOverlay()
 console.log('  ' + JSON.stringify(probe1, null, 2).split('\n').join('\n  '))
-check('probe reports the build version first', probe1.clientVersion === '1.4.1', probe1.clientVersion)
+check('probe reports the build version first', probe1.clientVersion === '1.4.2', probe1.clientVersion)
 check('probe: mounted but no anchor yet', probe1.overlayElMounted === true && probe1.anchorFound === false)
 check('probe: the anchor watcher is armed', probe1.anchorWatcher === 'waiting-for-anchor', probe1.anchorWatcher)
 
@@ -563,6 +618,11 @@ const mouse = (x, y) => ({ button: 0, clientX: x, clientY: y, preventDefault() {
 // Captured across every gesture below, because each open RE-RENDERS the panel and
 // `renderPanel()` swallows a throw into console.error.
 const renderErrors = []
+/** `[dock-flash]` warnings captured for the whole run. A refusal is reported this
+ *  way rather than as an error, so the assertion needs the warning channel. */
+const warnings = []
+const origWarn = console.warn
+console.warn = (...a) => { warnings.push(a.map(String).join(' ')) }
 const prevError = console.error
 console.error = (...a) => { renderErrors.push(a.map(String).join(' ')) }
 
@@ -1128,6 +1188,153 @@ console.log('\n=== 15. the skin list excludes the market plugin ===')
     check('"default" is still first', opts[0] && opts[0].value === 'default',
       opts[0] && String(opts[0].value))
   }
+}
+
+// ── the list must follow the MARKET's classification, not a name guess ──────
+// `dsh-client-liang-intensity-skin` is servable-looking (its name matches the
+// `skin` hint) but the market does not classify it as a theme: its catalog entry
+// carries a DIFFERENT name for that repo, and it was installed from a bare
+// version spec rather than `github:owner/repo`, so neither of the market's two
+// rules match. Selecting it therefore got a 400 from `/dsh-market/use-skin` —
+// and, before the fix above, wedged the dropdown on a theme that never activated.
+console.log('\n=== 16. the skin list follows the market classification ===')
+{
+  const skinSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:skin')
+  const readOptions = () => {
+    const opts = typeof skinSwitch.options === 'function' ? skinSwitch.options() : skinSwitch.options
+    return {
+      opts,
+      values: opts.map((o) => o.value),
+      labels: opts.map((o) => String(typeof o.label === 'function' ? o.label() : o.label)),
+    }
+  }
+
+  // Classification is a separate request, so let the microtask chain settle and
+  // then read the list the way the panel does after its notifyChange.
+  await new Promise((r) => setTimeout(r, 30))
+  const first = readOptions()
+
+  check('a package the market does NOT classify as a theme is dropped',
+    !first.values.includes('dsh-client-liang-intensity-skin'), JSON.stringify(first.values))
+  check('...while a theme from the same market list stays', first.values.includes('open-sea-skin'),
+    JSON.stringify(first.values))
+  // The repo rule is the half a name-only implementation would miss: this package
+  // is not named in the catalog, but its INSTALL SPEC points at a repo that is.
+  check('the market\'s SECOND rule (repo, not name) is implemented too',
+    first.values.includes('dsh-repo-installed-skin'), JSON.stringify(first.values))
+  check('...and that one keeps its label', first.labels.some((l) => /Repo Installed/i.test(l)),
+    JSON.stringify(first.labels))
+
+  // The classification is cached per session: `no-store` forbids the HTTP cache,
+  // so this is the only layer that stops a megabyte per page load.
+  const before = registryFetches
+  await new Promise((r) => setTimeout(r, 10))
+  readOptions()
+  await new Promise((r) => setTimeout(r, 10))
+  check('the megabyte registry is fetched at most once per session',
+    registryFetches === before && before <= 1, `${before} -> ${registryFetches} (${registryFetches} total)`)
+
+  // A registry we could not read must NOT empty the list: answering "nothing is a
+  // theme" over a transient network error would hide every real skin. This needs a
+  // FRESH bundle, because the index is held in memory once loaded and a same-process
+  // stub swap could never reach the failure branch at all — the first version of
+  // this check did exactly that and passed for the wrong reason.
+  {
+    // The `/installed` stub is reused so the fresh bundle sees the same market.
+    const realFetch = sandbox.fetch
+    const store4 = new Map()
+    const body4 = new El('body')
+    const head4 = new El('head')
+    const documentStub4 = Object.assign({}, documentStub, {
+      body: body4,
+      head: head4,
+      querySelectorAll: (s) => [...body4.querySelectorAll(s), ...head4.querySelectorAll(s)],
+      getElementById: (id) => body4.descendants().find((e) => e.id === id) || null,
+      addEventListener() {}, removeEventListener() {}, __fire() {},
+    })
+    body4.isConnected = true
+    head4.isConnected = true
+    const sandbox4 = Object.assign({}, sandbox, {
+      document: documentStub4,
+      localStorage: {
+        getItem: (k) => (store4.has(k) ? store4.get(k) : null),
+        setItem: (k, v) => store4.set(k, String(v)),
+        removeItem: (k) => store4.delete(k), clear: () => store4.clear(),
+        get length() { return store4.size },
+      },
+      // Fresh session storage, so the cache cannot answer either.
+      sessionStorage: {
+        getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {},
+        get length() { return 0 },
+      },
+      fetch: (u) => {
+        const s = String(u)
+        if (s.indexOf('/dsh-market/installed') !== -1) {
+          return realFetch(s)
+        }
+        if (s.indexOf('/dsh-market/registry') !== -1) return Promise.reject(new Error('harness: registry down'))
+        return Promise.reject(new Error('harness: no network'))
+      },
+    })
+    sandbox4.window = sandbox4
+    sandbox4.globalThis = sandbox4
+    store4.set('dock-flash:trigger-position', 'conversation.overlay')
+    let def4 = null
+    sandbox4.window.__ModuleLoader__ = { load: (d) => { def4 = d } }
+    vm.runInNewContext(code, sandbox4, { filename: 'lib/client.js#nodreg' })
+    const provided4 = {}
+    let cb4 = null
+    def4.factory(requireStub).apply({
+      get: (n) => provided4[n],
+      provide: (n, v) => { provided4[n] = v },
+      on: () => () => {},
+      effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+      inject: (deps, cb) => { cb4 = cb; return () => {} },
+      logger: { info() {}, warn() {}, error() {} },
+    })
+    if (cb4) cb4({ slots: { inject: () => () => {}, register: () => () => {} } })
+    await new Promise((r) => setTimeout(r, 30))
+
+    const sw4 = provided4.quickControl.getSwitches().find((s) => s.id === 'dock-flash:skin')
+    const vals4 = (typeof sw4.options === 'function' ? sw4.options() : sw4.options).map((o) => o.value)
+    await new Promise((r) => setTimeout(r, 20))
+    const vals4b = (typeof sw4.options === 'function' ? sw4.options() : sw4.options).map((o) => o.value)
+    check('a failed registry read leaves the list INTACT (the safe direction)',
+      vals4b.includes('dsh-client-liang-intensity-skin'), JSON.stringify(vals4b))
+    check('...and it is the same list as before the classification was known',
+      JSON.stringify(vals4) === JSON.stringify(vals4b), `${JSON.stringify(vals4)} vs ${JSON.stringify(vals4b)}`)
+  }
+}
+
+// ── a refused activation must release the selection ────────────────────────
+// The reported symptom was not merely "one bad entry": picking it made EVERY later
+// selection appear not to work, because the optimistic `_pendingSkinId` was never
+// cleared on failure and `_getActiveSkinId()` echoes it back.
+console.log('\n=== 17. a refused market activation releases the selection ===')
+{
+  const skinSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:skin')
+  const before = skinSwitch.getValue()
+
+  // A theme the market REFUSES to activate (the stub answers 400 for every name).
+  // The stub must also be self-consistent about what is LIVE: `_getActiveSkinId()`
+  // falls back to the market's `state === 'live'` entry, so a stub that both
+  // refuses activation AND reports the target as live would leave the dropdown
+  // legitimately showing it — and the test would be asserting against a lie.
+  // `dsh-repo-installed-skin` is `disabled` in the stub, so it is a target the
+  // market neither accepts nor claims to be running.
+  skinSwitch.setValue('dsh-repo-installed-skin')
+  check('the click is shown immediately (optimistic pending)',
+    skinSwitch.getValue() === 'dsh-repo-installed-skin', String(skinSwitch.getValue()))
+
+  await new Promise((r) => setTimeout(r, 30))
+  check('a REFUSED activation does not stay selected',
+    skinSwitch.getValue() !== 'dsh-repo-installed-skin', String(skinSwitch.getValue()))
+  check('...the dropdown falls back to what is actually live',
+    skinSwitch.getValue() === before || skinSwitch.getValue() === 'default' ||
+      skinSwitch.getValue() === 'open-sea-skin',
+    `${before} -> ${skinSwitch.getValue()}`)
+  check('...and the refusal was reported with the market\'s own wording',
+    warnings.some((w) => /not an installed theme/.test(w)), JSON.stringify(warnings.slice(-2)))
 }
 
 console.log('\n' + (failures.length === 0 ? '✅ ALL CHECKS PASSED' : '❌ FAILURES: ' + failures.join('; ')))

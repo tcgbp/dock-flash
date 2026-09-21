@@ -20,7 +20,7 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 | Group | Switch | Type | Description | Standalone |
 | --- | --- | --- | --- | --- |
 | 🎨 Appearance | Theme | select | Light / Dark / System — switches DSH global theme (includes wxj-black-hole conflict retry) | ✅ |
-| 🎨 Appearance | Skin | select | Dynamically discovers installed skin plugins and switches between them (requires dsh-market) | ✅ |
+| 🎨 Appearance | Skin | select | Dynamically discovers installed skin plugins and switches between them (requires dsh-market). The list follows the market's own theme classification, so a package the market would refuse to activate is not offered — its own toggle lives in the market's plugin list | ✅ |
 | 🎨 Appearance | Turn Rail | toggle | Moves DSH's built-in turn navigator from the right gutter to the left. Hidden unless DSH's own rail is on screen and no other timeline plugin owns it | ✅ |
 | 🎨 Appearance | Fullscreen | toggle | Browser Fullscreen API — enter/exit fullscreen | ✅ |
 | 🎨 Appearance | Log Download | toggle | Show/hide the session log download button | ✅ |

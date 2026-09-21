@@ -509,6 +509,18 @@ installed-skin list and was also offered as one of the skins, labelled `Market` 
 put every real skin at risk. A derived label makes such an entry look deliberate, so the list is
 asserted rather than eyeballed: `check:overlay` section 15 drives the real scan and pins the dropdown.
 
+**A market-sourced candidate must also pass the MARKET's own classification.** The market refuses
+`/use-skin` for anything outside its theme set (`category: theme` in the registry, matched by name or
+by repo) — so listing a package it would refuse does not merely add a dead entry, it WEDGES the
+dropdown, because a failed activation must release the optimistic `_pendingSkinId` or
+`_getActiveSkinId()` echoes it back forever. `_isMarketThemePackage()` handles this, and three rules
+hold: apply it to **market-`installed` candidates only** (a DOM-scanned plugin skin has nothing to
+classify against); treat **`'unknown'` as PASS** (a registry we could not read tells us nothing, and
+hiding real skins is worse than showing a dead one); and on ANY activation failure **clear
+`_pendingSkinId`, notify, and warn with the market's own wording**. `dsh-client-liang-intensity-skin`
+is the worked example — see [docs/architecture-notes.md](docs/architecture-notes.md), which also
+records why such a plugin cannot be deactivated from here at all.
+
 ### 9. Never Use CSS `zoom` on `<html>` Element
 
 Setting `style.zoom` on `document.documentElement` — even at 100% (`zoom: 1`) — distorts the browser coordinate system. `getBoundingClientRect()` and `clientX`/`clientY` in mouse events no longer map 1:1 to screen pixels, silently breaking DSH Web's sidebar sash drag and other pointer-based interactions.
