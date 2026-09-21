@@ -177,9 +177,12 @@ Seven things must hold together:
   `overlayOpacity` (right-click menu). The layer is the one to handle carefully:
   `panelLayer()` / `triggerLayerOfButton()` / `layerOfMenu()` are all DERIVED from the single
   setting, because the button must sit above the panel or the size control looks inert (the 1.4.0
-  defect) — two stored values would drift. **The default is 1150 because DSH's own bundles top out
-  at 1100** (measured: `chat`/`model-selection` 1100, `settings`/`attachment` 1000, most chat chrome
-  100); the old 99997-99999 sat ~90x above that and covered host popovers. It affects the
+  defect) — two stored values would drift. **The host draws at 1100 AND 1000, and a preset must
+  respect both.** 1100 is DSH's `chat`/`model-selection` *and* dock-base's `.dsh-wb-settings-overlay`;
+  1000 is the host's menus — and **dock-base is not under `@deepseek-ai`, so measuring only DSH is how
+  a wrong 1050 preset shipped**: it sits between the two host bands and still covered the settings
+  mask. The default is therefore 1150 and the "stay out of the way" preset is **900**. The old
+  99997-99999 was ~90x above all of it. It affects the
   **standalone pair only** — the workbench panel's `z-index: 10` is bounded so dock-base's
   floating-above-docked precedence survives. The menu holds ONLY what the panel cannot reach and what
   this button alone can answer (reset position, offset, version, layer, opacity); **never add
@@ -389,7 +392,7 @@ in-content escapees such as dock-git's `.dg-graph` (z-index 2), and **< 70** so 
 precedence (floating above docked) is preserved. Raising it further cannot help against elements
 outside `.dsh-wb-root`'s stacking context, and ≥ 70 would invert dock-base's order. The standalone
 panel is a separate case: appended to `<body>`, it sits at the user's `triggerLayer` (default 1150,
-chosen against DSH's own measured 1100 ceiling) — see "The overlay trigger" above.
+clear of the host's 1100 and 1000 bands — see "The overlay trigger" above for why BOTH matter).
 
 > Why a static element loses to every positioned sibling:
 > [docs/architecture-notes.md](docs/architecture-notes.md).

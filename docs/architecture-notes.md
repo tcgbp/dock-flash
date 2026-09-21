@@ -550,12 +550,20 @@ The standalone button and its panel carried `z-index: 99997` to `99999` since th
 chose those numbers; they are "high enough that nothing will beat it", which is a different claim from
 "the right level", and it stopped being true the moment the panel had to coexist with host UI.
 
-Measured across DSH's own client bundles, the highest z-index DSH uses anywhere is **1100**
-(`dsh-client-ui-chat`, `dsh-client-ui-model-selection`); settings and attachment popovers sit at 1000 and
-most chat chrome at 100. The literals were therefore ~90x above the host's own top layer, which is why the
-standalone panel covered DSH's popovers instead of sitting among the host's surfaces. The default is now
-**1150** — above DSH's ceiling, in the same order of magnitude — with 1050 offered for "stay under the chat
-layer" and 2000 for "clear everything with headroom".
+Measured across the host, and **the measurement has to cover BOTH sources** — reading only one of
+them is what produced a wrong preset in the first release of this feature:
+
+- DSH's own client bundles top out at **1100** (`dsh-client-ui-chat`,
+  `dsh-client-ui-model-selection`), with `settings-general`'s overlay and DSH's menus at 1000.
+- **dock-base** is not under `@deepseek-ai` and is easy to miss, but it is what draws the SETTINGS
+  DIALOG: `.dsh-wb-settings-overlay` is **1100**, deliberately "outside the auto-hide root so it remains
+  visible and interactive", and `.dsh-wb-menu` is 1000.
+
+So 1100 is the ceiling for both the settings dialog and the chat popovers, and **1000 is the floor of the
+host's own overlay band** — there is no gap between them to sit in. The literals were therefore ~90x above
+everything the host draws, which is why the standalone panel covered its popovers. The default is now
+**1150** (clear of both), and the "stay out of the way" preset is **900**, not 1050: 1050 is below 1100 yet
+above 1000, so it still covered the host's menus — the defect the first release shipped, found by using it.
 
 The setting deliberately covers the **standalone pair only**. The workbench panel's own `z-index: 10` is
 bounded on purpose (below dock-base's floating layer at 70), and raising it from a client preference would

@@ -587,7 +587,7 @@ check('overlay button is hidden while there is no conversation', !!(btn && btn.s
 console.log('\n=== 2. __dockFlashOverlay() before a conversation exists ===')
 const probe1 = sandbox.window.__dockFlashOverlay()
 console.log('  ' + JSON.stringify(probe1, null, 2).split('\n').join('\n  '))
-check('probe reports the build version first', probe1.clientVersion === '1.5.0', probe1.clientVersion)
+check('probe reports the build version first', probe1.clientVersion === '1.5.1', probe1.clientVersion)
 check('probe: mounted but no anchor yet', probe1.overlayElMounted === true && probe1.anchorFound === false)
 check('probe: the anchor watcher is armed', probe1.anchorWatcher === 'waiting-for-anchor', probe1.anchorWatcher)
 
@@ -1490,7 +1490,7 @@ console.log('\n=== 18. the overlay context menu ===')
   // the panel, and a second control is how two surfaces start disagreeing.
   check('it offers "reset position"', texts.some((t) => /重置位置|Reset position/.test(t)), JSON.stringify(texts))
   check('it shows the current offset', texts.some((t) => /位置|Offset/.test(t)), JSON.stringify(texts))
-  check('it shows the version', texts.some((t) => t.includes('1.5.0')), JSON.stringify(texts))
+  check('it shows the version', texts.some((t) => t.includes('1.5.1')), JSON.stringify(texts))
   check('it exposes a layer choice', texts.some((t) => /层级|Layer/.test(t)), JSON.stringify(texts))
   check('it exposes a rest-opacity choice', texts.some((t) => /深浅|opacity/i.test(t)), JSON.stringify(texts))
   check('...and it does NOT duplicate the panel\'s own switches',
@@ -1503,6 +1503,27 @@ console.log('\n=== 18. the overlay context menu ===')
     probe.triggerLayer === 1150, String(probe.triggerLayer))
   check('the button is one level above the panel',
     Number(liveBtn().style.zIndex) === probe.triggerLayer + 1, `${liveBtn().style.zIndex} vs ${probe.triggerLayer}`)
+
+  // The lowest preset must sit under EVERY layer the host uses, not merely under
+  // its highest. The host draws at 1100 (settings dialog, chat popovers) and at
+  // 1000 (its menus, `settings-general`'s overlay, dock-base's `.dsh-wb-menu`),
+  // and there is no gap between them to hide in: a value like 1050 is below 1100
+  // yet ABOVE 1000, so it still covers the host's menus — which is exactly the
+  // bug the first version of this preset shipped.
+  //
+  // So the boundary is the host's LOWEST dialog-layer value, not its highest.
+  const HOST_MENU_LAYER = 1000
+  const HOST_DIALOG_LAYER = 1100
+  const presetTexts = texts.map((t) => t.replace(/^✓/, '')).filter((t) => /^\d{3,4}$/.test(t))
+  check('the three layer presets are numeric and in ascending order',
+    presetTexts.length === 3 && Number(presetTexts[0]) < Number(presetTexts[1]) &&
+      Number(presetTexts[1]) < Number(presetTexts[2]),
+    JSON.stringify(presetTexts))
+  check('...the lowest sits under the host\'s MENU layer, not merely its dialogs',
+    Number(presetTexts[0]) < HOST_MENU_LAYER,
+    `lowest preset ${presetTexts[0]} vs host menus ${HOST_MENU_LAYER} (dialogs are ${HOST_DIALOG_LAYER})`)
+  check('...and the default clears them both',
+    probe.triggerLayer > HOST_DIALOG_LAYER, String(probe.triggerLayer))
 
   // Pick a different layer from the menu (the row whose text is exactly 2000).
   const layer2000 = rows.find((r) => textOf(r).includes('2000'))

@@ -198,8 +198,11 @@ easiest to break invisibly.
       control for a setting that already has one is how two surfaces start disagreeing.
     - **The layer default is 1150, and the button is always one above the panel** — change the layer and
       both must move together. Check that the standalone panel now sits BELOW DSH's own popovers: open the
-      model-selection dropdown (DSH's highest layer, 1100) with the dock-flash panel open, and confirm
-      dock-flash no longer covers it at the default, while `1050` deliberately goes under the chat layer.
+      model-selection dropdown AND dock-base's settings dialog, both at 1100, with the dock-flash panel
+      open — the default (1150) clears them. Then pick the LOWEST preset (900) and confirm it goes under
+      BOTH the host's 1100 dialogs and its 1000 menus. That second half is the point: the first version of
+      this preset was 1050, which is below 1100 yet ABOVE 1000, so it still covered the settings mask —
+      the defect was found by using it, not by reading it.
     - **Rest opacity, and the drag-release rule**: set it to `0.85`, then drag the button and release with
       the pointer AWAY from it — it must return to 0.85, not stay at hover brightness. That was a real
       defect: the old guard read `if (!dragging)`, so brightness depended on where the pointer happened to
