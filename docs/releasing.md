@@ -65,11 +65,24 @@ git push origin master
 pnpm pack && mv dock-flash-<version>.tgz dock-flash.tgz
 
 # 5. Tag and push the tag, then mirror again — the tag needs its own dispatch.
+#    The ANNOTATED tag's message may be a summary; the RELEASE TITLE may not —
+#    it is the bare version, "v<version>", and nothing else. See below.
 git tag -a v<version> -m "<summary>"
 git push origin v<version>
 
 # 6. Create the Release and upload the asset (see the API snippets below).
 ```
+
+**The Release title is the version and nothing else — `v<version>`.** Not a summary, not the commit
+subject, not "v<version> — <what changed>". The narrative belongs in `CHANGELOG.md`, and GitHub renders
+the tag's own message on the Release page anyway, so a descriptive title duplicates it while making the
+releases list harder to scan. Every existing Release (`v1.3.1`, `v1.2.0`, `v1.1.12`) follows this, so a
+descriptive one is also the thing that breaks the pattern. The `-m "<summary>"` above is the **tag's**
+message, which is a different field and is allowed to say something.
+
+`release.json` therefore carries no `name`, or `"name": "v<version>"` — never a sentence. The `name`
+field is also what the registry's `releases/latest` link is read beside, so keeping it mechanical is
+what makes "which version is live" answerable at a glance.
 
 **The tarball is gitignored on purpose.** Both `dock-flash.tgz` and `dock-flash-<version>.tgz` are in
 `.gitignore`, so it can never be committed — a stale tarball in the tree is how a release ships the
