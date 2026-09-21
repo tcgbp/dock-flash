@@ -125,7 +125,7 @@ looks right: it is `kind: "single"` (the renderer keeps only `entriesOfSlot[0]`)
 occupant does not queue, it **disappears**, and `@deepseek-ai/dsh-client-ui-sidebar-right` already
 ships there with its expand button.
 
-Six things must hold together:
+Seven things must hold together:
 
 - **The anchor is found structurally, never by class name.** `conversationViewport()` matches
   `div[class*="_scrollBody"]` whose computed `overflow-y` is auto/scroll, then requires a non-zero
@@ -173,6 +173,18 @@ Six things must hold together:
   anchor is adopted, and **not** disconnected once one is found, because a new session builds a new
   scroller) plus a bounded retry for a viewport that exists but is not yet laid out. The mount is
   wrapped in a named, non-fatal catch, because it precedes `ctx.inject(['slots'])`.
+- **Three user-settable properties, one writer each.** `triggerSize` (panel), `triggerLayer` and
+  `overlayOpacity` (right-click menu). The layer is the one to handle carefully:
+  `panelLayer()` / `triggerLayerOfButton()` / `layerOfMenu()` are all DERIVED from the single
+  setting, because the button must sit above the panel or the size control looks inert (the 1.4.0
+  defect) — two stored values would drift. **The default is 1150 because DSH's own bundles top out
+  at 1100** (measured: `chat`/`model-selection` 1100, `settings`/`attachment` 1000, most chat chrome
+  100); the old 99997-99999 sat ~90x above that and covered host popovers. It affects the
+  **standalone pair only** — the workbench panel's `z-index: 10` is bounded so dock-base's
+  floating-above-docked precedence survives. The menu holds ONLY what the panel cannot reach and what
+  this button alone can answer (reset position, offset, version, layer, opacity); **never add
+  `trigger-size`, `trigger-position` or `close-on-blur` to it** — a second control for a setting that
+  already has one is how two surfaces start disagreeing (Critical Rule 7).
 
 > The defects in full, with the measurements and the harness that proves them:
 > [docs/architecture-notes.md](docs/architecture-notes.md).
@@ -376,7 +388,8 @@ Seven invariants:
 in-content escapees such as dock-git's `.dg-graph` (z-index 2), and **< 70** so dock-base's own
 precedence (floating above docked) is preserved. Raising it further cannot help against elements
 outside `.dsh-wb-root`'s stacking context, and ≥ 70 would invert dock-base's order. The standalone
-panel is unaffected (appended to `<body>` at z-index 99998).
+panel is a separate case: appended to `<body>`, it sits at the user's `triggerLayer` (default 1150,
+chosen against DSH's own measured 1100 ceiling) — see "The overlay trigger" above.
 
 > Why a static element loses to every positioned sibling:
 > [docs/architecture-notes.md](docs/architecture-notes.md).

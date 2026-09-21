@@ -188,6 +188,22 @@ easiest to break invisibly.
       Then switch to a slot position: the row must read **48** — the size actually in force — and the
       button in the input row must shrink to match rather than overflow its row. Switch back to the
       overlay and the 64 is still there: the clamp is a display rule, not a write.
+    - **Right-click the ⚡ for the menu.** It must open where the button is (drag the button into each
+      corner first — the menu has to stay on screen), suppress the browser's own menu, and close on Escape
+      or a click outside. The four decisions: **Reset position** must put the button back 8px inside the
+      conversation's top-right corner; **the offset line** must match what reset undoes; **the version**
+      must equal `package.json`, and clicking it must copy a one-line diagnostic; **layer** and **rest
+      opacity** must each show a tick on the current value and repaint immediately.
+    - **The menu must NOT duplicate the panel**: no size, no trigger-position, no close-on-blur. A second
+      control for a setting that already has one is how two surfaces start disagreeing.
+    - **The layer default is 1150, and the button is always one above the panel** — change the layer and
+      both must move together. Check that the standalone panel now sits BELOW DSH's own popovers: open the
+      model-selection dropdown (DSH's highest layer, 1100) with the dock-flash panel open, and confirm
+      dock-flash no longer covers it at the default, while `1050` deliberately goes under the chat layer.
+    - **Rest opacity, and the drag-release rule**: set it to `0.85`, then drag the button and release with
+      the pointer AWAY from it — it must return to 0.85, not stay at hover brightness. That was a real
+      defect: the old guard read `if (!dragging)`, so brightness depended on where the pointer happened to
+      be when the drag ended. `__dockFlashOverlay().dragging` must read `false` after any release.
     - **The minimum is the default**: the slider's leftmost value is 24, which is what every release
       to 1.3.x drew. There is no way to shrink the entry point.
     - **Read `__dockFlashOverlay()` after a reload and check `sizeSource`** — it must say `host`.

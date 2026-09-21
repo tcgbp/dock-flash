@@ -100,6 +100,29 @@ export interface ProxyConfig {
    * `activeSkin` and `triggerPosition`.
    */
   triggerSize: number
+  /**
+   * Stacking level for the standalone trigger button and its floating panel.
+   *
+   * Client-owned and deliberately just a number: the SENSIBLE range is a
+   * property of the host UI it sits among, not of this plugin, so the client
+   * offers presets and the host neither clamps nor interprets. See
+   * `DEFAULT_TRIGGER_LAYER` in the client for why the default is not the
+   * 9999x this used to hardcode.
+   *
+   * Only the standalone pair is affected. The workbench panel's own
+   * `z-index: 10` is bounded on purpose (below dock-base's floating layer), and
+   * raising it from here would invert dock-base's precedence.
+   */
+  triggerLayer: number
+  /**
+   * Opacity of the draggable overlay trigger at rest (1 = fully solid).
+   *
+   * The overlay floats over the conversation rather than in a toolbar, so it
+   * starts faint and goes solid on approach; this is how faint. Stored rather
+   * than fixed because how much it competes with the text behind it is a
+   * reading preference.
+   */
+  overlayOpacity: number
 }
 
 /** Offset of the draggable overlay trigger from the conversation's top-right corner. */
@@ -143,6 +166,19 @@ const DEFAULT_TRIGGER_OVERLAY_OFFSET: TriggerOverlayOffset = { dx: 8, dy: 8 }
  * the entry point down to something hard to hit.
  */
 const DEFAULT_TRIGGER_SIZE = 24
+/**
+ * Matches the client's DEFAULT_TRIGGER_LAYER.
+ *
+ * The client used to hardcode 99997-99999 for the standalone button and panel.
+ * Measured against DSH's own client bundles, the HIGHEST z-index DSH uses
+ * anywhere is 1100 (`dsh-client-ui-chat`, `dsh-client-ui-model-selection`), with
+ * settings and attachment popovers at 1000 — so those values sat ~90x above the
+ * host UI and covered every popover in it. 1150 clears DSH's ceiling while
+ * staying in the same order of magnitude, which is the whole point.
+ */
+const DEFAULT_TRIGGER_LAYER = 1150
+/** Matches the client's DEFAULT_OVERLAY_OPACITY — what 0.55 always was. */
+const DEFAULT_OVERLAY_OPACITY = 0.55
 
 /**
  * Default test target: the canonical "is there a working network path"
@@ -170,6 +206,8 @@ const entry: ProxyConfig = {
   triggerPosition: DEFAULT_TRIGGER_POSITION,
   triggerOverlayOffset: DEFAULT_TRIGGER_OVERLAY_OFFSET,
   triggerSize: DEFAULT_TRIGGER_SIZE,
+  triggerLayer: DEFAULT_TRIGGER_LAYER,
+  overlayOpacity: DEFAULT_OVERLAY_OPACITY,
 }
 
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
@@ -657,6 +695,12 @@ export function apply(ctx: Context) {
       // No min/max on purpose — see the field's comment: the range belongs to
       // the client, and it moves with the selected trigger position.
       triggerSize: Schema.number().default(DEFAULT_TRIGGER_SIZE),
+      // Both are client-owned presets the host never interprets: the sensible
+      // range depends on the host UI they sit among, and clamping them here
+      // would make a stored value un-writable the moment the client's preset
+      // list changes (the 1.1.0 lesson this namespace already records).
+      triggerLayer: Schema.number().default(DEFAULT_TRIGGER_LAYER),
+      overlayOpacity: Schema.number().default(DEFAULT_OVERLAY_OPACITY),
     })
 
     settingsCtx.settings.installSection(ctx, 'dock-flash', SettingsSchema, entry, {

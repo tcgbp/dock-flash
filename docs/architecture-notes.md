@@ -544,6 +544,70 @@ Two habits generalise, and both are cheap:
   that the harness's own scaffolding did its job — that the tag is really in the DOM, that the selector
   really matched — before trusting any assertion about the result.
 
+### The overlay's stacking level was a guess, and DSH's own ceiling says so
+
+The standalone button and its panel carried `z-index: 99997` to `99999` since they were written. Nothing
+chose those numbers; they are "high enough that nothing will beat it", which is a different claim from
+"the right level", and it stopped being true the moment the panel had to coexist with host UI.
+
+Measured across DSH's own client bundles, the highest z-index DSH uses anywhere is **1100**
+(`dsh-client-ui-chat`, `dsh-client-ui-model-selection`); settings and attachment popovers sit at 1000 and
+most chat chrome at 100. The literals were therefore ~90x above the host's own top layer, which is why the
+standalone panel covered DSH's popovers instead of sitting among the host's surfaces. The default is now
+**1150** — above DSH's ceiling, in the same order of magnitude — with 1050 offered for "stay under the chat
+layer" and 2000 for "clear everything with headroom".
+
+The setting deliberately covers the **standalone pair only**. The workbench panel's own `z-index: 10` is
+bounded on purpose (below dock-base's floating layer at 70), and raising it from a client preference would
+invert dock-base's precedence — a rule this file already records under "Stacking".
+
+**One value, three derived levels.** The button must sit above the panel or the one control whose effect is
+only visible on the button (its size) appears to do nothing — the 1.4.0 defect. That release fixed it by
+toggling the button's z-index on open/close; the two values are now `triggerLayer` and `triggerLayer + 1`,
+derived from the single setting (`panelLayer()`, `triggerLayerOfButton()`, `layerOfMenu()`). The toggle is
+gone, so there is no second piece of state to get out of step when the user changes the layer.
+
+#### The context menu, and the scope it keeps
+
+Right-click on the overlay offers reset position, the current offset, the version, and the layer/opacity
+presets. The scope rule is what makes it a menu rather than a second panel:
+
+- **Panel-reachable settings stay out.** `trigger-size`, `trigger-position` and `close-on-blur` all exist in
+  the panel; a second control for one setting is how two surfaces begin to disagree (Critical Rule 7). The
+  `close-on-blur` case is worse than duplication — it would be a THIRD control for that value, which is the
+  shape Critical Rule 5 already warns about.
+- **`trigger-position` is unreachable from here by construction.** The overlay is not one of its options, so
+  picking a position from the overlay's own menu makes the button vanish from under the pointer.
+- **What is in it is what only this surface can answer**: the offset (visible nowhere but
+  `__dockFlashOverlay()`), the version (a stale bundle and a failed fix are indistinguishable without it), and
+  the layer — a property of this floating button, not of any switch.
+- **It is not a registry.** A third party contributing entries would justify an extension seam; one consumer
+  does not, and this codebase's rule is not to build the seam before the second caller exists.
+
+The menu is appended to `<body>`, never to the button: that element carries `opacity` (children inherit it,
+so the menu would go translucent) and a fixed box with a border radius (the menu would be clipped). It is
+positioned with the same clamp shape as `positionPanel()`, because the button can be dragged into any of the
+four corners and a menu anchored to it would otherwise open off-screen.
+
+#### Two harness defects, one of which had been corrupting drag assertions all along
+
+Writing the opacity assertions exposed both, and they are the same lesson as the `URL`/`baseURI` pair
+recorded elsewhere in this file — a stub that cannot do something is indistinguishable from a feature that
+does not work.
+
+- **The panel helpers never released the mouse.** They fired `mousedown` + `click`, and `beginOverlayDrag`
+  sets the shared `dragging` singleton on every mousedown while only `handleDragEnd` clears it. So
+  `dragging` stayed TRUE for the rest of the run, and because that flag forces the overlay solid, the new
+  opacity setting looked completely inert. The helper is now a real `tap()` (press, release, click), and
+  `dragging` is mirrored into `__dockFlashOverlay()` so a stuck flag is reportable rather than inferred.
+- **`El` had no `contains()`.** The outside-click handler calls `menu.contains(ev.target)`, so it threw
+  partway through — and everything after the throw silently did not run, which is how a `dragging` flag stays
+  set. Ancestry is what the DOM answers here (`contains` is not "is a child"), and the bundle now also
+  tolerates its absence rather than aborting the rest of the handler.
+
+The general shape, worth keeping: **a handler that throws in the middle leaves the state it was about to
+clear still set**, and the symptom appears somewhere else entirely.
+
 ### The turn rail: a class test that stopped recognising DSH
 
 `turn-rail-left` (1.0.13) moves DSH's turn navigator to the left gutter. It is gated on

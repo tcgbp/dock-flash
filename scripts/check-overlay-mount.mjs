@@ -89,6 +89,22 @@ class El {
     }
   }
   get firstChild() { return this.children[0] || null }
+  /**
+   * `contains` — ancestry, not "is a child". Code that closes a popup on an
+   * outside click asks THIS question, and the bundle relies on it in
+   * `handleOutsideClick` and `openOverlayMenu`. Without it the call throws
+   * partway through the handler and everything AFTER the throw silently does not
+   * happen: a stuck `dragging` flag was traced to exactly this, which the test
+   * read as "the opacity setting does not repaint".
+   */
+  contains(other) {
+    let n = other
+    while (n) {
+      if (n === this) return true
+      n = n.parentNode
+    }
+    return false
+  }
   get textContent() { return this._text }
   set textContent(v) { this._text = String(v); this.children.length = 0 }
   get innerHTML() { return this._html || '' }
@@ -571,7 +587,7 @@ check('overlay button is hidden while there is no conversation', !!(btn && btn.s
 console.log('\n=== 2. __dockFlashOverlay() before a conversation exists ===')
 const probe1 = sandbox.window.__dockFlashOverlay()
 console.log('  ' + JSON.stringify(probe1, null, 2).split('\n').join('\n  '))
-check('probe reports the build version first', probe1.clientVersion === '1.4.3', probe1.clientVersion)
+check('probe reports the build version first', probe1.clientVersion === '1.5.0', probe1.clientVersion)
 check('probe: mounted but no anchor yet', probe1.overlayElMounted === true && probe1.anchorFound === false)
 check('probe: the anchor watcher is armed', probe1.anchorWatcher === 'waiting-for-anchor', probe1.anchorWatcher)
 
@@ -661,6 +677,22 @@ registry.registerSwitch({
 const PANEL = '[data-dsh-plugin="dock-flash-standalone"]'
 const panelEl = () => body.descendants().find((e) => e.getAttribute('data-dsh-plugin') === 'dock-flash-standalone')
 const mouse = (x, y) => ({ button: 0, clientX: x, clientY: y, preventDefault() {}, stopPropagation() {} })
+
+/**
+ * A COMPLETE click: press, release, then the click event.
+ *
+ * The release is not optional. `beginOverlayDrag` sets `dragging = true` on every
+ * mousedown, and only `handleDragEnd` clears it — so a helper that fires
+ * `mousedown` + `click` and stops leaves `dragging` STUCK. That flag forces the
+ * overlay button solid, so the next section's "my opacity setting does nothing"
+ * was really a harness that never let go of the mouse. Same stale-singleton
+ * shape as `dragSource`; the probe now reports `dragging` so it cannot hide again.
+ */
+const tap = (el, x = 1236, y = 84) => {
+  el.dispatch('mousedown', mouse(x, y))
+  sandbox.document.__fire('mouseup', mouse(x, y))
+  el.dispatch('click', mouse(x, y))
+}
 
 // Captured across every gesture below, because each open RE-RENDERS the panel and
 // `renderPanel()` swallows a throw into console.error.
@@ -1004,12 +1036,13 @@ console.log('\n=== 12. a host that answers LATE still reaches the button ===')
 
 console.log('\n=== 13. the open panel must not cover its own button ===')
 // The defect this section exists for is a z-index consequence, not an arithmetic
-// one: the panel is 99998 and the button 99997, so ANY overlap hides the button —
-// and the button is what toggled the panel open. At the old fixed 6px gap the
-// panel's top edge sat inside the 24px button and the overlap was easy to miss;
-// as soon as the size became user-settable it read as "the size only takes effect
-// after I close the panel", which is exactly how it was reported.
+// one: the button must never be underneath the panel it opened, or the ONE control
+// whose effect is only visible on the button (its size) looks like it did nothing.
+// As soon as the size became user-settable that read as "the setting only takes
+// effect after I close the panel", which is how it was reported.
 //
+// 1.4.4 changed HOW that holds — a permanent one-level offset instead of a
+// toggle — so this section now asserts the relationship rather than two literals.
 // The assertion is geometric on purpose. The stub must report the BOXES, or this
 // would pass on any two numbers: `panelH` is read from the container's own rect
 // and `rect.height` from the button's (see `setBtnBox`), so the two sides of the
@@ -1024,7 +1057,7 @@ console.log('\n=== 13. the open panel must not cover its own button ===')
     if (el) el._rect = { x: 0, y: 0, width: 320, height: h, top: 0, left: 0, right: 320, bottom: h }
   }
   // Open once so the container exists, then drive it deterministically.
-  if (!panelEl()) { btn.dispatch('mousedown', mouse(1236, 84)); btn.dispatch('click', mouse(1236, 84)) }
+  if (!panelEl()) { tap(btn) }
   panelBox(360)
 
   // Place the button well inside the viewport so the "below" branch is taken.
@@ -1046,32 +1079,39 @@ console.log('\n=== 13. the open panel must not cover its own button ===')
   }
   const open = () => {
     anchorBox(84, sizeSwitch.getValue())
-    if (container.style.display !== 'flex') { btn.dispatch('mousedown', mouse(1236, 84)); btn.dispatch('click', mouse(1236, 84)) }
+    if (container.style.display !== 'flex') { tap(btn) }
   }
   const close = () => {
-    if (container.style.display === 'flex') { btn.dispatch('mousedown', mouse(1236, 84)); btn.dispatch('click', mouse(1236, 84)) }
+    if (container.style.display === 'flex') { tap(btn) }
   }
 
   // ── the real mechanism ──
-  // The panel is 99998 and the button 99997, so the panel DOES sit over the
-  // button's corner — that is by design, and it is why the new size looked like
-  // it only took effect after closing the panel. The fix is not to move the panel
-  // (`rect.bottom + 6` already cleared the button) but to lift the button above
-  // the panel for as long as the panel is open.
+  // The button must sit ABOVE the panel for its whole life, so a size change is
+  // visible while the panel is open. 1.4.0 achieved that by TOGGLING the button's
+  // z-index on open/close (99997 <-> 99999); 1.4.4 replaced that with a permanent
+  // one-level offset derived from the single `triggerLayer` value, so the
+  // relationship cannot drift when the user changes the layer from the menu.
+  //
+  // The assertions therefore test the RELATIONSHIP, not two literals: the old
+  // ones pinned `'99999'`/`'99997'`, which stopped being meaningful the moment
+  // the level became user-configurable.
   close()
   open()
   panelBox(360)
   check('the panel is open', container.style.display === 'flex', container.style.display)
-  check('while OPEN the button is lifted above the panel',
-    String(btn.style.zIndex) === '99999', String(btn.style.zIndex))
-  check('...so a size change is visible immediately, not after closing',
-    btn.style.zIndex > (container.style.zIndex || 99998), `${btn.style.zIndex} vs ${container.style.zIndex || 99998}`)
+  check('the button is above the panel while it is open',
+    Number(btn.style.zIndex) > Number(container.style.zIndex),
+    `button ${btn.style.zIndex} vs panel ${container.style.zIndex}`)
+  check('...by exactly one level (derived, not toggled)',
+    Number(btn.style.zIndex) === Number(container.style.zIndex) + 1,
+    `button ${btn.style.zIndex} vs panel ${container.style.zIndex}`)
 
-  // The lift is scoped to "open": leaving it raised would put the button over the
-  // panel's own header permanently.
+  // CLOSING must NOT change the stacking any more — that is the whole point of
+  // moving from a toggle to an offset: there is no state to get out of step.
   close()
-  check('closing the panel lowers the button again',
-    String(btn.style.zIndex) === '99997', String(btn.style.zIndex))
+  check('closing the panel leaves the stacking untouched (no toggle to undo)',
+    Number(btn.style.zIndex) === Number(container.style.zIndex) + 1,
+    `button ${btn.style.zIndex} vs panel ${container.style.zIndex}`)
 
   // A live resize must carry the panel with the button. The anchor box is
   // updated FIRST, because `positionPanel()` reads the live DOM box — in the
@@ -1087,7 +1127,9 @@ console.log('\n=== 13. the open panel must not cover its own button ===')
   check('the panel is still open after a live resize', container.style.display === 'flex', container.style.display)
   check('the panel followed the smaller button',
     parseFloat(container.style.top) === 84 + 32 + 6, `${container.style.top} (expected ${84 + 32 + 6})`)
-  check('the button is still above the panel', String(btn.style.zIndex) === '99999', String(btn.style.zIndex))
+  check('the button is still above the panel',
+    Number(btn.style.zIndex) === Number(container.style.zIndex) + 1,
+    `button ${btn.style.zIndex} vs panel ${container.style.zIndex}`)
 }
 
 // ── the SLOT trigger resizes live too ───────────────────────────────────────
@@ -1400,6 +1442,114 @@ console.log('\n=== 17. a refused market activation releases the selection ===')
     `${before} -> ${skinSwitch.getValue()}`)
   check('...and the refusal was reported with the market\'s own wording',
     warnings.some((w) => /not an installed theme/.test(w)), JSON.stringify(warnings.slice(-2)))
+}
+
+// ── the right-click menu, and the two settings it owns ─────────────────────
+// The menu is the only surface for the layer and the rest opacity, and both are
+// preferences that must survive a reload — so this section covers the menu's
+// STRUCTURE (four items, the tick, the clamp), the two writers, and the opacity
+// rule that a finished drag releases hover brightness.
+console.log('\n=== 18. the overlay context menu ===')
+{
+  const posSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:trigger-position')
+  posSwitch.setValue('conversation.overlay')
+  await new Promise((r) => setTimeout(r, 20))
+
+  // ALWAYS look the button up; never hold a reference. `applyTrigger()` — reached
+  // from a position change AND from the bounded re-acquisition path — tears the
+  // overlay down and builds a NEW element, so a cached node is a detached one and
+  // asserting against it checks a node no listener is attached to. That mistake
+  // cost two rounds on this very section.
+  const liveBtn = () => sandbox.document.getElementById('dock-flash-overlay-trigger')
+  check('the overlay button exists in the document', !!liveBtn() && liveBtn().parentNode === body)
+
+  // Give the button a real box: `positionOverlayMenu()` reads it to clamp.
+  liveBtn()._rect = { x: 1200, y: 80, width: 24, height: 24, top: 80, left: 1200, right: 1224, bottom: 104 }
+
+  const menuEl = () => body.descendants().find((e) => e.getAttribute('data-dock-flash-menu') !== null)
+  check('no menu before the right-click', !menuEl())
+
+  // A contextmenu event, NOT a click: the browser's own menu must be suppressed.
+  let sawDefault = false
+  liveBtn().dispatch('contextmenu', {
+    type: 'contextmenu', button: 2,
+    preventDefault() { sawDefault = true },
+    stopPropagation() {},
+  })
+  const menu = menuEl()
+  check('the right-click opened a menu', !!menu)
+  check('...and suppressed the browser\'s own', sawDefault)
+  check('the probe reports it open', sandbox.window.__dockFlashOverlay().menuOpen === true,
+    String(sandbox.window.__dockFlashOverlay().menuOpen))
+
+  const rows = menu ? menu.descendants().filter((e) => e.getAttribute('role') === 'menuitem') : []
+  const textOf = (e) => e.descendants().map((c) => c.textContent).join('')
+  const texts = rows.map(textOf)
+  // The four decisions this menu exists for. `trigger-size` /
+  // `trigger-position` / `close-on-blur` are deliberately absent — they live in
+  // the panel, and a second control is how two surfaces start disagreeing.
+  check('it offers "reset position"', texts.some((t) => /重置位置|Reset position/.test(t)), JSON.stringify(texts))
+  check('it shows the current offset', texts.some((t) => /位置|Offset/.test(t)), JSON.stringify(texts))
+  check('it shows the version', texts.some((t) => t.includes('1.5.0')), JSON.stringify(texts))
+  check('it exposes a layer choice', texts.some((t) => /层级|Layer/.test(t)), JSON.stringify(texts))
+  check('it exposes a rest-opacity choice', texts.some((t) => /深浅|opacity/i.test(t)), JSON.stringify(texts))
+  check('...and it does NOT duplicate the panel\'s own switches',
+    !texts.some((t) => /大小|Size|位置偏好|Blur/i.test(t)), JSON.stringify(texts))
+
+  // The default layer clears the highest z-index DSH itself uses (1100, measured
+  // across its client bundles), and the button stays one above the panel.
+  const probe = sandbox.window.__dockFlashOverlay()
+  check('the default layer is 1150 — above DSH\'s own ceiling of 1100, not 9999x',
+    probe.triggerLayer === 1150, String(probe.triggerLayer))
+  check('the button is one level above the panel',
+    Number(liveBtn().style.zIndex) === probe.triggerLayer + 1, `${liveBtn().style.zIndex} vs ${probe.triggerLayer}`)
+
+  // Pick a different layer from the menu (the row whose text is exactly 2000).
+  const layer2000 = rows.find((r) => textOf(r).includes('2000'))
+  check('the 2000 preset is offered', !!layer2000)
+  if (layer2000) {
+    layer2000.dispatch('click', { type: 'click', preventDefault() {}, stopPropagation() {} })
+    check('picking it moves the panel', Number(panelEl().style.zIndex) === 2000,
+      String(panelEl().style.zIndex))
+    check('...and carries the button with it', Number(liveBtn().style.zIndex) === 2001,
+      `${liveBtn().style.zIndex} (panel ${panelEl().style.zIndex})`)
+    check('...and persists to localStorage for the pre-host render',
+      store.get('dock-flash:trigger-layer') === '2000', String(store.get('dock-flash:trigger-layer')))
+    check('...and the probe reports it', sandbox.window.__dockFlashOverlay().triggerLayer === 2000,
+      String(sandbox.window.__dockFlashOverlay().triggerLayer))
+  }
+
+  // Rest opacity: the setting, and the rule that a finished drag releases it.
+  const opacityRow = rows.find((r) => textOf(r).includes('0.85'))
+  check('the 0.85 opacity preset is offered', !!opacityRow)
+  if (opacityRow) {
+    check('no drag is in progress before the pick (the flag forces it solid)',
+      sandbox.window.__dockFlashOverlay().dragging === false,
+      String(sandbox.window.__dockFlashOverlay().dragging))
+    opacityRow.dispatch('click', { type: 'click', preventDefault() {}, stopPropagation() {} })
+    check('picking it repaints the button at rest', liveBtn().style.opacity === '0.85', String(liveBtn().style.opacity))
+    check('...and persists', store.get('dock-flash:overlay-opacity') === '0.85',
+      String(store.get('dock-flash:overlay-opacity')))
+  }
+  // Hover means solid, and so does a drag; releasing must hand brightness BACK,
+  // which is the defect the old `if (!dragging)` guard left behind.
+  liveBtn().dispatch('mouseenter', { type: 'mouseenter' })
+  check('hover forces it solid', liveBtn().style.opacity === '1', String(liveBtn().style.opacity))
+  liveBtn().dispatch('mousedown', mouse(1236, 84))
+  sandbox.document.__fire('mousemove', mouse(1250, 100))
+  check('a drag keeps it solid', liveBtn().style.opacity === '1', String(liveBtn().style.opacity))
+  // Pointer OFF the button when the drag ends: the old code left it at 1 here.
+  liveBtn().dispatch('mouseleave', { type: 'mouseleave' })
+  sandbox.document.__fire('mouseup', mouse(1250, 100))
+  check('releasing the drag restores the user\'s rest opacity (not hover brightness)',
+    liveBtn().style.opacity === '0.85', String(liveBtn().style.opacity))
+
+  // Escape closes it.
+  check('the menu is still on screen before Escape', !!menuEl())
+  sandbox.document.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} })
+  check('Escape closes the menu', !menuEl())
+  check('...and the probe agrees', sandbox.window.__dockFlashOverlay().menuOpen === false,
+    String(sandbox.window.__dockFlashOverlay().menuOpen))
 }
 
 console.log('\n' + (failures.length === 0 ? '✅ ALL CHECKS PASSED' : '❌ FAILURES: ' + failures.join('; ')))

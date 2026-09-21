@@ -25,6 +25,19 @@ const DEFAULT_TRIGGER_OVERLAY_OFFSET = { dx: 8, dy: 8 };
  */
 const DEFAULT_TRIGGER_SIZE = 24;
 /**
+ * Matches the client's DEFAULT_TRIGGER_LAYER.
+ *
+ * The client used to hardcode 99997-99999 for the standalone button and panel.
+ * Measured against DSH's own client bundles, the HIGHEST z-index DSH uses
+ * anywhere is 1100 (`dsh-client-ui-chat`, `dsh-client-ui-model-selection`), with
+ * settings and attachment popovers at 1000 — so those values sat ~90x above the
+ * host UI and covered every popover in it. 1150 clears DSH's ceiling while
+ * staying in the same order of magnitude, which is the whole point.
+ */
+const DEFAULT_TRIGGER_LAYER = 1150;
+/** Matches the client's DEFAULT_OVERLAY_OPACITY — what 0.55 always was. */
+const DEFAULT_OVERLAY_OPACITY = 0.55;
+/**
  * Default test target: the canonical "is there a working network path"
  * endpoint. Returns an empty 204, so it measures the path and nothing else —
  * and it is unreachable without a working proxy on networks that need one,
@@ -46,6 +59,8 @@ const entry = {
     triggerPosition: DEFAULT_TRIGGER_POSITION,
     triggerOverlayOffset: DEFAULT_TRIGGER_OVERLAY_OFFSET,
     triggerSize: DEFAULT_TRIGGER_SIZE,
+    triggerLayer: DEFAULT_TRIGGER_LAYER,
+    overlayOpacity: DEFAULT_OVERLAY_OPACITY,
 };
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
 const API_BYPASS_DOMAINS = 'api.deepseek.com,chat.deepseek.com';
@@ -505,6 +520,12 @@ export function apply(ctx) {
             // No min/max on purpose — see the field's comment: the range belongs to
             // the client, and it moves with the selected trigger position.
             triggerSize: Schema.number().default(DEFAULT_TRIGGER_SIZE),
+            // Both are client-owned presets the host never interprets: the sensible
+            // range depends on the host UI they sit among, and clamping them here
+            // would make a stored value un-writable the moment the client's preset
+            // list changes (the 1.1.0 lesson this namespace already records).
+            triggerLayer: Schema.number().default(DEFAULT_TRIGGER_LAYER),
+            overlayOpacity: Schema.number().default(DEFAULT_OVERLAY_OPACITY),
         });
         settingsCtx.settings.installSection(ctx, 'dock-flash', SettingsSchema, entry, {
             setSource: (current) => {
