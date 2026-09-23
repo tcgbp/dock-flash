@@ -967,6 +967,37 @@ An earlier guess in this file’s history put `▶`’s ink at "about 13px at a 
 rendered look rather than from a measurement. The number happened to be close, but the method is why
 the header shipped half-fixed for two releases: `MeasureString` is one command and settles it.
 
+### Peer ranges: why every tuple needs its own prerelease branch
+
+`AGENTS.md` keeps the rule — "peer ranges must carry an explicit prerelease branch, one per tuple
+whose prereleases must resolve" — and points here for the measurement behind it.
+
+node-semver admits a prerelease only when some comparator in the range sits on the **same**
+`major.minor.patch` tuple and itself carries a prerelease tag. A range that merely *looks* broad
+therefore excludes the harness's prerelease builds silently, with no error to notice.
+
+Measured with semver 7.8.5:
+
+| Range | `4.0.0-rc.10` | `0.2.0-rc.1` |
+|---|---|---|
+| `>=4.0.1 <5` (no prerelease branch) | rejected | — |
+| `>=4.0.1-0 <5.0.0-0` | **rejected** — the cordis this machine's dock-base runs on | — |
+| `>=0.1.2-0 <1.0.0-0` | — | **rejected** |
+| the tables' `>=4.0.1-0 <5.0.0-0 \|\| >=4.0.0-rc.1 <5.0.0-0` form | accepted | accepted |
+
+The `>=4.0.1-0` line is the surprising one: it *carries* a prerelease tag and looks like the fix, but
+the tuple is `4.0.1`, so `4.0.0-rc.10` is still out. A branch written for one tuple never covers
+another, which is why the tables use `||` branches per tuple while keeping the previous branch so
+nothing already accepted is lost.
+
+**A first attempt at this very fix proved the point the hard way:** `^4.0.1 || >=4.0.0-rc.1 <5.0.0-0`
+accepts `4.0.0-rc.10` and silently **drops `4.0.1-0`** — a version the old range accepted. That is why
+any change here needs a probe matrix asserting **both** directions: the prerelease is accepted, AND no
+version the old range accepted became rejected. A one-directional test passes on a regression.
+
+> The upstream requirement is awesome-dsh-plugin's contributing guide. Without this shape, users on a
+> prerelease harness hit `ERESOLVE` at install time — a failure that names the resolver, not the range.
+
 ---
 
 ## Common pitfalls, in full

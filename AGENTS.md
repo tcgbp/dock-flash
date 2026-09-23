@@ -31,27 +31,20 @@ file buys nothing. `docs/` is not a candidate name, which is why relocation work
 ## Project Structure
 
 ```
-dock-flash/
-├── src/index.ts          HOST half — settings namespace + proxy toggle (tsc → dist/)
-├── dist/index.js         Compiled host half
-├── lib/client.js         BROWSER half — quickControl registry + panel + skin system + i18n (single file, NO build step, organized by #region markers)
-├── cordis.patch.yml      Bundle layer — inserts host rows into profile
-├── package.json          Plugin manifest + dsh.client.inject
-├── README.md             English docs (canonical)
-├── README.zh-CN.md       Chinese docs (mirrors README.md)
-├── INTEGRATION.md        Third-party integration guide (English)
-├── INTEGRATION.zh-CN.md  Third-party integration guide (Chinese)
-├── CHANGELOG.md          Release-by-release history (narrative; not rules)
-├── AGENTS.md             This file — rules, contracts, invariants
-├── docs/                 Long-form notes and procedures — NOT injected, read on demand
-│   ├── architecture-notes.md   the "why" behind rules, and measurements
-│   ├── testing-checklist.md    the per-change verification procedure
-│   ├── releasing.md            the release and mirror-sync procedure
-│   └── skin-system.md          scan phases, skin categories, preference bridge
-└── scripts/              Repo tooling (not published — see `files` in package.json)
-    ├── check-docs-size.mjs     `pnpm run check:docs`
-    └── check-overlay-mount.mjs `pnpm run check:overlay`
+src/index.ts      HOST half      → tsc → dist/index.js
+lib/client.js     BROWSER half   → single file, NO build step, edited directly
+dist/index.js     compiled host half — TRACKED on purpose (see Build & Install)
+cordis.patch.yml  bundle layer: inserts the host rows into the profile
+package.json      manifest + dsh.client.inject
+docs/             long-form notes — NOT injected, read on demand
+scripts/          repo tooling — NOT published (see `files` in package.json)
 ```
+
+Docs: `README.md` / `README.zh-CN.md` (English is canonical), `INTEGRATION.md` /
+`INTEGRATION.zh-CN.md` (third-party guide), `CHANGELOG.md` (history), `AGENTS.md` (this file).
+`docs/`: `architecture-notes.md` (the "why" and the measurements), `testing-checklist.md`,
+`releasing.md`, `skin-system.md`. `scripts/`: `check-docs-size.mjs` (`pnpm run check:docs`),
+`check-overlay-mount.mjs` (`pnpm run check:overlay`).
 
 - **Host half** (`src/index.ts`): compiled via `pnpm run build` (tsc). Touch only this file for host-side changes.
 - **Client half** (`lib/client.js`): single monolithic file, edited directly — no build, no bundler, no TypeScript. Changes take effect on page refresh (symlinked in profile).
@@ -118,120 +111,82 @@ dock-flash can run in two modes:
 
 `conversation.overlay` floats a draggable ⚡ inside the conversation's top-right corner. **Its
 `TRIGGER_POSITIONS` entry carries no `slot`, and that absence is the mechanism** — `injectTrigger()`
-takes the overlay path instead of registering into a slot. A slot is a place in DSH's layout, and
-this position exists precisely to sit *over* the conversation rather than be laid out by it, so
-`conversation.session.header.corner` — the nearest thing DSH offers — is not usable even though it
-looks right: it is `kind: "single"` (the renderer keeps only `entriesOfSlot[0]`), so a second
-occupant does not queue, it **disappears**, and `@deepseek-ai/dsh-client-ui-sidebar-right` already
-ships there with its expand button.
+takes the overlay path instead of registering into a slot. `conversation.session.header.corner` looks
+right but is not usable: it is `kind: "single"` (the renderer keeps only `entriesOfSlot[0]`), so a
+second occupant does not queue, it **disappears**, and `@deepseek-ai/dsh-client-ui-sidebar-right`
+already ships there with its expand button.
 
-Seven things must hold together:
+The rules that must hold together — each one cost a defect:
 
 - **The anchor is found structurally, never by class name.** `conversationViewport()` matches
-  `div[class*="_scrollBody"]` whose computed `overflow-y` is auto/scroll, then requires a non-zero
-  box inside the viewport and prefers the largest. `wSkVaW_scrollBody` is a CSS-module hash that
-  changes on any DSH rebuild, so matching it would break silently on an unrelated upgrade — the same
-  reasoning as the turn rail, and it carries the same "in the DOM is not on screen" trap.
-- **The scrollbar is cleared by arithmetic, not by a guessed width.** That element declares
-  `scrollbar-gutter: stable`, so the gutter is reserved whether or not a scrollbar is showing, and
-  `rect.width - el.clientWidth` reads it exactly. A guessed constant would be wrong on any platform
-  with a different scrollbar, and would make the button jump when content crossed the scroll
-  threshold.
-- **The turn rail is cleared through `turnRailProbe()`,** not by measuring `nav[class*="_frame"]`
-  again — that function already owns "is the rail visible", "has another plugin taken the surface
-  over", and "which of several candidates is the on-screen one". **Class tests use `*=` and never
-  `$=`**, because DSH joins class lists: the rail's scroller is
-  `[scroller, fadeTop?, fadeBottom?].join(' ')`, so a rail that merely grew stopped matching a
-  suffix test — which hid the `turn-rail-left` switch from the panel and stopped this button giving
-  way to the rail. `_preview` is the one token that must stay `$=`, since `_previewPrompt` and
-  `_previewResponse` are its siblings. Only a rail on the RIGHT competes with this corner; the
-  `turn-rail-left` switch moves it away from the same place, so a left-side rail must not shift the
-  button.
-- **The offset is relative to the conversation corner, and the button is clamped, not the offset.**
-  Storing `{dx, dy}` inward from that corner is what makes the button follow the corner when the
-  right sidebar opens, the sash moves or the window resizes — which is why a `ResizeObserver` on the
-  viewport (not a window `resize` listener) is what keeps it in place, since two of those three never
-  fire one. A drag adjusts the offset; the clamp then holds the RESULT inside the viewport, so a
-  stored offset survives a shrink that the position does not.
+  `div[class*="_scrollBody"]` whose computed `overflow-y` is auto/scroll, requires a non-zero box
+  inside the viewport, and prefers the largest. The class is a CSS-module hash that changes on any DSH
+  rebuild.
+- **The scrollbar is cleared by arithmetic, not by a guessed width.** The element declares
+  `scrollbar-gutter: stable`, so `rect.width - el.clientWidth` reads the reserved gutter exactly; a
+  constant would be wrong on another platform and would make the button jump at the scroll threshold.
+- **The turn rail is cleared through `turnRailProbe()`**, never by re-measuring
+  `nav[class*="_frame"]` — that function already owns "is the rail visible", "has another plugin taken
+  the surface", and "which candidate is the on-screen one". **Class tests use `*=` and never `$=`**,
+  because DSH joins class lists; `_preview` is the one token that stays `$=`. Only a RIGHT-side rail
+  competes with this corner, so `turn-rail-left` must not shift the button.
+- **The offset is `{dx, dy}` inward from the conversation corner, and the BUTTON is clamped, not the
+  offset.** That is what makes it follow the corner when the right sidebar opens, the sash moves or the
+  window resizes — which is why the observer is a `ResizeObserver` on the viewport and not a window
+  `resize` listener (two of those three never fire one). A stored offset then survives a shrink that
+  the position does not.
 - **The button's size is `effectiveTriggerSize()`; no size literal may reappear in the positioning
-  arithmetic.** The clamp, the scrollbar clearance and the turn-rail give-way all measure the BUTTON,
-  so a constant that disagrees with the drawn box parks the entry point over the rail or outside the
-  conversation — the same silent failure as the two that once hid it entirely. Icon size
-  (`triggerIconSize()`, 2/3) and radius (`triggerRadius()`, 1/4) derive from it and reproduce the
-  historical 16px/6px exactly at the default 24. **The ceiling follows the selected position** — 48px
-  in a slot (it shares that row), 64px at the draggable overlay (it competes with nothing) — and it
-  clamps what is drawn, never what is stored, so the host schema carries no min/max. The positioning
-  reads the stored value, not the rendered box, which is a frame stale after a resize.
-- **The glyph is real DOM, not a React element.** `LightningIcon()` returns `h('svg', …)` — a React
-  element *descriptor*, a plain object — and the hand-built button's `appendChild` needs a `Node`, so
-  it threw `TypeError: parameter 1 is not of type 'Node'` before `overlayEl = el`: the button was
-  never in the DOM, and because the mount precedes `ctx.inject(['slots'], …)`, **no** trigger position
-  worked at all. `LightningIconNode()` builds the same `svg`/`path` via `createElementNS`.
-- **Acquisition is retried, never attempted once.** `apply()` runs before any conversation exists, so
-  positioning at mount finds no anchor, leaves the button hidden, and attaches no `ResizeObserver` —
-  it is attached to an element that does not exist yet. A subtree `MutationObserver` (armed while no
-  anchor is adopted, and **not** disconnected once one is found, because a new session builds a new
-  scroller) plus a bounded retry for a viewport that exists but is not yet laid out. The mount is
-  wrapped in a named, non-fatal catch, because it precedes `ctx.inject(['slots'])`.
+  arithmetic.** The clamp, the scrollbar clearance and the rail give-way all measure the BUTTON, so a
+  constant that disagrees with the drawn box parks the entry point over the rail or outside the
+  conversation. `triggerIconSize()` (2/3) and `triggerRadius()` (1/4) derive from it. **The ceiling
+  follows the selected position** — 48px in a slot, 64px at the overlay — and clamps what is DRAWN,
+  never what is stored, so the host schema carries no min/max.
+- **The glyph is real DOM, not a React element.** `LightningIcon()` returns a React element
+  *descriptor* — a plain object — and `appendChild` needs a `Node`. Use `LightningIconNode()`, which
+  builds the same `svg`/`path` via `createElementNS`.
+- **Acquisition is retried, never attempted once.** `apply()` runs before any conversation exists. A
+  subtree `MutationObserver` armed while no anchor is adopted — and **not** disconnected once one is
+  found, because a new session builds a new scroller — plus a bounded retry for a viewport that exists
+  but is not yet laid out. The mount is wrapped in a named, non-fatal catch.
 - **Three user-settable properties, one writer each.** `triggerSize` (panel), `triggerLayer` and
-  `overlayOpacity` (right-click menu). The layer is the one to handle carefully:
-  `panelLayer()` / `triggerLayerOfButton()` / `layerOfMenu()` are all DERIVED from the single
-  setting, because the button must sit above the panel or the size control looks inert (the 1.4.0
-  defect) — two stored values would drift. **Every one of the four host-owned numerics needs its own
-  `adoptHost*` handler, and that is the rule this feature broke.** `triggerLayer` and
-  `overlayOpacity` are read ONCE at factory init by `_loadNumberPref`, when `_hostPrefs` is still
-  `null` because `loadHostPreferences()` is an async round trip started later in `apply()` — so the
-  host's stored copy never reached the variables that position anything, and the pair kept the
-  built-in default for the life of the page. **The symptom is "the setting does nothing": a user with
-  `triggerLayer: 9` in `settings.yaml` still watched the icon float above the modal mask, because
-  on screen it was really at 1150/1151.** `adoptHostOffset` and `adoptHostSize` already existed and
-  each documents this exact two-ordering trap; the handler was simply never written for the two
-  settings added in 1.5.0. **Adding a host-owned preference means adding its adopt handler too** —
-  subscribe (covers a host that answers late) AND call once (covers one that answered early).
-  Levels: DSH's modal (`._root_w1urq_2`) is portaled to `document.body` at
-  `position:fixed; inset:0; z-index:1000`, so it is a plain SIBLING that compares directly, and its
-  mask carries no z-index of its own. Other overlays are 1100 (`._portal_1nxmc_44`,
-  `dsh-client-ui-chat`'s `.bRhRbq_panel`, dock-base's `.dsh-wb-settings-overlay`), host menus 1000.
-  Under the host therefore means strictly below **1000**, and the "stay out of the way" preset is
-  **9** — not a value near the band, because the gap below 1000 is wide and nothing is gained by
-  sitting in it. The default is **1150**. It affects the
-  **standalone pair only** — the workbench panel's `z-index: 10` is bounded so dock-base's
-  floating-above-docked precedence survives. The menu holds ONLY what the panel cannot reach and what
-  this button alone can answer (reset position, offset, version, layer, opacity); **never add
-  `trigger-size`, `trigger-position` or `close-on-blur` to it** — a second control for a setting that
-  already has one is how two surfaces start disagreeing (Critical Rule 7).
-- **A preset list is read by TWO scopes, so it lives in the factory closure.** `_migrateLocalToHost`
-  compares a stored localStorage value against the presets to tell a choice the user made here from a
-  value a *previous build's* list produced. Declaring `LAYER_PRESETS` / `OPACITY_PRESETS` /
-  `_layerStoreKey` / `_opacityStoreKey` beside the menu that renders them (inside the standalone
-  closure) makes the migration throw `ReferenceError`, and its own `.catch` swallows it — the whole
-  host-preference load silently fails and every host setting reverts to a default. Same shape as the
-  `_exposeHook` trap; keep them where the widest consumer can reach them.
-- **"localStorage disagrees with the host" is NOT sufficient to migrate.** That rule is right for a
-  value the user chose and wrong for one a removed preset produced: both are bare numbers. 1.5.1
-  changed the low preset 1050 → 900, and a browser still holding 1050 wrote it back **over the new
-  default on every load**, so the setting looked inert no matter what was picked. A value absent from
-  the current preset list cannot have come from the current menu, so it yields to the host. Assert
-  BOTH directions or the guard reads as a blanket refusal.
-
-> The defects in full, with the measurements and the harness that proves them:
-> [docs/architecture-notes.md](docs/architecture-notes.md).
+  `overlayOpacity` (right-click menu). `panelLayer()` / `triggerLayerOfButton()` / `layerOfMenu()` are
+  all DERIVED from the one setting, or the two drift and the size control looks inert. **Every
+  host-owned numeric needs its own `adoptHost*` handler — subscribe AND call once**, because the host
+  may answer before or after the mount; without it the value is read into `_hostPrefs` and never
+  reaches anything.
+- **Under the host means strictly below 1000.** DSH's modal is portaled to `document.body` at
+  `z-index:1000`, so it compares as a plain SIBLING and its mask needs no z-index of its own; other
+  overlays are 1100, host menus 1000. The "stay out of the way" preset is **9** and the default is
+  **1150**. This affects the **standalone pair only** — the workbench panel's `z-index: 10` is bounded
+  so dock-base's floating-above-docked precedence survives.
+- **The menu holds ONLY what the panel cannot reach**, i.e. what this button alone can answer: reset
+  position, offset, version, layer, opacity. **Never add `trigger-size`, `trigger-position` or
+  `close-on-blur`** — a second control for a setting that already has one is how two surfaces start
+  disagreeing (Critical Rule 7).
+- **A preset list is read by TWO scopes, so it lives in the factory closure.** Declaring it beside the
+  menu that renders it (inside the standalone closure) makes `_migrateLocalToHost` throw
+  `ReferenceError`, and its own `.catch` swallows it — the entire host-preference load fails silently
+  and every host setting reverts to a default.
+- **"localStorage disagrees with the host" is NOT sufficient to migrate.** A removed preset's value and
+  a user's own choice are both bare numbers, so the CURRENT preset list is what tells them apart, and
+  the host is only overridden while it still sits at its default. Assert BOTH directions or the guard
+  reads as a blanket refusal.
 
 **Drag reuses the panel's machinery rather than adding a second one.** `beginOverlayDrag()` sets the
-shared `dragging`/`dragSource`/`dragMoved` state, so `ensureGlobalListeners()`'s existing move and
-end handlers apply unchanged — including the ±3px threshold that `dragMoved` records, which the
-overlay's own click handler reads to swallow the click ending a drag. Without that, releasing a drag
-would toggle the panel. The offset is written on release, not per move: a drag is one intent, and a
-host round trip per pixel is not.
+shared `dragging`/`dragSource`/`dragMoved` state, so `ensureGlobalListeners()`'s existing handlers
+apply unchanged — including the ±3px threshold that `dragMoved` records, which the overlay's own click
+handler reads to swallow the click ending a drag. Without that, releasing a drag would toggle the
+panel. The offset is written on release, not per move: a drag is one intent, and a host round trip per
+pixel is not.
 
-**Swallowing the drag's click is the FIRST half of that handler, not the whole of it.**
-`QuickTriggerIconButton` is a React button and gets its toggle from its own `onClick`; a hand-built
-element has to call `openPanel()`/`closePanel()` itself. A handler that stopped at the swallow left a
-button that mounted, positioned itself correctly and did nothing when pressed — so if you touch this
-handler, keep the toggle in it. `handleOutsideClick` already exempts `[data-dock-flash-trigger]`, so
-the closing half is not racing it, and `dragMoved` is cleared by the next `mousedown` rather than by
-the drag's own end — which is why a click straight after a drag still works.
+**Swallowing the drag's click is the FIRST half of that handler, not the whole of it.** A hand-built
+element has to call `openPanel()`/`closePanel()` itself; a handler that stopped at the swallow left a
+button that mounted, positioned itself correctly and did nothing when pressed. `handleOutsideClick`
+already exempts `[data-dock-flash-trigger]`, and `dragMoved` is cleared by the next `mousedown` rather
+than by the drag's own end — which is why a click straight after a drag still works.
 
+> Every rule above is the residue of a defect. The defects in full, with the measurements and the
+> harness that proves them: [docs/architecture-notes.md](docs/architecture-notes.md).
 
 ### Mode Detection
 
@@ -260,27 +215,13 @@ ignored. (The `external` path *does* strip it first; `inject` does not.)
 
 ### Two-Half Model
 
-```
-┌─────────────────────────────────────────┐
-│  HOST (src/index.ts → dist/index.js)    │
-│  - Register 'dock-flash' settings       │
-│  - Fine-grained proxy mode + NO_PROXY   │
-│  - Owns testUrl (never hardcoded)       │
-│  - HTTP API routes (webServer):         │
-│    GET /proxy-status → proxy mode/state │
-│    POST /test-connection → diagnostics  │
-│  - Runs in Node.js via Cordis           │
-└──────────────────┬──────────────────────┘
-                   │ cordis.patch.yml (bundle layer)
-┌──────────────────▼──────────────────────┐
-│  CLIENT (lib/client.js)                 │
-│  - QuickControlRegistry (pub/sub)       │
-│  - React panel UI                       │
-│  - Skin system (5-layer scan)           │
-│  - i18n (zh/en)                         │
-│  - Runs in browser via ModuleLoader     │
-└─────────────────────────────────────────┘
-```
+`cordis.patch.yml` is the bundle layer that inserts the host rows into the profile.
+
+- **HOST** (`src/index.ts` → `dist/index.js`; Node.js via Cordis) owns the `dock-flash` settings
+  namespace, the fine-grained proxy mode + `NO_PROXY`, `testUrl` (never hardcoded), and the HTTP
+  routes (`GET /proxy-status`, `POST /test-connection`).
+- **CLIENT** (`lib/client.js`; browser via `__ModuleLoader__`) owns the QuickControl registry
+  (pub/sub), the React panel UI, the skin system, and i18n (zh/en).
 
 ### System proxy
 
@@ -611,28 +552,24 @@ When adding a host-side dependency, import it statically and declare it in `pack
 
 ## Skin System Architecture
 
-**Five phases, one predicate.** A skin enters the dropdown through phase 0 (managed), 1a
-(`style[data-plugin]`), 1b (`style[data-skin-chrome]`), 2 (body attributes) or 4 (`__DSH_BOOT__` /
-`graphRows`). Every filter is therefore stated ONCE and called from all five — `_skinExclude` for
-plugins that must never be listed, and `_skinAllowed` for the market's theme classification. **A
-filter applied to four of the five leaks through the fifth**: 1.4.2 gated only the market merge and
-`dsh-client-liang-intensity-skin` still appeared via 1a and 4.
+**Five entry paths, one predicate per filter.** A skin reaches the dropdown through phase 0 (managed),
+1a (`style[data-plugin]`), 1b (`style[data-skin-chrome]`), 2 (body attributes) or 4 (`__DSH_BOOT__` /
+`graphRows`). `_skinExclude` and `_skinAllowed` are each stated ONCE and called from all five — see
+**Critical Rule 8** for why a filter applied to four of the five leaks through the fifth, and for the
+two rules that keep the market from being offered as a skin.
 
 - **Excluded, never listed**: bloom-theme, black-hole, theme-manager, `dsh-skin-market` (the market
   itself — supplies the list and is not a skin) and any `timeline` plugin, which looks exactly like a
   CSS skin to the DOM scan while not being one. `_skinExclude` also protects THEM: deactivation
   REMOVES a style element (Critical Rule 2), which would strip their own stylesheet.
-- **Managed skins** (Mineradio) have their own lifecycle and cannot be toggled by touching style tags;
-  `_toggleManagedSkin()` writes the plugin's private key and drives the cross-tab `storage` event
-  (Critical Rule 3). The table is **curated** because the DSH plugin contract offers no way to discover
-  a plugin's private enable key, its "active" attribute or its loader id — only a human can supply
-  those. **Installation must be proven by the boot manifest, the module graph, or the plugin's own
-  style tag — NEVER by `enabledKey` in localStorage.** That key is a PREFERENCE, and dock-flash writes
-  it itself (`_syncManagedEnableFlags` → `_toggleManagedSkin`), so trusting it was circular: the
-  plugin planted `dsh.ui-mineradio.enabled` on the first market fetch, then read it back as proof
-  Mineradio was installed and listed it permanently — including after uninstall. `_managedInstallReason()`
-  is the ONE predicate, called by the scan AND by the flag sync, so neither can accept evidence the
-  other manufactured.
+- **Managed skins** (Mineradio) cannot be toggled by touching style tags — they own a canvas/WebGL
+  lifecycle — so `_toggleManagedSkin()` writes the plugin's private key and drives the cross-tab
+  `storage` event (Critical Rule 3). The table is **curated**, because the DSH plugin contract offers
+  no way to discover a plugin's private enable key, its "active" attribute or its loader id. **Such a
+  skin's installation must be proven by the boot manifest, the module graph, or the plugin's own style
+  tag — NEVER by `enabledKey` in localStorage**, which dock-flash writes itself; and that key must not
+  be written for a skin that is not installed. `_managedInstallReason()` is the ONE predicate for that,
+  called by the scan AND by the flag sync.
 - **Without dsh-market the skin switcher is not registered at all** — `_registerSkinSwitch()` runs
   only from `_refreshMarketThemes()` on success, because disabled themes are invisible to the DOM scan
   and the list would be incomplete.
@@ -672,31 +609,22 @@ answers `{ ok, value }` with the namespace list at `value.namespaces`, and
 Common to every type: `icon`, `order`, `group`, `label` (string, or `() => string` for i18n),
 `visible`, and `cluster`.
 
-`cluster: '<label>'` makes switches sharing a label **one unit** — one card in the panel, one
-▲▼ pair while reordering, a fixed internal order (their `order` field). Use it for controls
-whose meaning depends on staying together: the System proxy controls are the case that motivated
-it (a mode select, the URL, the test button, the log). **A cluster opens folded — head row only
-— and unfolds when the user asks.** Its members are kept registered and rendered, only *folded*:
-never gated out by `visible`, and never removed, because a block that changes shape is exactly
-the problem the fold exists to solve. Folding by default is what keeps such a block from
-dominating a panel this short; it is not the hidden state it replaced, because the fold's own
-control is on screen. A cluster's unit key is its **label**,
-not its first member's id: `visible()` can still hide a member, so a head-keyed unit would change
-key the moment the head was hidden while another member stayed on screen, and the saved slot
-would be lost. A cluster is never a grid item (`isGridToggle()`) — a compact grid cell holds
-exactly one control. See "Panel ordering and visibility: two modes, one writer" under Architecture.
+`cluster: '<label>'` makes switches sharing a label **one unit** — one card, one ▲▼ pair while
+reordering, a fixed internal order (their `order`). Use it for controls whose meaning depends on
+staying together; the System proxy controls are the case that motivated it. Its members stay
+registered and are only *folded* — never gated out by `visible`, never removed — because a block that
+changes shape is the problem the fold exists to solve. A cluster is never a grid item
+(`isGridToggle()`). **The mechanics live in one place**: see "Panel ordering and visibility: two
+modes, one writer" under Architecture for the fold's position, the label-keyed unit, the
+default-folded rule and the editing-mode inventory.
 
-`visible: () => boolean` drops the switch from the panel while it stays registered — its state,
-its changelog entries and every other reader keep working, so no dispose/re-register dance is
-needed. It is applied at the **row** level and **only in the normal view**: both editing modes list
-every registered control, because one that is not drawn cannot be ordered or hidden (see "Panel
-ordering and visibility"). The normal view also drops a group that would draw no rows, so a title
-never floats above nothing, and `renderSwitch` re-checks the predicate as a backstop for any other
-caller unless it is passed `force` — which is what the editing modes do. The predicate is
-re-evaluated on every render and the panel re-renders on any
-`notifyChange`, which means a switch driven by `visible` **must** notify when its condition
-changes, or it flips only on the next unrelated render. `_fetchProxyStatus()` does this for the
-proxy controls via `notifyChange('dock-flash:system-proxy')`.
+`visible: () => boolean` drops the switch from the panel while it stays registered, so its state, its
+changelog entries and every other reader keep working — no dispose/re-register dance. It applies at
+the **row** level and **only in the normal view**; both editing modes list every registered control,
+because one that is not drawn cannot be ordered or hidden. The normal view also drops a group that
+would draw no rows, and `renderSwitch` re-checks unless passed `force` (what the editing modes do).
+**A switch driven by `visible` must notify when its condition changes**, or it flips only on the next
+unrelated render — `_fetchProxyStatus()` does this via `notifyChange`.
 
 Per renderer:
 
@@ -809,7 +737,15 @@ mismatch, and the `_skinBodyAttrs` cases — are in **[docs/architecture-notes.m
 | `@deepseek-ai/schemastery` | dep | Schema definition for settings | Required at runtime — the host half **statically imports** it (default export; there is no named `Schema`). It must stay a real dependency: an ESM import of a missing package fails at load, unlike the old silent `require` in a try/catch |
 | `@deepseek-ai/dsh-http-proxy` | **not declared** | Re-installs the undici global dispatcher; answers `proxyRouteFor` | Ships nested inside the DSH install and is deliberately *not* a dependency of this plugin. Loaded through `loadProxyModule()`, which resolves DSH's own copy — see the System proxy section |
 
-> **Peer ranges must carry an explicit prerelease branch — one per tuple whose prereleases must resolve.** node-semver admits a prerelease only when some comparator in the range sits on the *same* `major.minor.patch` tuple and itself carries a prerelease tag, so a range that merely looks broad excludes the harness's prerelease builds silently, and a branch written for one tuple never covers another. Measured with semver 7.8.5: `>=4.0.1-0 <5.0.0-0` rejects `4.0.0-rc.10` — the cordis this machine's dock-base actually runs on — and `>=0.1.2-0 <1.0.0-0` rejects `0.2.0-rc.1`; the tables' `||` forms accept both, while keeping the previous branch so nothing already accepted is lost. Check any change here with a probe matrix that asserts *both* directions: the prerelease must be accepted **and** no version the old range accepted may become rejected (a first attempt at this very fix used `^4.0.1 || >=4.0.0-rc.1 <5.0.0-0` and silently dropped `4.0.1-0`). awesome-dsh-plugin's contributing guide requires this shape; without it users on a prerelease harness hit `ERESOLVE`.
+> **Peer ranges must carry an explicit prerelease branch — one per tuple whose prereleases must
+> resolve.** node-semver admits a prerelease only when some comparator sits on the *same*
+> `major.minor.patch` tuple and itself carries a prerelease tag, so a range that merely looks broad
+> silently excludes the harness's prerelease builds, and a branch written for one tuple never covers
+> another. The tables' `||` forms are that shape. awesome-dsh-plugin's contributing guide requires it;
+> without it users on a prerelease harness hit `ERESOLVE`. **Check any change here with a probe matrix
+> asserting BOTH directions** — the prerelease is accepted, AND no version the old range accepted
+> became rejected. The measurements, and the attempt that silently dropped `4.0.1-0`:
+> [docs/architecture-notes.md](docs/architecture-notes.md).
 
 ---
 
