@@ -177,17 +177,42 @@ Seven things must hold together:
   `overlayOpacity` (right-click menu). The layer is the one to handle carefully:
   `panelLayer()` / `triggerLayerOfButton()` / `layerOfMenu()` are all DERIVED from the single
   setting, because the button must sit above the panel or the size control looks inert (the 1.4.0
-  defect) — two stored values would drift. **The host draws at 1100 AND 1000, and a preset must
-  respect both.** 1100 is DSH's `chat`/`model-selection` *and* dock-base's `.dsh-wb-settings-overlay`;
-  1000 is the host's menus — and **dock-base is not under `@deepseek-ai`, so measuring only DSH is how
-  a wrong 1050 preset shipped**: it sits between the two host bands and still covered the settings
-  mask. The default is therefore 1150 and the "stay out of the way" preset is **900**. The old
-  99997-99999 was ~90x above all of it. It affects the
+  defect) — two stored values would drift. **Every one of the four host-owned numerics needs its own
+  `adoptHost*` handler, and that is the rule this feature broke.** `triggerLayer` and
+  `overlayOpacity` are read ONCE at factory init by `_loadNumberPref`, when `_hostPrefs` is still
+  `null` because `loadHostPreferences()` is an async round trip started later in `apply()` — so the
+  host's stored copy never reached the variables that position anything, and the pair kept the
+  built-in default for the life of the page. **The symptom is "the setting does nothing": a user with
+  `triggerLayer: 9` in `settings.yaml` still watched the icon float above the modal mask, because
+  on screen it was really at 1150/1151.** `adoptHostOffset` and `adoptHostSize` already existed and
+  each documents this exact two-ordering trap; the handler was simply never written for the two
+  settings added in 1.5.0. **Adding a host-owned preference means adding its adopt handler too** —
+  subscribe (covers a host that answers late) AND call once (covers one that answered early).
+  Levels: DSH's modal (`._root_w1urq_2`) is portaled to `document.body` at
+  `position:fixed; inset:0; z-index:1000`, so it is a plain SIBLING that compares directly, and its
+  mask carries no z-index of its own. Other overlays are 1100 (`._portal_1nxmc_44`,
+  `dsh-client-ui-chat`'s `.bRhRbq_panel`, dock-base's `.dsh-wb-settings-overlay`), host menus 1000.
+  Under the host therefore means strictly below **1000**, and the "stay out of the way" preset is
+  **9** — not a value near the band, because the gap below 1000 is wide and nothing is gained by
+  sitting in it. The default is **1150**. It affects the
   **standalone pair only** — the workbench panel's `z-index: 10` is bounded so dock-base's
   floating-above-docked precedence survives. The menu holds ONLY what the panel cannot reach and what
   this button alone can answer (reset position, offset, version, layer, opacity); **never add
   `trigger-size`, `trigger-position` or `close-on-blur` to it** — a second control for a setting that
   already has one is how two surfaces start disagreeing (Critical Rule 7).
+- **A preset list is read by TWO scopes, so it lives in the factory closure.** `_migrateLocalToHost`
+  compares a stored localStorage value against the presets to tell a choice the user made here from a
+  value a *previous build's* list produced. Declaring `LAYER_PRESETS` / `OPACITY_PRESETS` /
+  `_layerStoreKey` / `_opacityStoreKey` beside the menu that renders them (inside the standalone
+  closure) makes the migration throw `ReferenceError`, and its own `.catch` swallows it — the whole
+  host-preference load silently fails and every host setting reverts to a default. Same shape as the
+  `_exposeHook` trap; keep them where the widest consumer can reach them.
+- **"localStorage disagrees with the host" is NOT sufficient to migrate.** That rule is right for a
+  value the user chose and wrong for one a removed preset produced: both are bare numbers. 1.5.1
+  changed the low preset 1050 → 900, and a browser still holding 1050 wrote it back **over the new
+  default on every load**, so the setting looked inert no matter what was picked. A value absent from
+  the current preset list cannot have come from the current menu, so it yields to the host. Assert
+  BOTH directions or the guard reads as a blanket refusal.
 
 > The defects in full, with the measurements and the harness that proves them:
 > [docs/architecture-notes.md](docs/architecture-notes.md).
@@ -391,8 +416,10 @@ Seven invariants:
 in-content escapees such as dock-git's `.dg-graph` (z-index 2), and **< 70** so dock-base's own
 precedence (floating above docked) is preserved. Raising it further cannot help against elements
 outside `.dsh-wb-root`'s stacking context, and ≥ 70 would invert dock-base's order. The standalone
-panel is a separate case: appended to `<body>`, it sits at the user's `triggerLayer` (default 1150,
-clear of the host's 1100 and 1000 bands — see "The overlay trigger" above for why BOTH matter).
+panel is a separate case: appended to `<body>`, it sits at the user's `triggerLayer` (default 1150),
+which is above the host's overlays; the low preset 9 sits far *under* them. **That value only reaches
+the DOM because `adoptHostLayer()` runs after the async host reply** — see "The overlay trigger"
+above for why a host-owned numeric needs both a subscribe and an immediate call.
 
 > Why a static element loses to every positioned sibling:
 > [docs/architecture-notes.md](docs/architecture-notes.md).
@@ -597,7 +624,15 @@ filter applied to four of the five leaks through the fifth**: 1.4.2 gated only t
   REMOVES a style element (Critical Rule 2), which would strip their own stylesheet.
 - **Managed skins** (Mineradio) have their own lifecycle and cannot be toggled by touching style tags;
   `_toggleManagedSkin()` writes the plugin's private key and drives the cross-tab `storage` event
-  (Critical Rule 3).
+  (Critical Rule 3). The table is **curated** because the DSH plugin contract offers no way to discover
+  a plugin's private enable key, its "active" attribute or its loader id — only a human can supply
+  those. **Installation must be proven by the boot manifest, the module graph, or the plugin's own
+  style tag — NEVER by `enabledKey` in localStorage.** That key is a PREFERENCE, and dock-flash writes
+  it itself (`_syncManagedEnableFlags` → `_toggleManagedSkin`), so trusting it was circular: the
+  plugin planted `dsh.ui-mineradio.enabled` on the first market fetch, then read it back as proof
+  Mineradio was installed and listed it permanently — including after uninstall. `_managedInstallReason()`
+  is the ONE predicate, called by the scan AND by the flag sync, so neither can accept evidence the
+  other manufactured.
 - **Without dsh-market the skin switcher is not registered at all** — `_registerSkinSwitch()` runs
   only from `_refreshMarketThemes()` on success, because disabled themes are invisible to the DOM scan
   and the list would be incomplete.

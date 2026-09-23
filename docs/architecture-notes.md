@@ -544,26 +544,93 @@ Two habits generalise, and both are cheap:
   that the harness's own scaffolding did its job — that the tag is really in the DOM, that the selector
   really matched — before trusting any assertion about the result.
 
-### The overlay's stacking level was a guess, and DSH's own ceiling says so
+### The skin list showed Mineradio on a machine that had uninstalled it
+
+The report was blunt: *"Mineradio is in the skin list and I uninstalled it."* It was right, and the
+plugin was not installed — not a dependency, not in `node_modules`. The entry came from dock-flash
+having **manufactured the evidence it then accepted**.
+
+`dsh-theme-mineradio` is the one *managed* skin: a plugin with its own `mount()`/`unmount()` lifecycle
+(canvas, WebGL, particles), which therefore cannot be switched by creating or removing a `<style>` tag.
+It has to be driven through its own private enable key. That part is legitimate and stays — the DSH
+plugin contract exposes no way to discover a plugin's private key, its "active" attribute or its loader
+id, so a curated table is the only mechanism available.
+
+The defect was the installation test. Phase 0 accepted **four** signals, and the fourth was:
+
+```js
+// Check 4: localStorage
+if (localStorage.getItem(cfg.enabledKey) !== null) { isInstalled = true }
+```
+
+`cfg.enabledKey` is `dsh.ui-mineradio.enabled` — a *preference*, and one dock-flash writes itself.
+`_syncManagedEnableFlags()` runs on **every market fetch** and, for each managed skin, compares the
+stored flag against the one it wants. Mineradio is not the live theme, so it wants `false`; the key is
+absent, so `current` is `null` and `String(false)` is `'false'` — they differ, so it calls
+`_toggleManagedSkin(id, false)`, which **stores the key**. The loop closed on the next list build:
+
+1. market answers → dock-flash writes `dsh.ui-mineradio.enabled = 'false'` on a machine that has never
+   had Mineradio;
+2. the scan reads that key back and concludes Mineradio is **installed**;
+3. Mineradio is offered in the dropdown, permanently — uninstalling the plugin does not remove a
+   localStorage key, and nothing else ever clears it.
+
+Two things were wrong, and fixing only one would not have helped. The key must not be *written* for an
+absent plugin, and it must not be *read* as proof of installation. The second is the load-bearing one:
+on the reporting machine the key already existed, so the read guard is what makes the entry disappear.
+
+**`_managedInstallReason()` is now the single predicate** and both callers use it — the scan (phase 0)
+and the flag sync. Installation is proven by the boot manifest, the module graph, or the plugin's own
+style tag, and by nothing else. This is the same discipline as `_skinAllowed` and `_skinExclude`
+(Critical Rule 8): one rule, stated once, called from every path.
+
+It also settles a case the old comment had noticed but could not express — the market's own *disable*
+leaves the plugin's preference key behind, so check 4 could not tell "installed but switched off" from
+"not here". Phase 0 now stands down for a theme the market reports as `disabled`, and phase 4 supplies
+it labelled `(未启用)`; that division only works once the preference stops masquerading as an install
+signal.
+
+> **The generalisable lesson: never accept, as evidence, a value you write yourself.** A check whose
+> input the same code produces is not a check — it is a mirror. The tell is that the "installed" state
+> was self-perpetuating and could never go back to false, which is exactly what a circular test looks
+> like from the outside.
+
+The harness could not have caught it, and that is worth recording: section 15 deliberately injects a
+`<style data-plugin="dsh-theme-mineradio">` tag to exercise the phase-0 path, and that **is** a real
+install signal — so the section passed both before and after the bug. The new 15b asserts both halves:
+applying must not plant the key, a leftover key alone must not list the skin, and a real style tag still
+must (the positive control, which is what stops the fix from becoming "delete the feature"). The
+negative control — restoring check 4 and dropping the write guard — reproduces the report exactly:
+`store has dsh.ui-mineradio.enabled="false"` and the dropdown showing `dsh-theme-mineradio`.
+
+### The overlay's stacking level: the measured bands, and the bug that hid them
 
 The standalone button and its panel carried `z-index: 99997` to `99999` since they were written. Nothing
 chose those numbers; they are "high enough that nothing will beat it", which is a different claim from
 "the right level", and it stopped being true the moment the panel had to coexist with host UI.
 
-Measured across the host, and **the measurement has to cover BOTH sources** — reading only one of
-them is what produced a wrong preset in the first release of this feature:
+**The bands, measured.** Everything that matters here is a direct child of `<body>`, so the values
+compare directly and no stacking-context reasoning is required:
 
-- DSH's own client bundles top out at **1100** (`dsh-client-ui-chat`,
-  `dsh-client-ui-model-selection`), with `settings-general`'s overlay and DSH's menus at 1000.
-- **dock-base** is not under `@deepseek-ai` and is easy to miss, but it is what draws the SETTINGS
-  DIALOG: `.dsh-wb-settings-overlay` is **1100**, deliberately "outside the auto-hide root so it remains
-  visible and interactive", and `.dsh-wb-menu` is 1000.
+- **1000 — DSH's modal.** `._root_w1urq_2` is `position:fixed; inset:0; z-index:1000` and is mounted
+  through `createPortal(…, document.body)`, carrying the mask (`._mask_w1urq_14`, `position:absolute;
+  inset:0`, and **no z-index of its own**) and the dialog (`._dialog_w1urq_22`, `z-index:1`). The root
+  holds the 1000 and the mask spans it, so "the mask is at 1000" is the correct reading, and the mask
+  itself needs no z-index to be there.
+- **1100 — the other overlays.** `._portal_1nxmc_44` (menus and portalled cards), `dsh-client-ui-chat`'s
+  `.bRhRbq_panel`, and dock-base's `.dsh-wb-settings-overlay`. **dock-base is not under `@deepseek-ai`**,
+  and measuring only DSH is how the first wrong preset shipped.
+- **1000 — dock-base's `.dsh-wb-menu`** and DSH's own menus.
 
-So 1100 is the ceiling for both the settings dialog and the chat popovers, and **1000 is the floor of the
-host's own overlay band** — there is no gap between them to sit in. The literals were therefore ~90x above
-everything the host draws, which is why the standalone panel covered its popovers. The default is now
-**1150** (clear of both), and the "stay out of the way" preset is **900**, not 1050: 1050 is below 1100 yet
-above 1000, so it still covered the host's menus — the defect the first release shipped, found by using it.
+So a preset meant to sit *under* the host must be strictly below the host's LOWEST band, **1000** — which
+is where the "stay out of the way" preset belongs — and it is **9**, not a value near the band: the gap below 1000 is wide, and nothing is gained by sitting in it. The default is **1150**, above all of it. The old literals were ~90x higher.
+
+> **A correction kept on purpose.** An earlier version of this file argued that the mask was trapped
+> inside the stacking context created by `._portal_1nxmc_44` (1100), so that 1100 was "the only number a
+> `document.body` sibling competes with". That is true of elements inside that portal and **false for
+> this modal**, which portals to `<body>` and therefore competes at 1000 like any sibling. A z-index read
+> off an element means nothing until you know which stacking context it participates in, and the way to
+> settle that is to **check the mount**, not to reason from the stylesheet.
 
 The setting deliberately covers the **standalone pair only**. The workbench panel's own `z-index: 10` is
 bounded on purpose (below dock-base's floating layer at 70), and raising it from a client preference would
@@ -574,6 +641,64 @@ only visible on the button (its size) appears to do nothing — the 1.4.0 defect
 toggling the button's z-index on open/close; the two values are now `triggerLayer` and `triggerLayer + 1`,
 derived from the single setting (`panelLayer()`, `triggerLayerOfButton()`, `layerOfMenu()`). The toggle is
 gone, so there is no second piece of state to get out of step when the user changes the layer.
+
+#### Why the low preset did nothing at all: the host value was never read
+
+The presets were right and the arithmetic was right, and the setting still did nothing, because
+**`triggerLayer` never received the value the host was storing.** It was read exactly once, at factory
+init, by `_loadNumberPref` — and at that moment `_hostPrefs` is `null`, because
+`loadHostPreferences()` is an async round trip started later in `apply()`. So the call fell through to
+`localStorage` and then to the built-in default, and the host's authoritative copy was never read again
+for the life of the page. The pair sat at 1150/1151 — **above** the 1000 modal — which is precisely the
+reported symptom: a mask at 1000 failing to cover a panel the user believed was set below it.
+
+The user's own `settings.yaml` proved it in one line: the low value on disk, while the icon floated
+over the mask on screen. Right in the file, wrong on the glass.
+
+`adoptHostOffset()` and `adoptHostSize()` already existed, and each carries a comment describing this exact
+two-ordering trap — offset and size were both fixed this way in earlier releases. **The handler was simply
+never written for the two settings added in 1.5.0**, and nothing failed loudly, because "the value is
+ignored" looks identical to "the value is the default". The fix is `adoptHostLayer()` and
+`adoptHostOpacity()`, each subscribed to `_subscribePrefs` (covers a host that answers LATE) and called
+once (covers one that answered EARLY).
+
+The harness assertion that was missing is the one that now catches it: the "host answers early" fixture
+supplies the low preset and asserts the probe reports `resolved: 9` and the button `10`. Deleting
+`adoptHostLayer()` fails it with `resolved: null` — the negative control, and the exact shape of the bug.
+
+#### What the migration is allowed to overwrite
+
+`_migrateLocalToHost()` adopts a `localStorage` value over the host's. That is right for a value the
+**user** chose in this browser and the host has not heard about yet, and wrong in two distinct ways:
+
+- **A value from a removed preset list.** 1.5.1 replaced the low preset 1050 with 900; a browser still
+  holding 1050 wrote it straight back. A value absent from the current presets cannot have come from the
+  current menu, so it is stale by construction and yields to the host.
+- **A host value the user deliberately chose.** The migration fires whenever the two disagree, which let a
+  stale cache overwrite an authoritative host value. It is now gated on the host still sitting at its
+  **default** — the one state that genuinely means "never configured". A host value that is not the
+  default is a decision, and a cache does not get to reverse it.
+
+Both guards are asserted in both directions, because each is one operator away from being a blanket
+refusal that breaks the migration it exists to protect: `1150+1050 → no write`,
+`1150+2000 → writes 2000`, `9+2000 → no write`.
+
+#### The same change broke the whole preference load, and the harness caught it
+
+Adding the preset comparison to `_migrateLocalToHost` made it reference `LAYER_PRESETS`,
+`OPACITY_PRESETS`, `_layerStoreKey` and `_opacityStoreKey` — all of which were declared **inside the
+standalone closure**, next to the menu that renders them, two scopes away from the migration. The
+reference threw `ReferenceError`, and `_migrateLocalToHost` is called from inside
+`loadHostPreferences().then(...).catch(...)`, so **the catch swallowed it**: the entire host-preference
+load failed silently and every host-stored setting reverted to its default.
+
+Nine assertions went red at once, all about host-stored size and offset — settings the change never
+touched. That is the signature: *a fix that breaks an unrelated feature is usually a throw, not a
+logic error*. `pnpm run check:overlay` on the unmodified tree passed, which localised it immediately.
+
+This is the same shape as two traps already recorded in this file — `_exposeHook` and `overlayProbe`
+were each declared one scope too deep, and each failed as a silently missing global. **A shared constant
+belongs at the widest scope that reads it, not the nearest scope that defines it.**
 
 #### The context menu, and the scope it keeps
 

@@ -587,7 +587,7 @@ check('overlay button is hidden while there is no conversation', !!(btn && btn.s
 console.log('\n=== 2. __dockFlashOverlay() before a conversation exists ===')
 const probe1 = sandbox.window.__dockFlashOverlay()
 console.log('  ' + JSON.stringify(probe1, null, 2).split('\n').join('\n  '))
-check('probe reports the build version first', probe1.clientVersion === '1.5.1', probe1.clientVersion)
+check('probe reports the build version first', probe1.clientVersion === '1.5.2', probe1.clientVersion)
 check('probe: mounted but no anchor yet', probe1.overlayElMounted === true && probe1.anchorFound === false)
 check('probe: the anchor watcher is armed', probe1.anchorWatcher === 'waiting-for-anchor', probe1.anchorWatcher)
 
@@ -910,7 +910,7 @@ console.log('\n=== 11. a host-stored size reaches the button ===')
             namespaces: [{
               ns: 'dock-flash',
               revision: 7,
-              value: { panelOrder: {}, activeSkin: '', triggerPosition: 'conversation.overlay', triggerOverlayOffset: { dx: 20, dy: 30 }, triggerSize: 48 },
+              value: { panelOrder: {}, activeSkin: '', triggerPosition: 'conversation.overlay', triggerOverlayOffset: { dx: 20, dy: 30 }, triggerSize: 48, triggerLayer: 9, overlayOpacity: 0.85 },
             }],
           },
         }),
@@ -933,6 +933,20 @@ console.log('\n=== 11. a host-stored size reaches the button ===')
     probeH.offset.dx === 20 && probeH.offset.dy === 30, JSON.stringify(probeH.offset))
   check('the probe names the host as the source', probeH.sizeSource === 'host' && probeH.offsetSource === 'host',
     `${probeH.sizeSource} / ${probeH.offsetSource}`)
+  // The LAYER and the rest OPACITY are read ONCE at factory init by
+  // `_loadNumberPref`, when `_hostPrefs` is still null because the host describe()
+  // has not resolved. Without an `adoptHost*` handler the host's stored value is
+  // read into `_hostPrefs` and then never reaches the variable that positions
+  // anything — the pair stays at the built-in 1150/1151 and the setting looks
+  // inert however it is set. These two assertions are the ones that were MISSING
+  // while that shipped: the size and offset below had handlers (and assertions),
+  // the two settings added in 1.5.0 had neither.
+  check('the host-stored LAYER was adopted (not the built-in default)',
+    probeH.triggerLayer === 9, JSON.stringify(probeH.triggerLayerSources))
+  check('...so the button stacks one above it, at 10',
+    !!btn2 && Number(btn2.style.zIndex) === 10, btn2 && btn2.style.zIndex)
+  check('the host-stored REST OPACITY was adopted too',
+    probeH.overlayOpacity === 0.85, String(probeH.overlayOpacity))
 
   // The slot path must clamp the SAME stored value down to the row's ceiling.
   if (injectCb2) injectCb2({ slots: { inject: () => () => {}, register: () => () => {} } })
@@ -946,6 +960,92 @@ console.log('\n=== 11. a host-stored size reaches the button ===')
   check('the stored value was NOT rewritten by that clamp',
     probeH.triggerSizeStored === 48 || sandbox2.window.__dockFlashOverlay().triggerSizeStored === 48,
     JSON.stringify(sandbox2.window.__dockFlashOverlay().triggerSizeStored))
+}
+
+// `_migrateLocalToHost` lets a browser-local value overwrite the host's — right
+// for a value the USER chose here, catastrophic for one a PREVIOUS build's preset
+// list produced. 1.5.1 replaced the low preset 1050 with 900 (since lowered again to 9), and a browser still
+// holding 1050 wrote it straight back over the newer value on every load.
+//
+// Two guards now stand in front of that write, and they protect different things:
+//   - the value must be one of THIS build's presets — a removed 1050 cannot have
+//     come from the current menu, so it is stale by construction;
+//   - the host must still be sitting at its DEFAULT, because a host value that is
+//     not the default is a DECISION, and a stale cache must not reverse it. That
+//     second guard is what stops a browser holding 1150 from clobbering a
+//     deliberately chosen low value — the user's own `settings.yaml` case.
+console.log('\n=== 11b. what the local->host migration is allowed to overwrite ===')
+{
+  const migrateCase = async (hostLayer, localLayer) => {
+    const store = new Map()
+    store.set('dock-flash:trigger-layer', String(localLayer))
+    store.set('dock-flash:trigger-position', 'conversation.overlay')
+    const doc = Object.assign({}, documentStub, {
+      body: new El('body'), documentElement: new El('html'),
+      querySelector: () => null, querySelectorAll: () => [],
+    })
+    const sb = vm.createContext({
+      console, setTimeout, clearTimeout, setInterval, clearInterval,
+      Promise, Object, Array, JSON, Number, String, Boolean, Math, Date, RegExp, Error, isFinite, parseInt, parseFloat,
+      ResizeObserver: class { observe() {} disconnect() {} },
+      MutationObserver: class { observe() {} disconnect() {} },
+      requestAnimationFrame: (fn) => setTimeout(fn, 0),
+      cancelAnimationFrame: clearTimeout,
+      getComputedStyle: () => ({ overflowY: 'auto', zIndex: 'auto' }),
+      document: doc,
+      navigator: { language: 'zh-CN' },
+      location: { href: 'http://localhost/', origin: 'http://localhost' },
+      localStorage: {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: (k) => store.delete(k),
+        clear: () => store.clear(),
+        get length() { return store.size },
+      },
+    })
+    sb.window = sb
+    sb.globalThis = sb
+    let def = null
+    sb.window.__ModuleLoader__ = { load: (d) => { def = d } }
+    vm.runInNewContext(code, sb, { filename: 'lib/client.js#migrate' })
+    const plugin = def.factory(requireStub)
+    const writes = []
+    plugin.apply({
+      get: () => undefined,
+      provide: () => {},
+      on: () => () => {},
+      effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+      inject: () => () => {},
+      remote: {
+        settings: {
+          describe: () => Promise.resolve({
+            ok: true,
+            value: {
+              namespaces: [{
+                ns: 'dock-flash',
+                revision: 3,
+                value: { triggerPosition: 'conversation.overlay', triggerLayer: hostLayer, overlayOpacity: 0.55 },
+              }],
+            },
+          }),
+          update: (ns, patch) => { writes.push(patch); return Promise.resolve({ ok: true, value: { revision: 4 } }) },
+        },
+      },
+      logger: { info() {}, warn() {}, error() {} },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+    return writes
+  }
+
+  const staleOnDefault = await migrateCase(1150, 1050)
+  check('a REMOVED preset (1050) is not migrated, even onto a host at its default',
+    !staleOnDefault.some((p) => p && p.triggerLayer === 1050), 'writes: ' + JSON.stringify(staleOnDefault))
+  const liveOnDefault = await migrateCase(1150, 2000)
+  check('a value that IS still a preset still migrates onto a default host (not a blanket refusal)',
+    liveOnDefault.some((p) => p && p.triggerLayer === 2000), 'writes: ' + JSON.stringify(liveOnDefault))
+  const validOnChosen = await migrateCase(9, 2000)
+  check('...but NOT over a host value the user deliberately chose (9 stays 9)',
+    !validOnChosen.some((p) => p && p.triggerLayer === 2000), 'writes: ' + JSON.stringify(validOnChosen))
 }
 
 // The OTHER ordering: a host that answers AFTER the mount. Both occur in the
@@ -1286,6 +1386,65 @@ console.log('\n=== 15. the skin list excludes the market plugin ===')
   }
 }
 
+// ── a managed skin must be INSTALLED, not merely remembered ────────────────
+// The report: "Mineradio shows in the skin list and I uninstalled it."
+//
+// `dsh-theme-mineradio` is the one managed skin, and it is recognised by the
+// boot manifest, the module graph, or its own style tag. The old scan ALSO
+// accepted `dsh.ui-mineradio.enabled` existing in localStorage — but that key is
+// a PREFERENCE, and one dock-flash writes ITSELF: `_syncManagedEnableFlags` runs
+// on every market fetch, sees the key missing, and calls `_toggleManagedSkin(id,
+// false)`, which stores it. So the plugin planted the evidence it then read as
+// proof of installation: circular, self-perpetuating, and true on a machine that
+// had never had Mineradio at all.
+//
+// Section 15 cannot catch this — it deliberately injects a Mineradio style tag to
+// exercise the phase-0 path, which is a REAL install signal. Both halves are
+// asserted here instead: the leftover key alone must not list it, and a real
+// signal still must.
+console.log('\n=== 15b. a managed skin needs a real install signal ===')
+{
+  const skinSwitchB = registry.getSwitches().find((s) => s.id === 'dock-flash:skin')
+  check('the skin switch exists for this section', !!skinSwitchB, 'no dock-flash:skin switch')
+
+  // PART 1 — the write guard. At this point nothing has installed Mineradio:
+  // the harness declares no `__DSH_BOOT__` and no module graph, and section 15's
+  // style tag is added AFTER this. So the market fetch that ran during apply()
+  // must NOT have stored the enable flag. Before the fix it did, because
+  // `_syncManagedEnableFlags` wrote it unconditionally.
+  check('applying did NOT plant the managed skin\'s enable key',
+    !store.has('dsh.ui-mineradio.enabled'),
+    'store has dsh.ui-mineradio.enabled=' + JSON.stringify(store.get('dsh.ui-mineradio.enabled')))
+
+  // PART 2 — the read guard. Seed the very key that used to be sufficient, then
+  // remove the one real signal (the style tag section 15 injected) and assert the
+  // entry is gone. A leftover preference is not an installation.
+  const mineradioTag = head.children.find(
+    (c) => c.getAttribute && c.getAttribute('data-plugin') === 'dsh-theme-mineradio')
+  check('section 15 left a Mineradio style tag to remove (guards part 2)', !!mineradioTag,
+    JSON.stringify(head.children.map((c) => c.getAttribute && c.getAttribute('data-plugin'))))
+  if (mineradioTag) {
+    store.set('dsh.ui-mineradio.enabled', 'false')
+    mineradioTag.remove()
+    const optsWithKeyOnly = skinSwitchB.options()
+    const valuesWithKeyOnly = optsWithKeyOnly.map((o) => o.value)
+    check('a leftover enable key alone does NOT list the managed skin',
+      !valuesWithKeyOnly.includes('dsh-theme-mineradio'), JSON.stringify(valuesWithKeyOnly))
+
+    // PART 3 — positive control: put the real signal back and it must return, or
+    // the guard would have removed the managed-skin feature instead of the bug.
+    head.appendChild(mineradioTag)
+    const optsRestored = skinSwitchB.options()
+    const valuesRestored = optsRestored.map((o) => o.value)
+    check('...but a real style tag DOES list it again (the feature still works)',
+      valuesRestored.includes('dsh-theme-mineradio'), JSON.stringify(valuesRestored))
+    check('...and it carries the curated label, not a derived one',
+      optsRestored.some((o) => o.value === 'dsh-theme-mineradio' &&
+        String(typeof o.label === 'function' ? o.label() : o.label) === 'Mineradio'),
+      JSON.stringify(optsRestored.map((o) => `${o.value}=${typeof o.label === 'function' ? o.label() : o.label}`)))
+  }
+}
+
 // ── the list must follow the MARKET's classification, not a name guess ──────
 // `dsh-client-liang-intensity-skin` is servable-looking (its name matches the
 // `skin` hint) but the market does not classify it as a theme: its catalog entry
@@ -1490,7 +1649,7 @@ console.log('\n=== 18. the overlay context menu ===')
   // the panel, and a second control is how two surfaces start disagreeing.
   check('it offers "reset position"', texts.some((t) => /重置位置|Reset position/.test(t)), JSON.stringify(texts))
   check('it shows the current offset', texts.some((t) => /位置|Offset/.test(t)), JSON.stringify(texts))
-  check('it shows the version', texts.some((t) => t.includes('1.5.1')), JSON.stringify(texts))
+  check('it shows the version', texts.some((t) => t.includes('1.5.2')), JSON.stringify(texts))
   check('it exposes a layer choice', texts.some((t) => /层级|Layer/.test(t)), JSON.stringify(texts))
   check('it exposes a rest-opacity choice', texts.some((t) => /深浅|opacity/i.test(t)), JSON.stringify(texts))
   check('...and it does NOT duplicate the panel\'s own switches',
@@ -1504,17 +1663,27 @@ console.log('\n=== 18. the overlay context menu ===')
   check('the button is one level above the panel',
     Number(liveBtn().style.zIndex) === probe.triggerLayer + 1, `${liveBtn().style.zIndex} vs ${probe.triggerLayer}`)
 
-  // The lowest preset must sit under EVERY layer the host uses, not merely under
-  // its highest. The host draws at 1100 (settings dialog, chat popovers) and at
-  // 1000 (its menus, `settings-general`'s overlay, dock-base's `.dsh-wb-menu`),
-  // and there is no gap between them to hide in: a value like 1050 is below 1100
-  // yet ABOVE 1000, so it still covers the host's menus — which is exactly the
-  // bug the first version of this preset shipped.
+  // The lowest preset must sit under every layer the host uses. What matters is
+  // a STACKING CONTEXT, not a list of sibling z-index values — an earlier version
+  // of this assertion got that wrong and passed on a broken build.
   //
-  // So the boundary is the host's LOWEST dialog-layer value, not its highest.
+  // DSH's modal UI lives in `._portal_1nxmc_44` (`position:fixed; z-index:1100`),
+  // which CREATES a stacking context. Its mask (`._mask_w1urq_14`) has no z-index
+  // of its own and its dialog (`._dialog_w1urq_22`) has `z-index:1`; both are
+  // painted inside the portal's context and can never be outranked separately.
+  // The only number our body-level sibling competes with is the portal's 1100.
+  // Other overlays declare their own 1100 (dsh-client-ui-chat's `.bRhRbq_panel`,
+  // dock-base's `.dsh-wb-settings-overlay`); host menus are 1000.
+  //
+  // So "under the host" means strictly below the host's LOWEST band, 1000 — not
+  // merely below 1100. The removed 1050 preset cleared 1000 but still lost to the
+  // portal's 1100, which is why it covered the settings mask.
   const HOST_MENU_LAYER = 1000
   const HOST_DIALOG_LAYER = 1100
-  const presetTexts = texts.map((t) => t.replace(/^✓/, '')).filter((t) => /^\d{3,4}$/.test(t))
+  // One or more digits: the low preset is a single-digit 9, and a `\d{3,4}` filter
+  // silently DROPPED it — which made the ascending-order assertion compare only
+  // the two remaining rows and pass for the wrong reason.
+  const presetTexts = texts.map((t) => t.replace(/^✓/, '')).filter((t) => /^\d{1,4}$/.test(t))
   check('the three layer presets are numeric and in ascending order',
     presetTexts.length === 3 && Number(presetTexts[0]) < Number(presetTexts[1]) &&
       Number(presetTexts[1]) < Number(presetTexts[2]),
