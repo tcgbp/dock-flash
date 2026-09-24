@@ -4,6 +4,7 @@ node_modules/
 Thumbs.db
 .mnemon/
 .pnpm-store/
+.cache/
 
 # Packaged release artifacts. `pnpm pack` writes dock-flash-<version>.tgz, which is
 # renamed to dock-flash.tgz for the GitHub Release upload — the registry entry's
@@ -23,3 +24,4 @@ CLAUDE.md
 .graphflow-cache/
 .graphflow/
 graphflow-out/
+pnpm-lock.yaml
