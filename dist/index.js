@@ -675,5 +675,53 @@ export function apply(ctx) {
                 }
             },
         }), 'dock-flash: POST /plugins/dock-flash/test-connection');
+        // ── Host-side alert queue for server-push alerts ───────────────────
+        const _alertQueue = [];
+        const ALERT_QUEUE_CAP = 50;
+        wsCtx.effect(() => wsCtx.webServer.register({
+            kind: 'exact',
+            path: '/plugins/dock-flash/push-alert',
+            handler: async (req, res) => {
+                if (req.method !== 'POST') {
+                    res.statusCode = 405;
+                    res.setHeader('allow', 'POST');
+                    res.end();
+                    return;
+                }
+                const body = await readJsonBody(req);
+                if (!body || !body.id || !body.title) {
+                    sendJson(res, 400, { error: 'Missing required fields: id, title' });
+                    return;
+                }
+                const alert = {
+                    id: String(body.id),
+                    severity: body.severity || 'info',
+                    title: String(body.title),
+                    message: body.message ? String(body.message) : '',
+                    icon: body.icon || '🔔',
+                    timestamp: Date.now(),
+                    dismissible: body.dismissible !== false,
+                    source: 'host',
+                };
+                _alertQueue.push(alert);
+                while (_alertQueue.length > ALERT_QUEUE_CAP)
+                    _alertQueue.shift();
+                sendJson(res, 200, { ok: true, queued: _alertQueue.length });
+            },
+        }), 'dock-flash: POST /plugins/dock-flash/push-alert');
+        wsCtx.effect(() => wsCtx.webServer.register({
+            kind: 'exact',
+            path: '/plugins/dock-flash/host-alerts',
+            handler: async (req, res) => {
+                if (req.method !== 'GET') {
+                    res.statusCode = 405;
+                    res.setHeader('allow', 'GET');
+                    res.end();
+                    return;
+                }
+                const alerts = _alertQueue.splice(0, _alertQueue.length);
+                sendJson(res, 200, { alerts });
+            },
+        }), 'dock-flash: GET /plugins/dock-flash/host-alerts');
     });
 }
