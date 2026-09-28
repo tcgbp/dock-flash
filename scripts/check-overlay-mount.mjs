@@ -198,10 +198,14 @@ function matches(el, sel) {
   // skins are listed" assertion was silently testing only the market-extra path.
   const descendant = /^([a-zA-Z]+)\s+(.+)$/.exec(s)
   if (descendant) return matches(el, descendant[2])
-  const m = /^([a-zA-Z]*)(?:\[([\w-]+)(?:([*$^]?)=["']([^"']*)["'])?\])?$/.exec(s)
+  // `#id` is supported because the skin marks are id-based (`style#the-id`): a
+  // selector the stub could not parse returned NO match, which would have let a
+  // marks test pass while the mark was never actually seen.
+  const m = /^([a-zA-Z]*)(?:#([\w-]+))?(?:\[([\w-]+)(?:([*$^]?)=["']([^"']*)["'])?\])?$/.exec(s)
   if (!m) return false
-  const [, tag, attr, op, val] = m
+  const [, tag, id, attr, op, val] = m
   if (tag && el.tagName !== tag.toUpperCase()) return false
+  if (id && el.id !== id) return false
   if (!attr) return true
   if (el.getAttribute(attr) === null) return false   // bare `[attr]` = "has it"
   const have = String(el.getAttribute(attr))
@@ -245,7 +249,24 @@ const documentStub = {
     const a = documentListeners.get(type)
     if (a) { const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1) }
   },
-  getElementById: (id) => body.descendants().find((e) => e.id === id) || null,
+  // A real `document.getElementById` searches the WHOLE document. This stub only
+  // searched `body`, so anything the bundle appends to `head` — the turn-rail
+  // override stylesheet is the case — was never found by its own id lookup, and
+  // `applyTurnRailLeft()` could not see the tag it had just created.
+  getElementById: (id) => body.descendants().find((e) => e.id === id) ||
+    head.descendants().find((e) => e.id === id) || null,
+  // DSH ships the turn rail's own stylesheet, and the bundle now READS the rail's
+  // authored `right` from it to mirror the offset (`_railNativeRight()`). Without
+  // `styleSheets` that lookup silently returned null and fell back to a constant,
+  // so the mirror could not be tested at all. The authored value here is
+  // deliberately one that equals NO fallback in the bundle: an implementation that
+  // hardcoded the offset instead of mirroring it fails the assertion below.
+  styleSheets: [{
+    cssRules: [{
+      selectorText: '.eGxaPq_frame',
+      style: { getPropertyValue: (k) => (k === 'right' ? '13px' : '') },
+    }],
+  }],
   __fire(type, ev) {
     for (const fn of [...(documentListeners.get(type) || [])]) {
       fn(ev || { type, preventDefault() {}, stopPropagation() {} })
@@ -261,6 +282,26 @@ const store = new Map()
 const sessionStore = new Map()
 /** How many times the (megabyte) registry endpoint was asked for. */
 let registryFetches = 0
+/** Every body POSTed to /dsh-market/toggle, in order (section 20). */
+const toggleCalls = []
+/** Every (name, enabled) written through the BUNDLE switch (section 20). */
+const bundleCalls = []
+// The profile's bundle list as `listBundles()` reports it.  Both installed themes
+// start enabled — which is the state the destructive fix had broken.
+const bundleState = [
+  { name: 'dsh-dream-skin', enabled: true },
+  { name: 'dsh-repo-installed-skin', enabled: true },
+]
+// The loader entries 'listPlugins()' reports.  'dream-skin''s row id deliberately
+// DIFFERS from its package name ('dsh-dream-skin') — that is the real profile's
+// shape, and matching it is part of what the entry switch has to get right.
+const pluginState = [
+  { entryId: 'dsh-repo-installed-skin', moduleName: 'dsh-repo-installed-skin', enabled: true },
+  { entryId: 'dream-skin', moduleName: 'dsh-dream-skin', enabled: true },
+]
+/** Every (entryId, enabled) written through the ENTRY switch (section 20). */
+const pluginCalls = []
+const useSkinCalls = []
 const localStorageStub = {
   getItem: (k) => (store.has(k) ? store.get(k) : null),
   setItem: (k, v) => store.set(k, String(v)),
@@ -298,6 +339,11 @@ function getComputedStyleStub(el) {
   })
 }
 
+// Reloads are recorded rather than left to throw. `_fadeBeforeReload()` is how a
+// bundle write becomes visible, so a stub without it turns the hand-off into a
+// TypeError inside a 160 ms timer — a crash in an unrelated section rather than a
+// failed check.
+const reloads = []
 const sandbox = {
   console,
   setTimeout, clearTimeout, setInterval, clearInterval,
@@ -324,12 +370,18 @@ const sandbox = {
     get length() { return sessionStore.size },
   },
   navigator: { userAgent: 'harness', language: 'zh-CN', languages: ['zh-CN'] },
-  location: { href: 'http://127.0.0.1:3080/', origin: 'http://127.0.0.1:3080', search: '', hostname: '127.0.0.1' },
+  location: {
+    href: 'http://127.0.0.1:3080/', origin: 'http://127.0.0.1:3080', search: '',
+    hostname: '127.0.0.1',
+    reload: () => { reloads.push('reload') },
+  },
   // The market API is the ONLY thing that registers the skin switch, and the
   // harness has no network. Answering `/dsh-market/installed` with a realistic
   // body is what makes section 15 possible at all — and the body deliberately
   // includes the market plugin ITSELF, because that is the entry being filtered.
-  fetch: (url) => {
+  // `init` is required by the /dsh-market/toggle branch below: the patch-layer
+  // off switch is a POST whose BODY is the whole assertion (section 20).
+  fetch: (url, init) => {
     const u = String(url)
     if (u.indexOf('/dsh-market/installed') !== -1) {
       return Promise.resolve({
@@ -345,6 +397,14 @@ const sandbox = {
             // Same package shape but installed from its repo — the market's SECOND
             // rule matches this one, so it must stay listed.
             'dsh-repo-installed-skin': 'github:kingOfSoySauce/dsh-liang-skin#976fcbf',
+            // The section-20 case: a skin that reaches the dropdown with NO handle
+            // in the DOM — no `data-plugin` tag planted below, no boot entry. This
+            // is the shape of `dsh-dream-skin` / `dsh-theme-macintosh`, which
+            // inject only `<style>` tags with their own ids and drive themselves
+            // from `<html>` attributes, so `_deactivateCssSkin` matches nothing.
+            // State is deliberately `active`, not `live`: it must be switchable
+            // without also becoming the answer to "which skin is live".
+            'dsh-dream-skin': '9.27.1',
           },
           activation: {
             'open-sea-skin': { state: 'live' },
@@ -353,6 +413,7 @@ const sandbox = {
             'dsh-skin-market': { state: 'disabled' },
             'dsh-client-liang-intensity-skin': { state: 'live' },
             'dsh-repo-installed-skin': { state: 'disabled' },
+            'dsh-dream-skin': { state: 'active' },
           },
         }),
       })
@@ -374,17 +435,37 @@ const sandbox = {
               { name: 'dsh-liang-skin', category: ['theme'], url: 'https://github.com/kingOfSoySauce/dsh-liang-skin' },
               // Bare-string category, and not a theme.
               { name: 'dsh-skin-market', category: 'tool', url: 'https://github.com/x/dsh-skin-market' },
+              // A theme the market knows, so the classification gate keeps it and
+              // it reaches the dropdown purely through the market half.
+              { name: 'dsh-dream-skin', category: ['theme'], url: 'https://github.com/RevolutionLA/dsh-dream-skin' },
             ],
           },
         }),
       })
     }
     if (u.indexOf('/dsh-market/use-skin') !== -1) {
+      // Recorded too: activating a market theme is the MARKET's job (it enables
+      // the plugin and disables every other theme), so section 20 asserts that
+      // coming back from 默认 goes here and NOT through /toggle.
+      const useBody = init && init.body ? JSON.parse(String(init.body)) : {}
+      if (useBody && useBody.name) useSkinCalls.push(useBody.name)
       // The market refuses any name outside its theme set, with exactly this body.
       return Promise.resolve({
         ok: false,
         status: 400,
         json: () => Promise.resolve({ error: 'not an installed theme' }),
+      })
+    }
+    if (u.indexOf('/dsh-market/toggle') !== -1) {
+      // The patch-layer off switch (section 20). Recorded rather than simulated:
+      // what the caller must get right is WHICH packages it asks about and that
+      // it skips the ones already parked.
+      const body = init && init.body ? JSON.parse(String(init.body)) : {}
+      toggleCalls.push(body)
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: true, queued: toggleCalls.length }),
       })
     }
     return Promise.reject(new Error('harness: no network'))
@@ -532,12 +613,20 @@ const code = fs.readFileSync(
   process.env.DOCK_FLASH_BUNDLE || new URL('../lib/client.js', import.meta.url),
   'utf8',
 )
+// The version the bundle itself declares. The two version assertions below compare
+// against THIS, never a literal: a hardcoded version goes stale at every release and
+// then reads as a real failure — which is exactly how `1.5.2` sat here failing
+// quietly after 1.6.0 shipped. `check:docs` asserts this constant and package.json
+// agree; these assert the UI agrees with the constant.
+const BUNDLE_VERSION = (/const CLIENT_VERSION\s*=\s*'([^']+)'/.exec(code) || [])[1]
 let definition = null
 sandbox.window.__ModuleLoader__ = { load: (def) => { definition = def } }
 vm.runInNewContext(code, sandbox, { filename: 'lib/client.js' })
 
 console.log('\n=== 1. factory + apply (standalone, slots service NEVER arrives) ===')
 check('bundle registers itself via __ModuleLoader__', !!definition, definition && definition.id)
+check('the bundle declares a version we can parse (or the version checks are vacuous)',
+  typeof BUNDLE_VERSION === 'string' && BUNDLE_VERSION.length > 0, String(BUNDLE_VERSION))
 const plugin = definition.factory(requireStub)
 check('factory returned an apply()', typeof plugin.apply === 'function')
 
@@ -563,6 +652,40 @@ const ctx = {
   // switch that was never registered.
   inject: (deps, cb) => { injectCalls.push(deps); if (typeof cb === 'function') slotsCallback = cb; return () => {} },
   logger: { info() {}, warn() {}, error() {} },
+  // The OFFICIAL plugin switch.  `dsh-client-ui-plugin-manager` does exactly this
+  // through `ctx.remote.pluginManager`, and it is the only lever that can switch
+  // off a skin with no DOM handle.  Section 20 asserts 默认 uses THIS and not the
+  // market's install-layer `/toggle`, so the calls are recorded, not simulated.
+  remote: {
+    pluginManager: {
+      listBundles: () => Promise.resolve(bundleState.map((b) => ({ name: b.name, enabled: b.enabled }))),
+      setBundleEnabled: (name, enabled) => {
+        bundleCalls.push(name + ':' + enabled)
+        const row = bundleState.find((b) => b.name === name)
+        // Mirror the real write so the "already in that state" short-circuit is
+        // exercised for real rather than assumed.
+        if (row) row.enabled = enabled
+        return Promise.resolve({ warnings: [] })
+      },
+      // The ENTRY switch: applied to the RUNNING loader, and the one that writes
+      // or clears the 'disabled:' row.  Preferred over the bundle list, because a
+      // bundle is only composed at boot.
+      listPlugins: () => Promise.resolve(pluginState.map((q) => ({
+        entryId: q.entryId,
+        moduleName: q.moduleName,
+        enabled: q.enabled,
+        patchId: 'patch:' + q.entryId,
+      }))),
+      setPluginEnabled: (entryId, enabled) => {
+        pluginCalls.push(entryId + ':' + enabled)
+        const row = pluginState.find((q) => q.entryId === entryId)
+        // Mirror the real write so the "already in that state" short-circuit is
+        // exercised for real rather than assumed.
+        if (row) row.enabled = enabled
+        return Promise.resolve({ warnings: [] })
+      },
+    },
+  },
 }
 plugin.apply(ctx)
 console.error = origError
@@ -578,7 +701,14 @@ const btn = sandbox.document.getElementById('dock-flash-overlay-trigger')
 check('overlay button EXISTS in the document', !!btn)
 check('overlay button is a child of <body>', !!(btn && btn.parentNode === body))
 check('overlay button has a real <svg> child (not a React descriptor)',
-  !!(btn && btn.children.length === 1 && btn.children[0] instanceof El && btn.children[0].tagName === 'SVG'),
+  !!(btn && btn.children.some((c) => c instanceof El && c.tagName === 'SVG')),
+  btn ? btn.children.map((c) => (c instanceof El ? c.tagName : typeof c)).join(',') : 'no button')
+// The button carries TWO children since the alert badge landed. Asserting the badge
+// here is what keeps "the count changed" from being a mystery next time, and it pins
+// the badge as part of the button's contract rather than an accident of the glyph check.
+check('...alongside the alert badge (SVG + SPAN, in that order)',
+  !!(btn && btn.children.length === 2 && btn.children[0].tagName === 'SVG' &&
+     btn.children[1] instanceof El && btn.children[1].tagName === 'SPAN'),
   btn ? btn.children.map((c) => (c instanceof El ? c.tagName : typeof c)).join(',') : 'no button')
 check('overlay button is hidden while there is no conversation', !!(btn && btn.style.display === 'none'),
   btn && btn.style.display)
@@ -587,7 +717,7 @@ check('overlay button is hidden while there is no conversation', !!(btn && btn.s
 console.log('\n=== 2. __dockFlashOverlay() before a conversation exists ===')
 const probe1 = sandbox.window.__dockFlashOverlay()
 console.log('  ' + JSON.stringify(probe1, null, 2).split('\n').join('\n  '))
-check('probe reports the build version first', probe1.clientVersion === '1.5.2', probe1.clientVersion)
+check('probe reports the build version first', probe1.clientVersion === BUNDLE_VERSION, probe1.clientVersion)
 check('probe: mounted but no anchor yet', probe1.overlayElMounted === true && probe1.anchorFound === false)
 check('probe: the anchor watcher is armed', probe1.anchorWatcher === 'waiting-for-anchor', probe1.anchorWatcher)
 
@@ -1304,9 +1434,14 @@ console.log('\n=== 14. the SLOT trigger resizes when the slider moves ===')
   const tree2 = renderSlot()
   check('the slot button re-rendered at the NEW size (40)', parseFloat(styleOf(tree2).minWidth) === 40,
     `minWidth ${styleOf(tree2).minWidth}, renders ${before} -> ${slotTriggerRenders}`)
+  // The slot trigger's children are an ARRAY since the alert badge landed:
+  // `h('button', {...}, LightningIcon(size), badgeEl)`. So the glyph is `children[0]`;
+  // reading `.children.props` assumed the single-child shape the badge broke.
   check('...and its glyph scaled with it (40 -> 27)',
-    tree2.props.children && tree2.props.children.props && tree2.props.children.props.width === 27,
-    tree2.props.children && tree2.props.children.props && String(tree2.props.children.props.width))
+    !!(tree2.props.children && tree2.props.children[0] &&
+       tree2.props.children[0].props && tree2.props.children[0].props.width === 27),
+    tree2.props.children && tree2.props.children[0] && tree2.props.children[0].props &&
+      String(tree2.props.children[0].props.width))
   check('...and the corner radius scaled too (40/4 = 10)',
     styleOf(tree2).borderRadius === '10px', String(styleOf(tree2).borderRadius))
 
@@ -1649,7 +1784,7 @@ console.log('\n=== 18. the overlay context menu ===')
   // the panel, and a second control is how two surfaces start disagreeing.
   check('it offers "reset position"', texts.some((t) => /重置位置|Reset position/.test(t)), JSON.stringify(texts))
   check('it shows the current offset', texts.some((t) => /位置|Offset/.test(t)), JSON.stringify(texts))
-  check('it shows the version', texts.some((t) => t.includes('1.5.2')), JSON.stringify(texts))
+  check('it shows the version', texts.some((t) => t.includes(BUNDLE_VERSION)), JSON.stringify(texts))
   check('it exposes a layer choice', texts.some((t) => /层级|Layer/.test(t)), JSON.stringify(texts))
   check('it exposes a rest-opacity choice', texts.some((t) => /深浅|opacity/i.test(t)), JSON.stringify(texts))
   check('...and it does NOT duplicate the panel\'s own switches',
@@ -1742,6 +1877,567 @@ console.log('\n=== 18. the overlay context menu ===')
     String(sandbox.window.__dockFlashOverlay().menuOpen))
 }
 
+// ── the rail's left placement must MIRROR DSH, not re-state an old formula ──
+// This switch is pure CSS mirroring of a DSH component, and DSH restructured that
+// component in 0.1.7. The rail's slot went from an in-flow `position:sticky` box
+// — inset by its parent's `calc(var(--dsh-composer-side-clearance) + 16px)`
+// padding, which our old `calc(12px - (clearance + 16px))` cancelled — to
+// `position:absolute; left:0; right:0` with a plain `right:12px`. Reusing the old
+// expression there evaluated to `12px - 32px` = **-20px**, parking the 28px rail
+// and every dash on it (drawn from `left:0`) off the left edge. The feature was
+// "invisible after moving left".
+//
+// Nothing here noticed, because no check had ever looked at this stylesheet —
+// section 4 only asserts that `__dockFlashTurnRail()` exists. The offset is now
+// READ from DSH's own rule, so the assertions below pin the derivation, not a
+// literal: the stub authors `13px`, which equals no fallback in the bundle.
+console.log('\n=== 19. the rail mirror follows DSH\'s own offset ===')
+{
+  const railSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:turn-rail-left')
+  check('the turn-rail-left switch is registered', !!railSwitch, 'not found')
+  if (railSwitch) {
+    const tagOf = () => head.descendants().find((e) => e.id === 'dock-flash-turn-rail')
+    railSwitch.setValue(true)
+    const tag = tagOf()
+    check('enabling it injects the override stylesheet', !!tag)
+    const css = tag ? String(tag.textContent || '') : ''
+    check('...mirrored to DSH\'s own offset rather than a hardcoded one',
+      css.includes('nav[class*="_frame"]{right:auto!important;left:13px!important}'), css.slice(0, 130))
+    check('...the stale composer-clearance compensation is GONE (it was -20px on 0.1.7)',
+      !css.includes('--dsh-composer-side-clearance'), css.slice(0, 130))
+    check('...the mark pins BOTH edges, so its width survives on either layout',
+      css.includes('button[class*="_mark"]{left:0!important;right:0!important}'), css)
+    check('...and the dash moves its transform origin too (0.1.7 scales with scaleX)',
+      css.includes('transform-origin:0!important'), css)
+    railSwitch.setValue(false)
+    check('switching it off REMOVES the tag (never disables it) — Critical Rule 2', !tagOf())
+  }
+}
+
+console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never through the market ===')
+{
+  // The remote this whole path needs is mounted only for a client plugin that
+  // declares it: 'dsh.client.inject' must name '@deepseek-ai/dsh-api-remotes'.
+  // Without it '_pluginManagerRemote()' returns null, every press takes the
+  // warn-only fallback, and 默认 is a silent no-op — which is how it shipped once.
+  let manifest = null
+  try { manifest = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) } catch (_) {}
+  const injectList = (manifest && manifest.dsh && manifest.dsh.client && manifest.dsh.client.inject) || []
+  check('the client manifest declares the remotes package the skin switch needs',
+    injectList.includes('@deepseek-ai/dsh-api-remotes'), JSON.stringify(injectList))
+  check('...while keeping the base-package load-order hint for workbench mode',
+    injectList.includes('dock-base'), JSON.stringify(injectList))
+
+  // That package entry buys LOAD ORDER, not access. A typert namespace is a service
+  // of its own — @deepseek-ai/dsh-api-gateway registers each one as
+  // `remoteServiceKey(ns)` = `remote.${ns}` — and Cordis' guard proxy refuses one
+  // that is not declared, so the plugin object's own inject[] is what decides
+  // whether `ctx.remote.pluginManager` resolves at all. The official consumer
+  // (@deepseek-ai/dsh-client-ui-plugin-manager) names it explicitly, next to
+  // 'remote'; dock-flash named only 'remote' and 'remote.settings', so the call
+  // threw nothing, warned nothing the user could see, and 默认 wrote nothing —
+  // the exact "switching to 默认 does nothing" report this section exists for.
+  const pluginInject = (plugin && plugin.inject) || []
+  check('the plugin DECLARES the pluginManager namespace service it calls',
+    pluginInject.includes('remote.pluginManager'), JSON.stringify(pluginInject))
+  check('...alongside the mount point and the settings namespace it already used',
+    pluginInject.includes('remote') && pluginInject.includes('remote.settings'),
+    JSON.stringify(pluginInject))
+}
+{
+  // TWO generations of this fix are pinned here, and the second one is the
+  // regression guard for the first.
+  //
+  // v1 answered "this skin has no handle in the DOM" with
+  // `POST /dsh-market/toggle {name, enabled:false}`. That route is the market's
+  // PLUGIN switch, not a skin switch: it writes `disabled: true` into the user
+  // patch layer AND removes the package from `dsh.profile.bundles` — it edits the
+  // INSTALL layers. The theme path (`/use-skin` → `activateTheme`) only does live
+  // loader work and never clears a patch row or restores a bundle row, so that
+  // write was a one-way door: both installed themes became impossible to
+  // re-enable from the theme page. ("switching to another theme no longer works")
+  //
+  // v2 — the one asserted below — goes to DSH's OWN plugin manager instead, over
+  // the client remote, and prefers the ENTRY switch:
+  // 'ctx.remote.pluginManager.setPluginEnabled(entryId, enabled)'. That applies to
+  // the RUNNING loader and it is SYMMETRIC: 'false' writes the entry's
+  // 'disabled:' row, and 'true' clears it again. 'setBundleEnabled(pkg, enabled)'
+  // is only the fallback — it edits 'dsh.profile.bundles', which DSH composes at
+  // BOOT, so it cannot change the page the user is looking at.
+  //
+  // The remote resolves only for a plugin that DECLARES it: 'dsh.client.inject'
+  // must name '@deepseek-ai/dsh-api-remotes', the package that mounts it. Without
+  // that the whole path is dead and 默认 silently does nothing — which is exactly
+  // what shipped once, so the manifest is asserted here too.
+  //
+  // The install layers are still off limits: 'toggleCalls' must stay empty in
+  // every one of these flows.
+  const skinSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:skin')
+  check('the skin switch is registered once the market answers', !!skinSwitch, 'not found')
+
+  if (skinSwitch) {
+    const names = () => toggleCalls.map((c) => c.name + ':' + c.enabled)
+
+    // A skin with no DOM handle is still listed — the list is honest about what is
+    // INSTALLED, and hiding it would be a different lie.
+    const options = skinSwitch.options().map((o) => o.value)
+    check('the dropdown still offers the handle-less skin',
+      options.includes('dsh-dream-skin'), JSON.stringify(options))
+
+    // Capture the warning so "we said so" is asserted rather than assumed.
+    const origWarn = console.warn
+    const warns = []
+    console.warn = (...a) => { warns.push(a.map(String).join(' ')) }
+    try {
+      toggleCalls.length = 0
+      bundleCalls.length = 0
+      bundleState[0].enabled = true
+      skinSwitch.setValue('default')
+      // The bundle write is asynchronous; give the chain a full turn to settle.
+      await new Promise((r) => setTimeout(r, 0))
+      await new Promise((r) => setTimeout(r, 0))
+    } finally {
+      console.warn = origWarn
+    }
+
+    check('默认 issues NO market write at all — it must never touch the install layers',
+      toggleCalls.length === 0, JSON.stringify(names()))
+    check('...not for the handle-less skin either',
+      !names().includes('dsh-dream-skin:false'), JSON.stringify(names()))
+    // The fix itself: a skin with no DOM handle is a whole PLUGIN, so it is
+    // switched off through DSH's own plugin manager — the same call the official
+    // plugins page makes, and symmetric (the same call with 'true' puts it back).
+    // The ENTRY switch is preferred because it is the one that acts on the running
+    // loader; the bundle switch only edits a list DSH composes at boot.
+    const dep = () => pluginState.find((q) => q.entryId === 'dream-skin')
+    check('默认 switches the handle-less skin off through the ENTRY switch',
+      pluginCalls.includes('dream-skin:false'), JSON.stringify(pluginCalls))
+    check('...exactly once, with no contradictory second write',
+      pluginCalls.filter((c) => c === 'dream-skin:false').length === 1,
+      JSON.stringify(pluginCalls))
+    check('...matching the entry by PACKAGE, whose row id differs (dream-skin)',
+      pluginCalls.some((c) => c === 'dream-skin:false') &&
+        !pluginCalls.some((c) => c.indexOf('dsh-dream-skin:') === 0),
+      JSON.stringify(pluginCalls))
+    check('...and it does NOT fall back to "you have to do it yourself"',
+      !warns.some((w) => w.indexOf('cannot be switched off') !== -1),
+      JSON.stringify(warns.slice(0, 3)))
+    check('...and it never touches the bundle list while an entry is addressable',
+      bundleCalls.length === 0, JSON.stringify(bundleCalls))
+    // Pressing 默认 again is a no-op: the state is read first, so an already-off
+    // entry is not written again (and so the page cannot reload in a loop).
+    pluginCalls.length = 0
+    bundleCalls.length = 0
+    skinSwitch.setValue('default')
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+    check('...and pressing it again writes nothing, because the state is read first',
+      pluginCalls.length === 0 && bundleCalls.length === 0,
+      JSON.stringify({ pluginCalls, bundleCalls }))
+
+    // Selecting a skin is not a licence to write to the install layers either.
+    toggleCalls.length = 0
+    pluginCalls.length = 0
+    useSkinCalls.length = 0
+    dep().enabled = false
+    skinSwitch.setValue('dsh-dream-skin')
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+    check('selecting a skin issues no market write',
+      toggleCalls.length === 0, JSON.stringify(names()))
+    // ...and the pair is symmetric: coming back re-enables the very entry 默认
+    // switched off, BEFORE the market is asked to mount it.
+    check('...and it puts the entry 默认 switched off back on',
+      pluginCalls.includes('dream-skin:true'), JSON.stringify(pluginCalls))
+    check('...before handing over to the market, so the two layers agree',
+      useSkinCalls.includes('dsh-dream-skin'), JSON.stringify({ useSkin: useSkinCalls }))
+
+    // The route that IS correct for a market theme, unchanged by this fix and
+    // asserted here so a future "fix" cannot quietly reroute it through /toggle.
+    toggleCalls.length = 0
+    useSkinCalls.length = 0
+    skinSwitch.setValue('dsh-repo-installed-skin')
+    await new Promise((r) => setTimeout(r, 0))
+    check('selecting a market theme still goes through /use-skin, not /toggle',
+      useSkinCalls.includes('dsh-repo-installed-skin') && toggleCalls.length === 0,
+      JSON.stringify({ useSkin: useSkinCalls, toggles: names() }))
+
+    // The fallback, pinned so it cannot rot: with no addressable entry row the
+    // switch falls back to the bundle list — and says a DSH restart is needed
+    // rather than looking like a dead control.
+    const savedPluginState = pluginState.slice()
+    pluginState.length = 0
+    toggleCalls.length = 0
+    bundleCalls.length = 0
+    useSkinCalls.length = 0
+    const origWarn2 = console.warn
+    const warns2 = []
+    console.warn = (...a) => { warns2.push(a.map(String).join(' ')) }
+    try {
+      skinSwitch.setValue('default')
+      await new Promise((r) => setTimeout(r, 0))
+      await new Promise((r) => setTimeout(r, 0))
+    } finally {
+      console.warn = origWarn2
+    }
+    check('with no addressable entry, 默认 falls back to the bundle switch',
+      bundleCalls.includes('dsh-dream-skin:false'), JSON.stringify(bundleCalls))
+    check('...and SAYS a DSH restart is needed instead of looking dead',
+      warns2.some((w) => w.indexOf('restart DSH') !== -1), JSON.stringify(warns2.slice(-3)))
+    check('...still with no market write', toggleCalls.length === 0, JSON.stringify(names()))
+    pluginState.push(...savedPluginState)
+  }
+}
+
+
+// ── a handle-less skin that is VISIBLY on screen ───────────────────────────
+// The reported state: after picking dsh-dream-skin the dropdown showed 默认, so
+// pressing 默认 was impossible — a <select> fires no change event for the value it
+// is already displaying — while the Dream look stayed on screen.  Two failures in
+// one state, and this section pins both.  The dropdown believed the bookkeeping
+// (the market reported no live theme, the stored id said `default`) instead of the
+// page; and 默认 had nothing to write, because the entry row already read
+// `disabled` and the package was not even addressable as a bundle.  `changed` was
+// all-false, so the page never reloaded and the skin survived.
+console.log('\n=== 21. a handle-less skin VISIBLY in effect (the state 默认 could not leave) ===')
+{
+  const store5 = new Map()
+  const body5 = new El('body')
+  const head5 = new El('head')
+  const documentElement5 = new El('html')
+  const documentStub5 = Object.assign({}, documentStub, {
+    documentElement: documentElement5,
+    body: body5,
+    head: head5,
+    // A real document searches ALL of itself. The shared stub's `querySelector`
+    // closes over the ORIGINAL body/head/documentElement, so it has to be
+    // overridden here: otherwise the mark planted below is invisible to the bundle
+    // and this section would pass while testing nothing.
+    querySelector: (s) => (matches(documentElement5, s) ? documentElement5 : null) ||
+      body5.querySelector(s) || head5.querySelector(s),
+    querySelectorAll: (s) => [...body5.querySelectorAll(s), ...head5.querySelectorAll(s)],
+    getElementById: (id) => body5.descendants().find((e) => e.id === id) ||
+      head5.descendants().find((e) => e.id === id) || null,
+    addEventListener() {}, removeEventListener() {}, __fire() {},
+  })
+  body5.isConnected = true
+  head5.isConnected = true
+
+  // The stuck state, exactly as the profile was in: the entry says `disabled`
+  // (nothing to write) and no theme is live.
+  const pluginState5 = [{ entryId: 'dream-skin', moduleName: 'dsh-dream-skin', enabled: false }]
+  const pluginCalls5 = []
+  const bundleCalls5 = []
+  const marketCalls5 = []
+  const reloads5 = []
+  const sandbox5 = Object.assign({}, sandbox, {
+    document: documentStub5,
+    localStorage: {
+      getItem: (k) => (store5.has(k) ? store5.get(k) : null),
+      setItem: (k, v) => store5.set(k, String(v)),
+      removeItem: (k) => store5.delete(k), clear: () => store5.clear(),
+      get length() { return store5.size },
+    },
+    sessionStorage: {
+      getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {},
+      get length() { return 0 },
+    },
+    // The page loads have to be OBSERVABLE: `location.reload()` is the switch this
+    // state has and the write path does not.
+    location: {
+      href: 'http://127.0.0.1:3080/', origin: 'http://127.0.0.1:3080',
+      search: '', hostname: '127.0.0.1',
+      reload: () => { reloads5.push('reload') },
+    },
+    fetch: (u) => {
+      const s = String(u)
+      if (s.indexOf('/dsh-market/installed') !== -1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            installed: { 'dsh-dream-skin': '9.27.1' },
+            // NO live theme anywhere — the market's own answer is "nothing is on",
+            // which is precisely the lie the plugin's own marks must outrank.
+            // And `active`, not `live`, so this cannot pass through the market's
+            // "which skin is live" branch instead of the marks.
+            activation: { 'dsh-dream-skin': { state: 'active' } },
+          }),
+        })
+      }
+      if (s.indexOf('/dsh-market/registry') !== -1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            registry: {
+              plugins: [{ name: 'dsh-dream-skin', category: ['theme'], url: 'https://github.com/RevolutionLA/dsh-dream-skin' }],
+            },
+          }),
+        })
+      }
+      if (s.indexOf('/dsh-market/use-skin') !== -1 || s.indexOf('/dsh-market/toggle') !== -1) {
+        marketCalls5.push(s)
+        return Promise.resolve({ ok: false, status: 400, json: () => Promise.resolve({ error: 'harness' }) })
+      }
+      return Promise.reject(new Error('harness: no network'))
+    },
+  })
+  sandbox5.window = sandbox5
+  sandbox5.globalThis = sandbox5
+  store5.set('dock-flash:trigger-position', 'conversation.overlay')
+  // The bookkeeping the user's page had: the stored selection says `default`.
+  store5.set('dock-flash:active-skin', 'default')
+
+  let def5 = null
+  sandbox5.window.__ModuleLoader__ = { load: (d) => { def5 = d } }
+  vm.runInNewContext(code, sandbox5, { filename: 'lib/client.js#skin-mark' })
+  const provided5 = {}
+  let cb5 = null
+  def5.factory(requireStub).apply({
+    get: (n) => provided5[n],
+    provide: (n, v) => { provided5[n] = v },
+    on: () => () => {},
+    effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+    inject: (deps, cb) => { cb5 = cb; return () => {} },
+    logger: { info() {}, warn() {}, error() {} },
+    remote: {
+      pluginManager: {
+        listBundles: () => Promise.resolve([]),
+        setBundleEnabled: (name, enabled) => {
+          bundleCalls5.push(name + ':' + enabled)
+          return Promise.resolve({ warnings: [] })
+        },
+        listPlugins: () => Promise.resolve(pluginState5.map((q) => ({
+          entryId: q.entryId, moduleName: q.moduleName, enabled: q.enabled,
+        }))),
+        setPluginEnabled: (entryId, enabled) => {
+          pluginCalls5.push(entryId + ':' + enabled)
+          const row = pluginState5.find((q) => q.entryId === entryId)
+          if (row) row.enabled = enabled
+          return Promise.resolve({ warnings: [] })
+        },
+      },
+    },
+  })
+  await new Promise((r) => setTimeout(r, 30))
+
+  const sw5 = provided5.quickControl &&
+    provided5.quickControl.getSwitches().find((s) => s.id === 'dock-flash:skin')
+  check('a fresh bundle registers the skin switch against the market', !!sw5, 'not found')
+
+  if (sw5) {
+    // The plugin's own mark, planted exactly as the package injects it
+    // (dsh-dream-skin lib/client.js:2393-2394, MATERIAL_CSS_SOURCE at :1969).
+    const markStyle = new El('style')
+    markStyle.setAttribute('id', 'dsh-dream-skin:material:liquid-glass')
+    head5.appendChild(markStyle)
+
+    check('the dropdown reports the skin that is RENDERING, not the stored default',
+      sw5.getValue() === 'dsh-dream-skin', String(sw5.getValue()))
+    check('...and the same id is one the dropdown can actually offer',
+      sw5.options().map((o) => o.value).includes('dsh-dream-skin'),
+      JSON.stringify(sw5.options().map((o) => o.value)))
+
+    pluginCalls5.length = 0
+    bundleCalls5.length = 0
+    marketCalls5.length = 0
+    sw5.setValue('default')
+    // The reload is scheduled behind a 160 ms fade, so wait past it. (In the real
+    // page this press is not even reachable while the dropdown lies — which is why
+    // the assertion above is the user-visible half of the fix.)
+    await new Promise((r) => setTimeout(r, 250))
+    check('默认 still RELOADS when a marked skin is on screen and no write was possible',
+      reloads5.length === 1, JSON.stringify(reloads5))
+    check('...because the entry row already read `disabled`: nothing to write',
+      pluginCalls5.length === 0 && bundleCalls5.length === 0,
+      JSON.stringify({ pluginCalls5, bundleCalls5 }))
+    check('...and the install layers were never touched to get there',
+      marketCalls5.length === 0, JSON.stringify(marketCalls5))
+
+    // The negative control: with the mark gone the page really IS default, and the
+    // same press must do nothing at all — no write and, above all, no reload.
+    markStyle.remove()
+    reloads5.length = 0
+    pluginCalls5.length = 0
+    marketCalls5.length = 0
+    sw5.setValue('default')
+    await new Promise((r) => setTimeout(r, 250))
+    check('...and once the mark is gone the same press does NOT reload (it really is default)',
+      reloads5.length === 0, JSON.stringify(reloads5))
+    check('...with no write either', pluginCalls5.length === 0 && marketCalls5.length === 0,
+      JSON.stringify({ pluginCalls5, marketCalls5 }))
+  }
+}
+console.log('\n=== 22. activating a handle-less skin IN-PAGE still reloads ===')
+{
+  // The route that made "默认 -> Dream" work only once.  When the market stops
+  // listing the theme (`/dsh-market/installed` can lag a switch made from the
+  // plugins page), the press cannot use the market path, so it lands in
+  // `_applySkin()` and has to switch the skin as a WHOLE PLUGIN.  Enabling the
+  // entry only changes what the NEXT page load boots, so the write is worthless
+  // without the reload that shows it.  That activation promise used to be DROPPED
+  // (never pushed into `pending`): the loader enabled the plugin, this page kept
+  // the old skin, no error was printed anywhere, and the theme appeared only after
+  // a manual refresh.
+  const store6 = new Map()
+  const sess6 = new Map()
+  const body6 = new El('body')
+  const head6 = new El('head')
+  const documentElement6 = new El('html')
+  const documentStub6 = Object.assign({}, documentStub, {
+    documentElement: documentElement6,
+    body: body6,
+    head: head6,
+    querySelector: (s) => (matches(documentElement6, s) ? documentElement6 : null) ||
+      body6.querySelector(s) || head6.querySelector(s),
+    querySelectorAll: (s) => [...body6.querySelectorAll(s), ...head6.querySelectorAll(s)],
+    getElementById: (id) => body6.descendants().find((e) => e.id === id) ||
+      head6.descendants().find((e) => e.id === id) || null,
+    addEventListener() {}, removeEventListener() {}, __fire() {},
+  })
+  body6.isConnected = true
+  head6.isConnected = true
+
+  const pluginState6 = [{ entryId: 'dream-skin', moduleName: 'dsh-dream-skin', enabled: false }]
+  const pluginCalls6 = []
+  const bundleCalls6 = []
+  const marketCalls6 = []
+  const reloads6 = []
+  const sandbox6 = Object.assign({}, sandbox, {
+    document: documentStub6,
+    localStorage: {
+      getItem: (k) => (store6.has(k) ? store6.get(k) : null),
+      setItem: (k, v) => store6.set(k, String(v)),
+      removeItem: (k) => store6.delete(k), clear: () => store6.clear(),
+      get length() { return store6.size },
+    },
+    // The trace MUST round-trip through sessionStorage: the switches it records are
+    // the ones that reload the page, so a memory-only ring is wiped by the very
+    // event it exists to explain (which is how `[]` read as "nothing was pressed").
+    sessionStorage: {
+      getItem: (k) => (sess6.has(k) ? sess6.get(k) : null),
+      setItem: (k, v) => sess6.set(k, String(v)),
+      removeItem: (k) => sess6.delete(k), clear: () => sess6.clear(),
+      get length() { return sess6.size },
+    },
+    location: {
+      href: 'http://127.0.0.1:3080/', origin: 'http://127.0.0.1:3080',
+      search: '', hostname: '127.0.0.1',
+      reload: () => { reloads6.push('reload') },
+    },
+    fetch: (u) => {
+      const s = String(u)
+      if (s.indexOf('/dsh-market/installed') !== -1) {
+        // The market IS answering — it is simply not listing this theme any more.
+        // That is all it takes to lose the market path, which is why the in-page
+        // activation has to work on its own.
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ installed: {}, activation: {} }),
+        })
+      }
+      if (s.indexOf('/dsh-market/registry') !== -1) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ registry: { plugins: [] } }) })
+      }
+      if (s.indexOf('/dsh-market/use-skin') !== -1 || s.indexOf('/dsh-market/toggle') !== -1) {
+        marketCalls6.push(s)
+        return Promise.resolve({ ok: false, status: 400, json: () => Promise.resolve({ error: 'harness' }) })
+      }
+      return Promise.reject(new Error('harness: no network'))
+    },
+  })
+  sandbox6.window = sandbox6
+  sandbox6.globalThis = sandbox6
+  // The boot manifest is what puts the skin in the dropdown WITHOUT a DOM handle:
+  // it lists every installed client plugin regardless of fiber state, so a
+  // disabled theme is discoverable while having no style tag to toggle. That shape
+  // is exactly what `_skinNotControllable()` reads.
+  sandbox6.__DSH_BOOT__ = { entries: [{ id: 'dsh-dream-skin' }] }
+  store6.set('dock-flash:trigger-position', 'conversation.overlay')
+  store6.set('dock-flash:active-skin', 'default')
+
+  let def6 = null
+  sandbox6.window.__ModuleLoader__ = { load: (d) => { def6 = d } }
+  vm.runInNewContext(code, sandbox6, { filename: 'lib/client.js#skin-activate' })
+  const provided6 = {}
+  let cb6 = null
+  def6.factory(requireStub).apply({
+    get: (n) => provided6[n],
+    provide: (n, v) => { provided6[n] = v },
+    on: () => () => {},
+    effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+    inject: (deps, cb) => { cb6 = cb; return () => {} },
+    logger: { info() {}, warn() {}, error() {} },
+    remote: {
+      pluginManager: {
+        listBundles: () => Promise.resolve([]),
+        setBundleEnabled: (name, enabled) => {
+          bundleCalls6.push(name + ':' + enabled)
+          return Promise.resolve({ warnings: [] })
+        },
+        listPlugins: () => Promise.resolve(pluginState6.map((q) => ({
+          entryId: q.entryId, moduleName: q.moduleName, enabled: q.enabled,
+        }))),
+        setPluginEnabled: (entryId, enabled) => {
+          pluginCalls6.push(entryId + ':' + enabled)
+          const row = pluginState6.find((q) => q.entryId === entryId)
+          if (row) row.enabled = enabled
+          return Promise.resolve({ warnings: [] })
+        },
+      },
+    },
+  })
+  await new Promise((r) => setTimeout(r, 30))
+
+  const sw6 = provided6.quickControl &&
+    provided6.quickControl.getSwitches().find((s) => s.id === 'dock-flash:skin')
+  const offered6 = sw6 ? sw6.options().map((o) => o.value) : []
+  check('a handle-less skin stays selectable even when the market no longer lists it',
+    offered6.includes('dsh-dream-skin'), JSON.stringify(offered6))
+
+  if (sw6) {
+    pluginCalls6.length = 0
+    bundleCalls6.length = 0
+    marketCalls6.length = 0
+    reloads6.length = 0
+    sw6.setValue('dsh-dream-skin')
+    await new Promise((r) => setTimeout(r, 250))
+    check('...selecting it writes the PLUGIN switch, not the install layers',
+      JSON.stringify(pluginCalls6) === JSON.stringify(['dream-skin:true']),
+      JSON.stringify({ pluginCalls6, bundleCalls6 }))
+    check('...never through the market (this theme is not in its list)',
+      marketCalls6.length === 0, JSON.stringify(marketCalls6))
+    check('...and RELOADS, because an enabled entry only shows up on the next page load',
+      reloads6.length === 1, JSON.stringify(reloads6))
+
+    // The trace is the answer to "the press did nothing": it has to show WHICH
+    // route ran and, on the in-page route, whether a write happened at all.
+    const trace6 = typeof sandbox6.__dockFlashSkinTrace === 'function' ? sandbox6.__dockFlashSkinTrace() : []
+    check('...with the route and the write on record for a press that does nothing',
+      trace6.some((e) => e.event === 'press' && e.detail && e.detail.path === 'applySkin') &&
+      trace6.some((e) => e.event === 'bundle' && e.detail && e.detail.want === true && e.detail.wrote === true) &&
+      trace6.some((e) => e.event === 'reload'),
+      JSON.stringify(trace6.slice(-6)))
+    check('...and that trace SURVIVES the reload it explains (sessionStorage, not memory)',
+      (() => {
+        try { return JSON.parse(sess6.get('dock-flash:skin-trace') || '[]').some((e) => e.event === 'reload') } catch (_) { return false }
+      })(),
+      String(sess6.get('dock-flash:skin-trace')))
+
+    // Negative control: an entry that ALREADY reads enabled has nothing to write,
+    // so the same press must stay quiet. `_applySkin()` runs at boot too, and an
+    // unconditional reload there would be an endless reload loop — this is the
+    // guard that makes collecting the promise safe.
+    pluginState6[0].enabled = true
+    pluginCalls6.length = 0
+    bundleCalls6.length = 0
+    reloads6.length = 0
+    sw6.setValue('dsh-dream-skin')
+    await new Promise((r) => setTimeout(r, 250))
+    check('...and an already-enabled entry reloads nothing (no boot loop)',
+      reloads6.length === 0 && pluginCalls6.length === 0 && bundleCalls6.length === 0,
+      JSON.stringify({ reloads6, pluginCalls6, bundleCalls6 }))
+  }
+}
 console.log('\n' + (failures.length === 0 ? '✅ ALL CHECKS PASSED' : '❌ FAILURES: ' + failures.join('; ')))
 // The bundle installs its own intervals (skin refresh, i18n watch), so exit
 // explicitly rather than waiting for the event loop to drain.

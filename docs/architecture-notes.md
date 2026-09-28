@@ -603,7 +603,263 @@ must (the positive control, which is what stops the fix from becoming "delete th
 negative control — restoring check 4 and dropping the write guard — reproduces the report exactly:
 `store has dsh.ui-mineradio.enabled="false"` and the dropdown showing `dsh-theme-mineradio`.
 
-### The overlay's stacking level: the measured bands, and the bug that hid them
+### 默认 did nothing, because a whole class of skin identifies nothing in the DOM
+
+The report was *"switching to default seems to change nothing"*, and it arrived alongside a DSH
+upgrade — so the upgrade looked like the cause. It was not. The profile had been rebuilt in the same
+sitting, and the installed skins had changed from `data-plugin`-style skins to two that manage
+themselves:
+
+| | how it injects | where its on/off state lives | `data-plugin` | `data-skin-chrome` |
+|---|---|---|---|---|
+| `dsh-dream-skin` | `<style>` tags with their own **ids** | `data-dsh-material` on `<html>` + `localStorage["dsh-dream-skin:skin"]` (+ a host-side `~/.dsh/dream-skin.json`) | no | no |
+| `dsh-theme-macintosh` | `<style data-mc-root>` / `data-mc-menuskin` / `data-mc-dlgskin` | its own `data-mc-*` attributes on `<html>`, plus many classes | no | no |
+
+Neither appears in `_skinBodyAttrs`. So the scan reached them only through the boot manifest
+(phase 4), recording **no selectors and no activation attribute** — and `_deactivateCssSkin()` removes
+exactly those three things (selectors, `style[data-plugin="<id>"]`, one mapped attribute). It found
+nothing, every time. 默认 was structurally a no-op for them, not intermittently broken.
+
+**Why switching TO them worked while switching away did not.** The two directions do not share a code
+path. Activation has a fallback — when no selector matches, `_reactivateCssSkin()` re-imports the
+module and re-runs the plugin's `apply()`, which re-asserts its styles and attributes. Deactivation
+has no inverse. That asymmetry is the whole bug, and it is why "the other skins switch fine" was
+evidence *for* this diagnosis rather than against it.
+
+Two dead ends were checked before settling on the fix, and both are worth recording because each
+looked like the obvious answer:
+
+- **`removeOwnedStyles(id)`** — DSH's own "remove the styles this package owns" helper. It does not
+  track ownership; it is `querySelectorAll("style[data-plugin]")` filtered by id, i.e. the *same*
+  `data-plugin` limitation. No help.
+- **`tearDownEntryFiber(entry)`** — real, exported, and it does run the plugin's effect cleanups
+  (both skins' teardown functions do remove their `<style>` nodes). But its documented purpose is
+  **code replacement**: *"so Loader refresh can import new code"*, and *"Registry deletion prevents
+  Loader from treating replacement as a user disable"*. The manifest reconciler then re-imports and
+  refreshes entries, so using it as a user-level off switch fights the loader.
+
+**The first attempt, and why it was worse than the bug.** The obvious answer — and the one that
+shipped for a few hours — is the market's user patch layer: `POST /dsh-market/toggle {name,
+enabled:false}`. It *looks* right, because it writes `disabled: true` for the package's bundle rows,
+which HMR applies in ~1s **and the loader re-applies on every boot** — a durability an in-page style
+removal can never have. But that route is the market's **PLUGIN** switch, not a skin switch, and it
+edits the **install layers**. One call does all three of:
+
+1. `setPluginEnabled(name, false)` — the market's own disabled set, hot unmount or
+   `setEntryDisabled`, then `writeMarketState`;
+2. `disableRow(patchPath, rowId)` — a `- id: <pkg>` / `disabled: true` row appended to
+   `~/.dsh/profiles/web/cordis.patch.yml`;
+3. **removal of the package from `dsh.profile.bundles`** in the profile's `package.json`.
+
+The road back does not exist. Selecting a theme goes through `/use-skin` →
+`themes.ts activateTheme(name)`, which only does live-loader work: disable every other theme (hot
+unmount or `setEntryDisabled(other, true)`), clear its own `disabledThemes` entry, write that set,
+then `setEntryDisabled(name, false)` / hot mount. It **never clears a patch row and never restores a
+bundle row.** So the moment a user picked 默认, both installed themes were uninstalled as far as the
+loader was concerned, and **no UI in the product could bring them back** — *"switching to another
+theme no longer works"*, which is exactly what came back. Two files then had to be repaired by hand:
+the `disabled: true` rows deleted from `cordis.patch.yml`, and both packages re-added to
+`dsh.profile.bundles`.
+
+**The second attempt reached the right layer through the wrong switch.** DSH does ship a switch with the
+durability the patch layer had and the symmetry it lacked — but there are TWO of them, and they are not
+interchangeable:
+
+| | keyed by | acts on | where the state lives |
+|---|---|---|---|
+| `setPluginEnabled(entryId, enabled)` | loader **entry** | the RUNNING loader (`reload([patchId])`) | the entry's `disabled:` row in the profile patch layer |
+| `setBundleEnabled(package, enabled)` | **package** | nothing until boot | `dsh.profile.bundles` |
+
+The entry switch is the one that satisfies both requirements at once: it changes what the user is looking
+at, and `true` clears the very row `false` wrote. `setBundleEnabled()` merely edits a list DSH composes at
+**boot**, so it cannot change the running page at all — it is now only the fallback for a package with no
+addressable row, and it says so on the console instead of looking like a dead control.
+
+**And a remote resolves only for a plugin that DECLARES it — twice, and the second half is the one that
+bites.** There are two independent declarations, and each one was shipped alone as if it were the fix.
+`dsh.client.inject` must name `@deepseek-ai/dsh-api-remotes` — the package that owns
+`ctx.remote.$mount()`, and what the official `dsh-client-ui-plugin-manager` declares — but that entry
+buys **load order only; it does not grant access**. Access is the plugin object's own `inject`, and a
+typert namespace is **one service per namespace**: `dsh-api-gateway`'s
+`remoteServiceKey(namespace)` is `` `remote.${namespace}` ``, and each namespace is registered as its own
+Cordis Service (`RemoteNamespaceService extends Service`, `super(ctx, remoteServiceKey(name))`), so the
+guard proxy refuses `ctx.remote.pluginManager` unless the plugin declares the literal
+`"remote.pluginManager"` — exactly as `"remote.settings"` was already required for the settings
+namespace. The official plugin-manager declares all three at once:
+`["slots","locale","remote","remote.pluginManager","remote.pluginInventory", …]`.
+
+So the sequence was: the first version called `ctx.get('remote')` with **no package entry** and got
+`undefined` on every page; the second declared the package but only `"remote"`/`"remote.settings"`, so
+`ctx.remote.pluginManager` was still refused. Either way `_pluginManagerRemote()` returned null, every
+默认 press fell straight through to `_warnSkinNotControllable()`, and 默认 stayed a silent no-op that
+looked exactly like the bug it was meant to cure — with no trace in any file, which is what made it so
+hard to see. Section 20 asserts **both** declarations, because no assertion about call sites can catch a
+switch that is unreachable.
+
+`_skinNotControllable()` stays the ONE predicate for the handle-less shape, but its consequence is now
+`_switchSkinBundle()` instead of a warning. 默认 issues it with `false`; picking a skin issues it with
+`true` **before** handing over to `/use-skin`, so the plugin layer and the market's own live layer agree
+instead of fighting. Two details make it safe to call from a dropdown: the state is **read first**
+(`listPlugins()` / `listBundles()`), so an already-default page writes nothing and cannot reload itself in
+a loop — `_applySkin()` also runs at boot, so an unconditional write there would be an endless reload; and
+the writes are collected, with the reload happening only when one of them actually changed something
+(`pending` → `Promise.all` → `_fadeBeforeReload()`). When neither switch is reachable,
+`_warnSkinNotControllable()` still names the skin and points at the plugins page — reporting, never
+dismantling. `__dockFlashSkinSwitch()` prints what the page can actually see — whether the remote is
+mounted, which rows are addressable, what the bundle list says — because "the press did nothing" and "the
+press wrote to a layer that only boot reads" are indistinguishable from the outside.
+
+### The dropdown said 默认 while the theme was still painted
+
+The third round on this feature came from a report that names the failure exactly: *"after selecting
+dsh-dream-skin you cannot go back to default — because it shows default selected instead of Dream"*. The
+skin was VISIBLY on, and the one control that could turn it off already displayed the value that would turn
+it off, so the press could not be made.
+
+The state, measured. `~/.dsh/dream-skin.json` had just been rewritten
+(`{"dsh-dream-skin:skin":"ivory","dsh-dream-skin:builtin-last":"dark"}`, mtime inside the user's test), so
+the plugin had applied a preset. The same page's `/dsh-market/installed` answered `state:"disabled"` with
+*"已停用(市场开关或补丁层),重启后保持关闭"* for **both** installed themes, `bundle:false`, `hot:false`, and
+`"live": []`. `~/.dsh/profiles/web/cordis.patch.yml:89-90` still carried `- id: dream-skin` /
+`disabled: true`, the row the aborted market-toggle experiment had written. Every bookkeeping layer said
+"off" while the styles were on screen — a mounted instance, or styles an earlier load left behind.
+
+That combination is unrecoverable from the user's side, and the two halves are separate mechanisms:
+
+- **`_getActiveSkinId()` believed the bookkeeping.** With `live` empty it fell through to the stored
+  preference, and the rule that suppresses a stored id whose market state is `disabled` returned `default`.
+  The `<select>` then rendered `default` — and a select fires no `change` event for the value it already
+  shows, so the click that would have run `_applySkin('default')` could not happen. That is why the report
+  reads as a *selection* bug rather than a switch bug.
+- **`_applySkin('default')` had nothing to write.** `_switchSkinBundle()` reads the state first, found the
+  loader row already `disabled`, returned `false`, and the collected `changed` was all-false — so by the
+  deliberate rule (*"an already-satisfied press writes nothing and cannot reload in a loop"*) **no reload
+  happened**. With the theme disabled in both layers there was no switch to flip, and a reload was the only
+  thing left that could clear styles already in the document.
+
+The fix keeps both rules and adds the missing observation. `_skinLiveMarks` + `_skinInEffect()` read the
+plugins' own marks — `html[data-dsh-material]` and `style#dsh-dream-skin-nav-icon` /
+`style[id="dsh-dream-skin:material:liquid-glass"]` for dream-skin, `style[data-mc-root]` and the
+`html[data-mc-*]` family for macintosh — and are **detection only**: both plugins re-inject themselves from
+their own observers, so removal is not on the table and the switch stays `_switchSkinBundle()`. What the
+marks buy is honesty at both ends: `_getActiveSkinId()` now names the skin that is actually RENDERING, and
+`_applySkin('default')` knows its press wrote nothing *although a skin is on screen* — the one case that
+reloads anyway, because in that state the reload IS the switch.
+
+Section 21 pins the whole sequence: a bundle whose stored preference is `default`, whose market reports no
+live theme and whose loader row already reads `disabled`, with one mark present. The dropdown must report
+`dsh-dream-skin`, the id must be offerable, and pressing 默认 must reload exactly once **with no plugin,
+bundle or market call** — then, with the mark removed, the same press must not reload and must write
+nothing. Forcing `_skinInEffect()` to `false` (the pre-fix behaviour) reproduces exactly two failures:
+`the dropdown reports the skin that is RENDERING, not the stored default → default` and
+`默认 still RELOADS when a marked skin is on screen and no write was possible → []`.
+
+Two harness details are part of the lesson. The selector stub had to learn `#id`, because the marks are
+id-based: an unparsed selector matches nothing, so the assertion would have passed while the mark was never
+seen. And the sandbox now **records** `location.reload` instead of lacking it: the reload is scheduled in a
+160 ms timer, so a missing function throws inside a *later* section's await and kills the run with
+`TypeError: location.reload is not a function` at `lib/client.js:8246` — a crash that points at the bundle
+and explains nothing.
+
+### The dropdown and the activator disagreed about which skins exist
+
+Found while fixing the above, and a defect in its own right: `options()` built its list from the DOM
+scan **plus** the market's installed-but-not-loaded themes, while `_applySkin()` iterated the scan
+**alone**. Any skin reachable only through the market half could therefore be selected from the
+dropdown and then do nothing at all — not activated, and not switched off by 默认. `_knownSkins()` is
+now the one list, read by both callers.
+
+The harness had never noticed because it only ever exercised skins that the scan could see; section 20
+adds a market-only skin with no `data-plugin` tag and no boot entry, which is the shape that used to
+fall through the gap.
+
+> Both fixes are pinned by `check:overlay` section 20, which now has to hold **four** facts at once:
+> 默认 issues **no market write at all**, it *does* call `setPluginEnabled(<entryId>, false)` — matched by
+> PACKAGE, because that package's row id is `dream-skin`, not `dsh-dream-skin` — selecting a skin calls the
+> same switch with `true` before `/use-skin`, and the manifest declares the remotes package the remote
+> needs. Three negative controls reproduce the three real failures. Re-adding a `POST /dsh-market/toggle`
+> call to the 默认 path takes section 20 red with `["dsh-repo-installed-skin:false","dsh-dream-skin:false"]`
+> — the very writes that edited the install layers — and nothing else moves. Deleting the
+> `_switchSkinBundle()` call sites, by contrast, returns it to the ORIGINAL report: 默认 writes nothing
+> anywhere, and the row that asserts the call goes red while the market-write assertions stay green.
+> Emptying `pluginState` pins the fallback — the bundle switch, plus the "restart DSH" warning instead of a
+> dead control. The honest-reporting check (`...and it does NOT fall back to "you have to do it
+> yourself"`) is what keeps the guard from degenerating into "never do anything".
+
+### A loader write without a reload is a silent half-switch
+
+Reported as *"只能从默认切一次Dream   第二次再从默认切Dream就没有效果了  需要刷新页面之后才可以"*: the first
+default→Dream switch worked, and every later one did nothing until the page was refreshed by hand.
+
+`_applySkin()`'s non-default branch called `_switchSkinBundle(target, true)` for a handle-less target
+**without collecting the promise**. Every other call site pushes it into `pending` — the 默认 branch and
+the deactivate-every-other-skin loop — and the tail reloads only when one of those promises reports a
+real change. Dropping it left `Promise.all(pending)` resolving with nothing to report even though the
+plugin manager had just written. Enabling a handle-less skin only changes what the NEXT page load
+boots (`setPluginEnabled` writes the entry's `disabled` row), so the write alone is invisible: the
+loader had the plugin on, this page still painted the old skin, no warning was printed anywhere, and
+the theme appeared only after a manual refresh.
+
+**Why "only once".** The two presses took different routes. The first found the theme in
+`_marketThemes` (the market's `/dsh-market/installed` answer), so it used the market path —
+`POST /use-skin`, which returns `{ ok: true }` and reloads on success. The market log shows every such
+press (`toggle dsh-dream-skin -> on: fiber=true` → `use-skin dsh-dream-skin: active`, the last at
+15:47:42Z), which is why the market half could be ruled out and the in-page half could not. The second
+press found the theme missing from that per-fetch list, so `isMarketTheme` was false, the press fell
+through to `_applySkin()`, and died in the dropped promise. From outside the page the two are
+indistinguishable — which is the reason the trace exists.
+
+The datum that pinned it: `~/.dsh/profiles/web/package.json` was rewritten at 23:50:21 with **no
+market log line at that time**. The market logs every `use-skin`/`toggle` it serves, so a rewrite with
+no log line can only be the in-page plugin-manager switch — a write that changed the loader and
+nothing else.
+
+Fix: `pending.push(_switchSkinBundle(target, true))` in the non-default branch, so a handle-less
+activation that really changed something reloads exactly like the 默认 branch. `_switchSkinBundle()`
+returns `false` when the entry row already matches the wanted state, so an already-enabled skin
+resolves without a write and without a reload — the guard that keeps this safe even though
+`_applySkin()` also runs at boot (an unconditional reload there would be an endless reload loop).
+
+> `check:overlay` section 22 pins it: a skin that exists only as a `__DSH_BOOT__` entry (handle-less,
+> so `_skinNotControllable()` is true) offered while the market answers `installed: {}`, then a press of
+> that skin. Seven checks: it is selectable, it writes `dream-skin:true`, it never touches the market, it
+> **reloads**, the trace records `press.path = applySkin` + `bundle.wrote = true` + a `reload` event, that
+> trace **survives the reload** (it is in `sessionStorage`), and an already-enabled entry reloads nothing.
+> Restoring the dropped promise (the negative control) turns exactly three of them red — `...and RELOADS`
+> with `[]`, the trace check with `wrote: true` and no `reload` event, and the persistence check — which is
+> the reported symptom in one line.
+
+### `__dockFlashSkinTrace()`: naming the route, the write, and the reload
+
+A skin press that does nothing leaves no trace in any file, and the two possible causes have opposite
+fixes: either no write happened (no lever, the remote did not resolve, the market refused) or a write
+happened and nothing reloaded. The second is invisible by construction, because the reload is the only
+thing that would have shown it. So every decision on the way is appended to a 40-entry ring:
+
+| event | when | fields |
+|---|---|---|
+| `boot` | module load, before anything else | `version`, `page` |
+| `switch` | `_registerSkinSwitch()` first registers the dropdown | `id` |
+| `press` | the dropdown's `setValue` | `value`, `path` (`market` \| `applySkin`), `marketAvailable`, `isMarketTheme` |
+| `bundle` | each `_switchSkinBundle()` attempt | `name`, `want`, `wrote`, plus `why` / `error` when no lever was available |
+| `market` | `/use-skin`'s answer | `name`, `status` (`ok` \| `refused`), `why` |
+| `reload` | every `_fadeBeforeReload()` | `why` — `market:<name>` or `applySkin:<id>` |
+| `render` | 2.5s after load | `inEffect` (the marked skins on screen), `stored` (`_getActiveSkinId()`) |
+
+`window.__dockFlashSkinTrace()` in the console; `window.__dockFlashSkinSwitch()` remains the
+point-in-time snapshot of services and rows.
+
+**The ring lives in `sessionStorage`, and that is not an optimisation.** Every event it records is a
+step towards a page reload, so a memory-only ring is wiped by the very event it exists to explain —
+the first report of this bug came back with `__dockFlashSkinTrace()` printing `[]` after the user had
+pressed 默认 → Dream → 默认 → Dream, which is exactly as consistent with "every press reloaded" as
+with "no press ever reached `setValue`". An empty trace therefore has to be impossible to confuse with
+a broken one; `boot`/`switch` are written before any user action for that reason, and a **bare `[]` is
+now itself evidence that the bundle is stale**, not that nothing happened. The two closing questions
+the ring answers: did a `reload` follow the press at all, and — if it did — was the marked skin still
+`inEffect` on the other side (`render`).
+
+
 
 The standalone button and its panel carried `z-index: 99997` to `99999` since they were written. Nothing
 chose those numbers; they are "high enough that nothing will beat it", which is a different claim from
@@ -781,6 +1037,53 @@ the mark really is a `<button>`, that the scroller really is a `<div>`, and that
 still matches only the chat nav (the other `<nav>`s carry `_crumbs`, `_nav` and `_panelList`) even
 though eight DSH modules define some `frame` class. The harness's simulated rail now uses that exact
 markup, including the joined fade class, so the suffix version fails three checks there.
+
+---
+
+### The left-placed rail: a formula that outlived the layout it described
+
+*"The timeline moved to the left stops working — it is visible on the right, invisible after moving
+it left."* The rail was present, correct and off-screen. The injected mirror was reusing **DSH 0.1.5's
+own expression**, which was correct only for the slot layout of that version:
+
+```css
+/* 0.1.5 — where the switch was written */
+._slot  { position: sticky; height: 0 }                        /* in flow: inset by the parent's padding */
+._frame { right: calc(12px - (var(--…clearance) + 16px)) }     /* cancels that inset */
+
+/* 0.1.7 */
+._slot  { position: absolute; left: 0; right: 0; padding-inline: calc(…clearance + 16px) }
+._frame { right: 12px }                                        /* plain: the slot is no longer inset */
+```
+
+An absolutely positioned child is placed against its containing block's **padding box**, which the
+slot's own `padding-inline` does not inset — so DSH had to drop the compensation from its own `right`.
+The mirror kept it. With `--dsh-composer-side-clearance` measured at **16px**, `calc(12px - (16px +
+16px))` evaluates to **-20px**: the 28px rail spans -20px…+8px, and because every dash is drawn from
+`left:0`, the dashes sat entirely outside the left edge.
+
+**The fix mirrors DSH instead of restating it.** `_railNativeRight()` reads whatever `right` the rail
+is currently authored with and reuses it as `left`, so the same code is correct on 0.1.5 (a `calc`
+that cancels a real inset), on 0.1.7 (a plain `12px`), on the `[data-conversation-scroll]` variant
+(same declaration) and on the next restructure. Two further mirror defects that the same restructure
+introduced were fixed alongside it:
+
+- the mark button is now `left:0; right:0` in DSH's own sheet — horizontally symmetric, needing no
+  override. The old `inset:0 auto 0 0` mirror collapsed its width to zero on 0.1.7 and took the click
+  target with it, so the dashes were visible but unclickable. Pinning **both** edges is a no-op on
+  0.1.7 and still mirrors correctly on 0.1.5, where `width:20px` and `left:0` win over the retained
+  `right:0`.
+- 0.1.7 sizes the dash with `transform:scaleX()` about `transform-origin:100%`, so a mirrored dash that
+  kept that origin grows the wrong way; the mirror now sets `transform-origin:0` (inert on 0.1.5, whose
+  dash has no transform at all).
+
+**The harness could not have caught it**, and that is the reusable lesson: no check had ever looked at
+this stylesheet. Section 4 only asserted that `__dockFlashTurnRail()` exists. Two stub gaps made the
+mirror untestable in principle — `getElementById` searched `body` only, so the bundle could not find a
+`<style>` tag it had itself appended to `head`; and the sandbox exposed no `styleSheets`, so
+`_railNativeRight()` always fell back to a constant. Section 19 now authors a **distinctive** offset
+(`13px`, equal to no fallback in the bundle) and asserts the mirror follows it, which is what makes the
+assertion about derivation rather than about a literal.
 
 ---
 

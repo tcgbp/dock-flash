@@ -676,6 +676,9 @@ export function apply(ctx) {
             },
         }), 'dock-flash: POST /plugins/dock-flash/test-connection');
         // ── Host-side alert queue for server-push alerts ───────────────────
+        // External tools or the host process itself can push alerts that the
+        // client will pick up on the next poll.  The queue is in-memory only
+        // (lost on restart) and capped at 50 entries to avoid unbounded growth.
         const _alertQueue = [];
         const ALERT_QUEUE_CAP = 50;
         wsCtx.effect(() => wsCtx.webServer.register({
@@ -704,6 +707,7 @@ export function apply(ctx) {
                     source: 'host',
                 };
                 _alertQueue.push(alert);
+                // Cap the queue — drop the oldest entries
                 while (_alertQueue.length > ALERT_QUEUE_CAP)
                     _alertQueue.shift();
                 sendJson(res, 200, { ok: true, queued: _alertQueue.length });
@@ -719,6 +723,7 @@ export function apply(ctx) {
                     res.end();
                     return;
                 }
+                // Drain the queue — splice out everything and return it
                 const alerts = _alertQueue.splice(0, _alertQueue.length);
                 sendJson(res, 200, { alerts });
             },

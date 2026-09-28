@@ -129,7 +129,10 @@ The rules that must hold together — each one cost a defect:
   `nav[class*="_frame"]` — that function already owns "is the rail visible", "has another plugin taken
   the surface", and "which candidate is the on-screen one". **Class tests use `*=` and never `$=`**,
   because DSH joins class lists; `_preview` is the one token that stays `$=`. Only a RIGHT-side rail
-  competes with this corner, so `turn-rail-left` must not shift the button.
+  competes with this corner, so `turn-rail-left` must not shift the button. **The left placement MIRRORS
+  the rail's own `right`** (`_railNativeRight()`), never a formula of ours: that declaration encodes the
+  slot geometry, which DSH restructured in 0.1.7, where the old `calc(12px - (clearance + 16px))` became
+  a `-20px` offset that put the whole rail off the left edge.
 - **The offset is `{dx, dy}` inward from the conversation corner, and the BUTTON is clamped, not the
   offset.** That is what makes it follow the corner when the right sidebar opens, the sash moves or the
   window resizes — which is why the observer is a `ResizeObserver` on the viewport and not a window
@@ -570,6 +573,63 @@ two rules that keep the market from being offered as a skin.
   tag — NEVER by `enabledKey` in localStorage**, which dock-flash writes itself; and that key must not
   be written for a skin that is not installed. `_managedInstallReason()` is the ONE predicate for that,
   called by the scan AND by the flag sync.
+- **Switch a handle-less skin off as a WHOLE PLUGIN, through DSH's own plugin manager — never through the
+  market.** Some skins (`dsh-dream-skin`, `dsh-theme-macintosh`) inject `<style>` tags carrying no
+  `data-plugin` / `data-skin-chrome`, drive themselves from their own `<html>` attributes and re-insert
+  themselves from a `MutationObserver`, so there is no selector, no tag and no activation attribute to act
+  on; DSH ships no remove-by-owner API either (`removeOwnedStyles()` keys on `data-plugin` too).
+  `_skinNotControllable()` is the ONE predicate for that shape, and its consequence is
+  `_switchSkinBundle()` → `ctx.remote.pluginManager`. **Two switches exist there and they are NOT
+  interchangeable: use the ENTRY one.** `setPluginEnabled(entryId, enabled)` acts on the RUNNING loader
+  and writes or clears that entry's `disabled:` row — live AND symmetric, which is what 默认 needs.
+  `setBundleEnabled(package, enabled)` only edits `dsh.profile.bundles`, and **DSH composes that list at
+  BOOT**: it cannot change the page the user is looking at, so it is only the fallback for a package with
+  no addressable row, and it must SAY a DSH restart is needed rather than look like a dead control.
+  **A remote resolves only for a client plugin that DECLARES it — twice over, and the second half is the
+  one that bites.** `dsh.client.inject` must name `@deepseek-ai/dsh-api-remotes` (load order — the package
+  that owns `ctx.remote.$mount()`), AND the plugin object's own `inject` must name the NAMESPACE SERVICE
+  `"remote.pluginManager"`: every namespace is a service of its own (`remoteServiceKey(ns)` is
+  `remote.${ns}`) and Cordis' guard proxy refuses an undeclared one, exactly as it does for
+  `"remote.settings"`. The official `dsh-client-ui-plugin-manager` declares all three. Either entry
+  missing makes every 默认 press a silent no-op that writes nothing — which is how it shipped, twice:
+  first with no package entry, then again with the package entry but only `"remote"`/`"remote.settings"`.
+  Reaching for `POST /dsh-market/toggle` instead looks right and is not — **that route is
+  the market's PLUGIN switch, not a skin switch**: it appends a `disabled: true` row to the profile's
+  `cordis.patch.yml` AND drops the package from `dsh.profile.bundles`, while the only path back
+  (`/use-skin` → `activateTheme()`) does live loader work and clears neither, so the write is a
+  **one-way door** — two installed themes became impossible to re-enable from the theme page. The state is
+  read first in every case, so an already-satisfied press writes nothing and cannot reload in a loop.
+  **A UI control never edits the install layers: it must use a switch that has an inverse.**
+- **Collect EVERY promise that represents a loader write — a write with no reload is a silent half-switch.**
+  Switching a handle-less skin ON is the same kind of write as switching it off, and both only change what the
+  NEXT page load boots, so `_applySkin()` pushes `_switchSkinBundle()` into `pending` in BOTH directions and
+  reloads when any of them reports a real change. The activation side once dropped that promise
+  (`_switchSkinBundle(target, true)` with no `pending`): selecting a theme the market had stopped listing enabled
+  the plugin in the loader, printed nothing anywhere, changed nothing on screen, and appeared only after a manual
+  refresh — "from 默认 I can switch to Dream once, then nothing until I reload the page". The state is read first,
+  so an already-satisfied switch resolves `false` and reloads nothing; that guard is what makes collecting the
+  promise safe even though `_applySkin()` also runs at boot. When a press still does nothing,
+  `window.__dockFlashSkinTrace()` (a 40-entry ring) names the route that ran (`press.path` = `market` |
+  `applySkin`), whether the plugin manager actually wrote (`bundle.wrote`) and whether a reload was scheduled
+  (`reload`) — without it those two causes are indistinguishable from the outside. **The ring lives in
+  `sessionStorage` for that reason**: the switches it records are the ones that reload the page, so a
+  memory-only trace is wiped by the very event it exists to explain, and empty then reads as "nothing was
+  pressed". It is seeded with `boot` / `switch` lines and closes with a `render` line 2.5s later, which answers
+  the other half — the write happened, the reload happened, and the theme still is not painted.
+- **A handle-less skin that is still RENDERING has to be reported, or 默认 becomes unreachable.** The
+  plugin manager's rows and the market's `live` list are bookkeeping: a theme can read `disabled` in both
+  and still be painted in the page (a mounted instance, or styles left behind by an earlier load) while the
+  stored preference says `default`. The `<select>` then SHOWS `default`, and a select fires no event for the
+  value it already shows — so the user has no control left to press. `_skinLiveMarks` + `_skinInEffect()`
+  read the plugins' own marks (`html[data-dsh-material]`, `style#dsh-dream-skin-nav-icon`,
+  `style[data-mc-root]`, `html[data-mc-dock-on]` …) and are **DETECTION ONLY — never removal**, because
+  both plugins re-inject themselves. `_getActiveSkinId()` returns the marked id, so the dropdown names what
+  actually renders; and `_applySkin('default')` knows that press wrote nothing (`changed` is all-false,
+  the row already read `disabled`) and **reloads anyway** — in that state the reload IS the switch.
+- **`options()` and `_applySkin()` must read ONE list.** The dropdown merges the DOM/boot scan with the
+  market's installed-but-not-loaded themes, while `_applySkin()` once iterated the SCAN ALONE — so a
+  skin reachable only through the market half could be selected but not acted on: not activated, and not
+  switched off by 默认. `_knownSkins()` is that one list, for both callers.
 - **Without dsh-market the skin switcher is not registered at all** — `_registerSkinSwitch()` runs
   only from `_refreshMarketThemes()` on success, because disabled themes are invisible to the DOM scan
   and the list would be incomplete.
@@ -580,9 +640,13 @@ authority. Adding one means touching all four places: `SettingsSchema` in `src/i
 write through `savePrefs()`. `triggerOverlayOffset` shipped declared-and-read but **never mapped**, so
 a host-held value was silently ignored on load — the mapping list IS the contract.
 
-**`remote` is a typert namespace and resolves only if declared in `inject`** — both `"remote"` and
-`"remote.settings"`; a plugin that merely `ctx.get('remote')`s it gets `undefined`. `describe()`
-answers `{ ok, value }` with the namespace list at `value.namespaces`, and
+**A typert namespace resolves only if declared in `inject`, ONE ENTRY PER NAMESPACE** — the mount point
+`"remote"` plus `"remote.<ns>"` for every namespace actually used (`"remote.settings"`,
+`"remote.pluginManager"`, `"remote.pluginInventory"` …): the gateway registers each namespace as its own
+service (`remoteServiceKey(ns)` is `remote.${ns}`) and the guard proxy refuses an undeclared one, so a
+plugin that merely `ctx.get('remote')`s a namespace gets `undefined`. **`dsh.client.inject` naming the
+remotes package is load order, not access** — both declarations are needed. `describe()` answers
+`{ ok, value }` with the namespace list at `value.namespaces`, and
 `settings.update(ns, patch, expectedRevision)` takes **three** arguments.
 
 > The phase and category tables, the managed-skin configuration, and the full preference-bridge

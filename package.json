@@ -1,6 +1,6 @@
 {
   "name": "dock-flash",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Quick Control dock plugin — a dynamic floating shortcut panel for DSH Workbench with extensible switch registry. Works standalone or with dock-base.",
   "license": "Apache-2.0",
   "type": "module",
@@ -40,6 +40,7 @@
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-api-remotes",
         "dock-base"
       ],
       "platform": "web"
