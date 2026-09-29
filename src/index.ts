@@ -29,6 +29,7 @@ import { platform } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
+import { AsyncLocalStorage } from 'node:async_hooks'
 // Default export only (`export default Schema`); there is no named `Schema`.
 import Schema from '@deepseek-ai/schemastery'
 
@@ -123,6 +124,57 @@ export interface ProxyConfig {
    * reading preference.
    */
   overlayOpacity: number
+
+  // ── Alert thresholds and intervals ────────────────────────────────────────
+  // All thresholds are stored as percentages (0–100); the client divides by
+  // 100 to obtain the ratio used in comparisons. Poll intervals are in ms.
+
+  /** Memory alert: info threshold (% of V8 heap). */
+  memThresholdInfo: number
+  /** Memory alert: warning threshold (% of V8 heap). */
+  memThresholdWarning: number
+  /** Memory alert: error threshold (% of V8 heap). */
+  memThresholdError: number
+  /** Memory polling: base interval (ms). */
+  memPollBase: number
+  /** Memory polling: minimum interval (ms). */
+  memPollMin: number
+
+  /** Context estimate: approximate token window. */
+  ctxApproxWindow: number
+  /** Context estimate: tokens per conversation message. */
+  ctxTokensPerMsg: number
+  /** Context alert: info threshold (% of estimated window). */
+  ctxThresholdInfo: number
+  /** Context alert: warning threshold (% of estimated window). */
+  ctxThresholdWarning: number
+  /** Context alert: error threshold (% of estimated window). */
+  ctxThresholdError: number
+  /** Context polling: base interval (ms). */
+  ctxPollBase: number
+  /** Context polling: minimum interval (ms). */
+  ctxPollMin: number
+
+  /** Network heartbeat: slow threshold (ms). */
+  netSlowThreshold: number
+  /** Network polling: base interval (ms). */
+  netPollBase: number
+  /** Network polling: minimum interval (ms). */
+  netPollMin: number
+
+  /** Network Monitor: ring-buffer log capacity (entries). */
+  netLogCap: number
+  /** Network Monitor: "suspicious" risk threshold (0–100). */
+  netSuspectWarn: number
+  /** Network Monitor: "dangerous" risk threshold (0–100). */
+  netSuspectErr: number
+  /** Network Monitor: user-trusted hosts that never raise alerts. */
+  netWhitelist: string[]
+
+  /** Host alert queue: maximum entries. */
+  hostAlertQueueCap: number
+  /** Host alert queue: maximum retention (hours). */
+  hostAlertMaxAge: number
 }
 
 /** Offset of the draggable overlay trigger from the conversation's top-right corner. */
@@ -180,6 +232,45 @@ const DEFAULT_TRIGGER_LAYER = 1150
 /** Matches the client's DEFAULT_OVERLAY_OPACITY — what 0.55 always was. */
 const DEFAULT_OVERLAY_OPACITY = 0.55
 
+// ── Alert threshold defaults ──────────────────────────────────────────────
+// Stored as percentages (0–100) for user-friendliness; providers divide by
+// 100 internally to obtain the ratio used in comparisons.
+
+/** Memory alert thresholds (% of V8 heap). */
+const DEFAULT_MEM_THRESHOLD_INFO = 80
+const DEFAULT_MEM_THRESHOLD_WARNING = 90
+const DEFAULT_MEM_THRESHOLD_ERROR = 95
+/** Memory polling: base interval and minimum (ms). */
+const DEFAULT_MEM_POLL_BASE = 30000
+const DEFAULT_MEM_POLL_MIN = 2000
+
+/** Context window approximation (tokens). */
+const DEFAULT_CTX_APPROX_WINDOW = 128000
+/** Estimated tokens per conversation message. */
+const DEFAULT_CTX_TOKENS_PER_MSG = 200
+/** Context alert thresholds (% of estimated window). */
+const DEFAULT_CTX_THRESHOLD_INFO = 70
+const DEFAULT_CTX_THRESHOLD_WARNING = 85
+const DEFAULT_CTX_THRESHOLD_ERROR = 95
+/** Context polling: base interval and minimum (ms). */
+const DEFAULT_CTX_POLL_BASE = 20000
+const DEFAULT_CTX_POLL_MIN = 2000
+
+/** Network heartbeat slow threshold (ms). */
+const DEFAULT_NET_SLOW_THRESHOLD = 5000
+/** Network polling: base interval and minimum (ms). */
+const DEFAULT_NET_POLL_BASE = 60000
+const DEFAULT_NET_POLL_MIN = 10000
+/** Network Monitor: ring-buffer log capacity, suspicious/dangerous thresholds. */
+const DEFAULT_NET_LOG_CAP = 300
+const DEFAULT_NET_SUSPECT_WARN = 40
+const DEFAULT_NET_SUSPECT_ERR = 70
+
+/** Host alert queue capacity (max entries). */
+const DEFAULT_HOST_ALERT_QUEUE_CAP = 50
+/** Host alert maximum retention time (hours). */
+const DEFAULT_HOST_ALERT_MAX_AGE = 24
+
 /**
  * Default test target: the canonical "is there a working network path"
  * endpoint. Returns an empty 204, so it measures the path and nothing else —
@@ -208,6 +299,28 @@ const entry: ProxyConfig = {
   triggerSize: DEFAULT_TRIGGER_SIZE,
   triggerLayer: DEFAULT_TRIGGER_LAYER,
   overlayOpacity: DEFAULT_OVERLAY_OPACITY,
+  // Alert thresholds
+  memThresholdInfo: DEFAULT_MEM_THRESHOLD_INFO,
+  memThresholdWarning: DEFAULT_MEM_THRESHOLD_WARNING,
+  memThresholdError: DEFAULT_MEM_THRESHOLD_ERROR,
+  memPollBase: DEFAULT_MEM_POLL_BASE,
+  memPollMin: DEFAULT_MEM_POLL_MIN,
+  ctxApproxWindow: DEFAULT_CTX_APPROX_WINDOW,
+  ctxTokensPerMsg: DEFAULT_CTX_TOKENS_PER_MSG,
+  ctxThresholdInfo: DEFAULT_CTX_THRESHOLD_INFO,
+  ctxThresholdWarning: DEFAULT_CTX_THRESHOLD_WARNING,
+  ctxThresholdError: DEFAULT_CTX_THRESHOLD_ERROR,
+  ctxPollBase: DEFAULT_CTX_POLL_BASE,
+  ctxPollMin: DEFAULT_CTX_POLL_MIN,
+  netSlowThreshold: DEFAULT_NET_SLOW_THRESHOLD,
+  netPollBase: DEFAULT_NET_POLL_BASE,
+  netPollMin: DEFAULT_NET_POLL_MIN,
+  netLogCap: DEFAULT_NET_LOG_CAP,
+  netSuspectWarn: DEFAULT_NET_SUSPECT_WARN,
+  netSuspectErr: DEFAULT_NET_SUSPECT_ERR,
+  netWhitelist: [],
+  hostAlertQueueCap: DEFAULT_HOST_ALERT_QUEUE_CAP,
+  hostAlertMaxAge: DEFAULT_HOST_ALERT_MAX_AGE,
 }
 
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
@@ -339,6 +452,264 @@ function loadProxyModule(): Promise<ProxyModule | null> {
   return _proxyModulePromise
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Network Monitor — outbound request auditor.
+//
+// The connectivity provider answers "can DSH reach the network"; THIS answers
+// "who is reaching out, to whom, and with how much data". It records per-request
+// METADATA ONLY — method, host, path, body size, status, response size, timing,
+// TLS, and the plugin (or `unknown`) that initiated the call. Request/response
+// bodies and header VALUES are never captured: the auditor must not itself
+// become a data-exfiltration channel.
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * AsyncLocalStorage is reserved for carrying "which plugin context is active
+ * right now" across async boundaries IF Cordis exposes a reliable hook to wrap
+ * every plugin fork's `apply()`. It is not guaranteed today, so the working
+ * attribution path lives in `_pluginIdFromStack()` (stack-trace fallback) —
+ * see `resolvePluginId()` for the real priority. Keeping the ALS here means a
+ * future fork-hook can adopt it without restructuring.
+ */
+const _requestContext = new AsyncLocalStorage<{ pluginId: string }>()
+const _UNKNOWN_PLUGIN = 'unknown'
+
+/**
+ * Resolve which plugin initiated a request.
+ *
+ * Priority: AsyncLocalStorage context (populated only if a future fork-hook
+ * calls `_requestContext.run(...)`) → stack-trace hint → `unknown`. `unknown`
+ * is itself a meaningful, alarming signal ("something anonymous is sending
+ * data"), never a silent discard.
+ */
+function resolvePluginId(): string {
+  const store = _requestContext.getStore()
+  if (store && store.pluginId) return store.pluginId
+  const hint = _pluginIdFromStack()
+  return hint || _UNKNOWN_PLUGIN
+}
+
+/** Extract `<pkg>` from the first `node_modules/<pkg>/` stack frame, if any. */
+function _pluginIdFromStack(): string | null {
+  let stack: string
+  try {
+    stack = new Error().stack || ''
+  } catch (_) {
+    return null
+  }
+  const re = /node_modules[\\/]+([^\\/]+)/g
+  let m: RegExpExecArray | null
+  // Walk every frame, preferring the outermost (caller-most) plugin path, i.e.
+  // the last match that is a real package rather than a loader shim.
+  let candidate: string | null = null
+  while ((m = re.exec(stack)) !== null) {
+    const pkg = m[1]
+    // Skip the common well-known loader/runtime names that sit between the real
+    // caller and us, so we attribute to the plugin that actually issued the call.
+    if (/^(@deepseek-ai|cordis|undici|node:|internal)/i.test(pkg)) continue
+    candidate = pkg
+  }
+  return candidate
+}
+
+/** A single audited request's metadata record. No body/header values, ever. */
+export interface NetworkEntry {
+  seq: number
+  pluginId: string
+  method: string
+  host: string
+  pathname: string
+  reqBytes: number
+  /** -1 when the response never arrived (aborted / DNS / refused). */
+  resBytes: number
+  /** 0 when no response; 2xx/3xx/4xx/5xx otherwise. */
+  status: number
+  /** ms from request dispatch to response headers. */
+  durationMs: number
+  tls: boolean
+  risk: number
+  /** Human-readable flags that raised `risk`, e.g. ['new-host', 'large-upload']. */
+  flags: string[]
+  timestamp: number
+}
+
+/** Built-in hosts considered trustworthy — anything else starts suspect. */
+const BUILTIN_TRUSTED_HOSTS = new Set<string>([
+  'www.google.com',      // default connectivity test target
+  'api.deepseek.com',    // DSH API
+  'chat.deepseek.com',   // DSH API
+])
+
+/** Default guard: without an explicit override every host is suspect. */
+const HOST_ALLOW_UNKNOWN = false
+
+/**
+ * The in-memory auditor. A ring buffer capped at `cap` entries (oldest dropped
+ * on overflow) plus a suspicion scorer. Lost on restart — intentional: network
+ * audit history is session-scoped, not durable user data.
+ */
+class NetworkMonitor {
+  private _entries: NetworkEntry[] = []
+  private _seq = 0
+  /** Resolved once; the mutable set of user-trusted hosts. */
+  private _userTrusted = new Set<string>()
+  private _seenHosts = new Map<string, number>()
+
+  constructor(private _cap: number) {}
+
+  setCap(cap: number) {
+    this._cap = Math.max(1, Math.floor(cap) || 1)
+    while (this._entries.length > this._cap) this._entries.shift()
+  }
+
+  setUserTrusted(hosts: string[]) {
+    this._userTrusted = new Set((hosts || []).map((h) => String(h).toLowerCase()))
+  }
+
+  isTrusted(host: string): boolean {
+    const h = host.toLowerCase()
+    if (BUILTIN_TRUSTED_HOSTS.has(h) || HOST_ALLOW_UNKNOWN) return true
+    if (this._userTrusted.has(h)) return true
+    // A user trust on an apex domain covers bare subdomains (api.example.com
+    // under an added example.com), matching the NO_PROXY semantics elsewhere.
+    for (const t of this._userTrusted) {
+      if (h.endsWith('.' + t)) return true
+    }
+    return false
+  }
+
+  private _score(host: string, method: string, reqBytes: number, tls: boolean, isNew: boolean): { risk: number; flags: string[] } {
+    if (this.isTrusted(host)) return { risk: 0, flags: [] }
+    let risk = 30                 // unknown host
+    const flags: string[] = ['unknown-host']
+    if (isNew) { risk += 15; flags.push('new-host') }
+    if ((method === 'POST' || method === 'PUT' || method === 'PATCH') && reqBytes > 1024) {
+      risk += 25; flags.push('large-upload')
+    }
+    if (!tls) { risk += 20; flags.push('plaintext') }
+    // Touch-and-go heuristic: repeated calls to the same unknown host raise it.
+    const seen = this._seenHosts.get(host) || 0
+    if (seen >= 3) { risk += 15; flags.push('high-frequency') }
+    return { risk: Math.min(100, risk), flags }
+  }
+
+  record(input: { method: string; url: string; reqBytes: number; resBytes: number; status: number; durationMs: number; tls: boolean }): NetworkEntry {
+    let host = '?'
+    let pathname = ''
+    try {
+      const u = new URL(input.url)
+      host = u.host || '?'
+      pathname = u.pathname || ''
+    } catch (_) {
+      // Non-URL input; keep whatever we have.
+    }
+    const firstSeen = !this._seenHosts.has(host)
+    this._seenHosts.set(host, (this._seenHosts.get(host) || 0) + 1)
+    const { risk, flags } = this._score(host, input.method, input.reqBytes, input.tls, firstSeen)
+    const entry: NetworkEntry = {
+      seq: ++this._seq,
+      pluginId: resolvePluginId(),
+      method: input.method,
+      host,
+      pathname,
+      reqBytes: input.reqBytes,
+      resBytes: input.resBytes,
+      status: input.status,
+      durationMs: input.durationMs,
+      tls: input.tls,
+      risk,
+      flags,
+      timestamp: Date.now(),
+    }
+    this._entries.push(entry)
+    if (this._entries.length > this._cap) this._entries.shift()
+    return entry
+  }
+
+  snapshot(): NetworkEntry[] {
+    return this._entries.slice()
+  }
+
+  alerts(threshold: number): NetworkEntry[] {
+    return this._entries.filter((e) => e.risk >= threshold)
+  }
+}
+
+/** Module-level so the tracer and routes share one instance per process. */
+let _networkMonitor: NetworkMonitor | null = null
+/** The wrapper we installed, saved so dispose can restore the original fetch. */
+let _restoreFetch: (() => void) | null = null
+
+/**
+ * Estimate the byte size of a fetch RequestInit body WITHOUT reading its
+ * content — sizing only, never capturing data.
+ */
+function _estimateReqBytes(body: unknown): number {
+  if (body == null) return 0
+  if (typeof body === 'string') return Buffer.byteLength(body, 'utf8')
+  if (Buffer.isBuffer(body)) return body.byteLength
+  if (body instanceof URLSearchParams) return Buffer.byteLength(body.toString(), 'utf8')
+  if (body instanceof Blob) return typeof body.size === 'number' ? body.size : 0
+  if (body instanceof ArrayBuffer) return body.byteLength
+  if (ArrayBuffer.isView(body)) return body.byteLength
+  // Streams / other: unknowable without consuming — report 0 rather than swallow.
+  return 0
+}
+
+/**
+ * Install a global outbound-request tracer by wrapping `globalThis.fetch`.
+ *
+ * Node.js 18+/undici fetch is the shared entry point for `ctx.http` and raw
+ * `fetch()` calls alike, so a single wrapper captures both. We record metadata
+ * around the promise; the body is only NEVER read (the Response is returned
+ * untouched to the caller).
+ *
+ * Returns a disposer that restores the original fetch and stops capture.
+ */
+function installRequestTracer(): () => void {
+  const origFetch = globalThis.fetch
+  // Guard against double-install on hot reload / re-apply.
+  if (!origFetch || (origFetch as any).__dockFlashTraced) return () => {}
+  const wrap: typeof fetch = async (input, init) => {
+    const method = (init && init.method) || (typeof input === 'string' ? 'GET' : (input && (input as Request).method) || 'GET')
+    const url = typeof input === 'string' ? input : (input && (input as Request).url) || ''
+    const reqBytes = _estimateReqBytes(init && init.body)
+    const started = Date.now()
+    let status = 0
+    let resBytes = -1
+    let tls = false
+    try { tls = typeof url === 'string' && /^https:/i.test(url) } catch (_) {}
+    try {
+      const res = await origFetch.call(globalThis, input, init)
+      status = res.status
+      const cl = res.headers && res.headers.get && res.headers.get('content-length')
+      resBytes = cl ? (parseInt(cl, 10) || 0) : -1
+      const end = Date.now()
+      if (_networkMonitor) {
+        try {
+          _networkMonitor.record({ method, url, reqBytes, resBytes, status, durationMs: end - started, tls })
+        } catch (_) {}
+      }
+      return res
+    } catch (e) {
+      const end = Date.now()
+      if (_networkMonitor) {
+        try {
+          _networkMonitor.record({ method, url, reqBytes, resBytes: -1, status: 0, durationMs: end - started, tls })
+        } catch (_) {}
+      }
+      throw e
+    }
+  }
+  ;(wrap as any).__dockFlashTraced = true
+  ;(globalThis as any).fetch = wrap
+  _restoreFetch = () => {
+    if ((globalThis as any).fetch === wrap) (globalThis as any).fetch = origFetch
+    _restoreFetch = null
+  }
+  return _restoreFetch
+}
+
 /** An EnvLookup over process.env — the fallback when no snapshot is provided. */
 function processEnvLookup(): EnvLookup {
   return {
@@ -383,6 +754,29 @@ export function apply(ctx: Context) {
   // The authoritative config: the settings section while one is attached,
   // the composition entry otherwise.
   let source: () => ProxyConfig = () => entry
+
+  // ── Network Monitor bootstrap ──────────────────────────────────────────
+  // One bounded monitor per process. Config is (re)read from `source()` so a
+  // late settings reply or an unrelated field edit refreshes thresholds and
+  // whitelist. The tracer wrapper is installed once and restored on dispose.
+  if (!_networkMonitor) _networkMonitor = new NetworkMonitor(entry.netLogCap || DEFAULT_NET_LOG_CAP)
+  const reconfigure = () => {
+    const cfg = source()
+    if (_networkMonitor) {
+      _networkMonitor.setCap(cfg.netLogCap)
+      _networkMonitor.setUserTrusted(Array.isArray(cfg.netWhitelist) ? cfg.netWhitelist : [])
+    }
+  }
+  reconfigure()
+  if (_restoreFetch === null) installRequestTracer()
+  ctx.effect(() => {
+    // Return the cleanup function — Cordis calls it when the context is disposed.
+    const restore = _restoreFetch
+    return () => {
+      if (restore) restore()
+      _networkMonitor = null
+    }
+  })
 
   /** The launch-environment snapshot DSH resolved the boot-time policy from. */
   function launchEnvironment(): EnvLookup | null {
@@ -701,6 +1095,29 @@ export function apply(ctx: Context) {
       // list changes (the 1.1.0 lesson this namespace already records).
       triggerLayer: Schema.number().default(DEFAULT_TRIGGER_LAYER),
       overlayOpacity: Schema.number().default(DEFAULT_OVERLAY_OPACITY),
+      // Alert thresholds — percentages (0–100) for thresholds, ms for intervals
+      memThresholdInfo: Schema.number().default(DEFAULT_MEM_THRESHOLD_INFO),
+      memThresholdWarning: Schema.number().default(DEFAULT_MEM_THRESHOLD_WARNING),
+      memThresholdError: Schema.number().default(DEFAULT_MEM_THRESHOLD_ERROR),
+      memPollBase: Schema.number().default(DEFAULT_MEM_POLL_BASE),
+      memPollMin: Schema.number().default(DEFAULT_MEM_POLL_MIN),
+      ctxApproxWindow: Schema.number().default(DEFAULT_CTX_APPROX_WINDOW),
+      ctxTokensPerMsg: Schema.number().default(DEFAULT_CTX_TOKENS_PER_MSG),
+      ctxThresholdInfo: Schema.number().default(DEFAULT_CTX_THRESHOLD_INFO),
+      ctxThresholdWarning: Schema.number().default(DEFAULT_CTX_THRESHOLD_WARNING),
+      ctxThresholdError: Schema.number().default(DEFAULT_CTX_THRESHOLD_ERROR),
+      ctxPollBase: Schema.number().default(DEFAULT_CTX_POLL_BASE),
+      ctxPollMin: Schema.number().default(DEFAULT_CTX_POLL_MIN),
+      netSlowThreshold: Schema.number().default(DEFAULT_NET_SLOW_THRESHOLD),
+      netPollBase: Schema.number().default(DEFAULT_NET_POLL_BASE),
+      netPollMin: Schema.number().default(DEFAULT_NET_POLL_MIN),
+      hostAlertQueueCap: Schema.number().default(DEFAULT_HOST_ALERT_QUEUE_CAP),
+      hostAlertMaxAge: Schema.number().default(DEFAULT_HOST_ALERT_MAX_AGE),
+      // Network Monitor (outbound request auditor)
+      netLogCap: Schema.number().default(DEFAULT_NET_LOG_CAP),
+      netSuspectWarn: Schema.number().default(DEFAULT_NET_SUSPECT_WARN),
+      netSuspectErr: Schema.number().default(DEFAULT_NET_SUSPECT_ERR),
+      netWhitelist: Schema.array(Schema.string()).default([]),
     })
 
     settingsCtx.settings.installSection(ctx, 'dock-flash', SettingsSchema, entry, {
@@ -710,6 +1127,9 @@ export function apply(ctx: Context) {
       onChange: () => {
         try {
           const cfg = source()
+          // Keep the Network Monitor thresholds/whitelist in step with any
+          // settings write (a whitelist edit flows through this path).
+          reconfigure()
           // Migrate legacy useProxy → proxyMode on first change
           let mode = cfg.proxyMode || DEFAULT_MODE
           if (!cfg.proxyMode && typeof cfg.useProxy === 'boolean') {
@@ -854,9 +1274,8 @@ export function apply(ctx: Context) {
     // ── Host-side alert queue for server-push alerts ───────────────────
     // External tools or the host process itself can push alerts that the
     // client will pick up on the next poll.  The queue is in-memory only
-    // (lost on restart) and capped at 50 entries to avoid unbounded growth.
+    // (lost on restart), capped and pruned from settings the sliders control.
     const _alertQueue: any[] = []
-    const ALERT_QUEUE_CAP = 50
 
     wsCtx.effect(() => wsCtx.webServer.register({
       kind: 'exact',
@@ -873,6 +1292,17 @@ export function apply(ctx: Context) {
           sendJson(res, 400, { error: 'Missing required fields: id, title' })
           return
         }
+        const cfg = source()
+        const cap = cfg.hostAlertQueueCap || DEFAULT_HOST_ALERT_QUEUE_CAP
+        const maxAgeHours = cfg.hostAlertMaxAge ?? DEFAULT_HOST_ALERT_MAX_AGE
+        const maxAgeMs = (maxAgeHours > 0 ? maxAgeHours : DEFAULT_HOST_ALERT_MAX_AGE) * 3600_000
+        const cutoff = Date.now() - maxAgeMs
+        // Prune expired entries first, then cap the queue
+        for (let i = _alertQueue.length - 1; i >= 0; i--) {
+          if (_alertQueue[i].timestamp && _alertQueue[i].timestamp < cutoff) {
+            _alertQueue.splice(i, 1)
+          }
+        }
         const alert = {
           id: String(body.id),
           severity: body.severity || 'info',
@@ -885,7 +1315,7 @@ export function apply(ctx: Context) {
         }
         _alertQueue.push(alert)
         // Cap the queue — drop the oldest entries
-        while (_alertQueue.length > ALERT_QUEUE_CAP) _alertQueue.shift()
+        while (_alertQueue.length > cap) _alertQueue.shift()
         sendJson(res, 200, { ok: true, queued: _alertQueue.length })
       },
     }), 'dock-flash: POST /plugins/dock-flash/push-alert')
@@ -900,10 +1330,109 @@ export function apply(ctx: Context) {
           res.end()
           return
         }
+        const cfg = source()
+        const maxAgeHours = cfg.hostAlertMaxAge ?? DEFAULT_HOST_ALERT_MAX_AGE
+        const maxAgeMs = (maxAgeHours > 0 ? maxAgeHours : DEFAULT_HOST_ALERT_MAX_AGE) * 3600_000
+        const cutoff = Date.now() - maxAgeMs
+        // Prune expired entries before draining
+        for (let i = _alertQueue.length - 1; i >= 0; i--) {
+          if (_alertQueue[i].timestamp && _alertQueue[i].timestamp < cutoff) {
+            _alertQueue.splice(i, 1)
+          }
+        }
         // Drain the queue — splice out everything and return it
         const alerts = _alertQueue.splice(0, _alertQueue.length)
         sendJson(res, 200, { alerts })
       },
     }), 'dock-flash: GET /plugins/dock-flash/host-alerts')
+
+    // ── Network Monitor routes (outbound request auditor) ─────────────
+    // Paged snapshot of the audited-request ring buffer, newest first.
+    wsCtx.effect(() => wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/plugins/dock-flash/network-log',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') {
+          res.statusCode = 405
+          res.setHeader('allow', 'GET')
+          res.end()
+          return
+        }
+        if (!_networkMonitor) { sendJson(res, 200, { entries: [], offset: 0 }) ; return }
+        const u = new URL(req.url || '/', 'http://localhost')
+        const offset = Math.max(0, parseInt(u.searchParams.get('offset') || '0', 10) || 0)
+        let limit = parseInt(u.searchParams.get('limit') || '100', 10) || 100
+        limit = Math.max(1, Math.min(limit, 500))
+        const all = _networkMonitor.snapshot().reverse()
+        const entries = all.slice(offset, offset + limit)
+        sendJson(res, 200, { entries, offset, limit, total: all.length })
+      },
+    }), 'dock-flash: GET /plugins/dock-flash/network-log')
+
+    // Suspicious/dangerous requests (risk >= warn threshold).
+    wsCtx.effect(() => wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/plugins/dock-flash/network-alerts',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') {
+          res.statusCode = 405
+          res.setHeader('allow', 'GET')
+          res.end()
+          return
+        }
+        if (!_networkMonitor) { sendJson(res, 200, { alerts: [] }) ; return }
+        const cfg = source()
+        const threshold = cfg.netSuspectWarn ?? DEFAULT_NET_SUSPECT_WARN
+        sendJson(res, 200, { alerts: _networkMonitor.alerts(threshold).reverse() })
+      },
+    }), 'dock-flash: GET /plugins/dock-flash/network-alerts')
+
+    // Whitelist management — persist trusted hosts via the settings service.
+    // The client writes through the same `ctx.remote.settings` path as the
+    // proxies; this route is a convenience for tools that cannot reach the
+    // settings service. We re-resolve and call reconfigure() ourselves so the
+    // monitor picks up the change immediately regardless of which writer used.
+    wsCtx.effect(() => wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/plugins/dock-flash/network-whitelist',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405
+          res.setHeader('allow', 'POST')
+          res.end()
+          return
+        }
+        const body = await readJsonBody(req)
+        if (!body || !Array.isArray(body.hosts)) {
+          sendJson(res, 400, { error: 'Missing or invalid hosts array' })
+          return
+        }
+        const hosts: string[] = []
+        for (const h of body.hosts) {
+          if (typeof h !== 'string') { sendJson(res, 400, { error: 'hosts must be strings' }); return }
+          try {
+            // Validate: each entry must parse as a valid host (optionally :port).
+            const s = h.trim()
+            if (!s) continue
+            new URL('http://' + s.replace(/^https?:\/\//i, ''))
+            hosts.push(s.toLowerCase())
+          } catch (_) {
+            sendJson(res, 400, { error: 'Invalid host: ' + h })
+            return
+          }
+        }
+        if (_networkMonitor) _networkMonitor.setUserTrusted(hosts)
+        // Persist so the setting survives restart. If the remote settings
+        // service is unavailable we still apply the in-memory override above.
+        let rs: any = null
+        try { rs = ctx.get ? ctx.get('remote.settings') ?? (ctx as any).remote?.settings ?? null : null } catch (_) { rs = null }
+        if (rs && typeof rs.update === 'function') {
+          try {
+            await rs.update('dock-flash', { netWhitelist: hosts })
+          } catch (_) { /* memory override already in force */ }
+        }
+        sendJson(res, 200, { ok: true, hosts })
+      },
+    }), 'dock-flash: POST /plugins/dock-flash/network-whitelist')
   })
 }
