@@ -173,6 +173,15 @@ export interface ProxyConfig {
   netWhitelist: Volatile<string[]>
   /** Network Monitor: user-trusted plugin IDs whose requests never raise alerts. */
   netPluginWhitelist: Volatile<string[]>
+  /**
+   * Network Monitor: master switch — opt-in only.
+   *
+   * Default OFF on purpose: the tracer wraps `globalThis.fetch` for the whole
+   * DSH process, so every outbound request would be audited by default, which
+   * is a surprising global side effect. The wrapper is installed (and the
+   * original fetch restored) only when this flag is explicitly enabled.
+   */
+  netAuditEnabled: Volatile<boolean>
 
   /** Host alert queue: maximum entries. */
   hostAlertQueueCap: Volatile<number>
@@ -268,6 +277,8 @@ const DEFAULT_NET_POLL_MIN = 10000
 const DEFAULT_NET_LOG_CAP = 300
 const DEFAULT_NET_SUSPECT_WARN = 40
 const DEFAULT_NET_SUSPECT_ERR = 70
+/** Network Monitor: opt-in master switch — OFF by default (see the field comment). */
+const DEFAULT_NET_AUDIT_ENABLED = false
 
 /** Host alert queue capacity (max entries). */
 const DEFAULT_HOST_ALERT_QUEUE_CAP = 50
@@ -382,6 +393,8 @@ export const Config = Schema.object({
   netSuspectErr: Schema.number().default(DEFAULT_NET_SUSPECT_ERR).volatile(),
   netWhitelist: Schema.array(Schema.string()).default([]).volatile(),
   netPluginWhitelist: Schema.array(Schema.string()).default([]).volatile(),
+  // Master switch — opts the whole process-instrumenting tracer IN. Default off.
+  netAuditEnabled: Schema.boolean().default(DEFAULT_NET_AUDIT_ENABLED).volatile(),
 })
 
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
@@ -704,6 +717,18 @@ class NetworkMonitor {
   alerts(threshold: number): NetworkEntry[] {
     return this._entries.filter((e) => e.risk >= threshold)
   }
+
+  /**
+   * Reset the auditor's captured history: the ring buffer, the inventory
+   * counter and the seen-host/frequency scoring all start over, so both the
+   * stream log and the alert stream come back empty. Mirrors the panel's 清空
+   * button, which must clear the backend data, not just the displayed list.
+   */
+  clear() {
+    this._entries = []
+    this._seq = 0
+    this._seenHosts = new Map<string, number>()
+  }
 }
 
 /** Module-level so the tracer and routes share one instance per process. */
@@ -825,18 +850,33 @@ export function apply(ctx: Context, config: ProxyConfig) {
   // ── Network Monitor bootstrap ──────────────────────────────────────────
   // One bounded monitor per process. Config is (re)read from volatile
   // references so a late settings reply or an unrelated field edit refreshes
-  // thresholds and whitelist. The tracer wrapper is installed once and
-  // restored on dispose.
-  if (!_networkMonitor) _networkMonitor = new NetworkMonitor(config.netLogCap.get() || DEFAULT_NET_LOG_CAP)
+  // thresholds and whitelist. The tracer wrapper is installed ONLY while
+  // `netAuditEnabled` is true — it is opt-in, NOT the default — so toggling
+  // the setting off at runtime restores the original fetch and stops all
+  // recording. When disabled the routes below stay registered but answer
+  // empty lists (no monitor instance), so an already-open panel never 500s.
   const reconfigure = () => {
-    if (_networkMonitor) {
+    if (config.netAuditEnabled.get()) {
+      // Enabled: ensure the monitor exists, refresh cap/whitelist, and install
+      // the tracer once. Both `_restoreFetch === null` and `__dockFlashTraced`
+      // are kept as guards — the latter also protects against another plugin
+      // having wrapped fetch (installRequestTracer checks it again internally).
+      if (!_networkMonitor) _networkMonitor = new NetworkMonitor(config.netLogCap.get() || DEFAULT_NET_LOG_CAP)
       _networkMonitor.setCap(config.netLogCap.get())
       _networkMonitor.setUserTrusted(Array.isArray(config.netWhitelist.get()) ? config.netWhitelist.get()! : [])
       _networkMonitor.setPluginTrusted(Array.isArray(config.netPluginWhitelist.get()) ? config.netPluginWhitelist.get()! : [])
+      if (_restoreFetch === null && !(globalThis as any).fetch?.__dockFlashTraced) {
+        installRequestTracer()
+      }
+    } else if (_restoreFetch !== null) {
+      // Disabled: stop wrapping fetch (restores the original) and release the
+      // monitor so no further recording happens. The routes read the nulled
+      // monitor as empty.
+      _restoreFetch()
+      _networkMonitor = null
     }
   }
   reconfigure()
-  if (_restoreFetch === null) installRequestTracer()
   ctx.effect(() => {
     // Return the cleanup function — Cordis calls it when the context is disposed.
     const restore = _restoreFetch
@@ -869,6 +909,30 @@ export function apply(ctx: Context, config: ProxyConfig) {
       if (raw) return raw
     }
     return null
+  }
+
+  /**
+   * The per-class proxy variables currently in force, read the same way the
+   * policy does (launch snapshot first, process.env as fallback). Unlike the
+   * single `httpProxy` field — which reports the *first* value found, mirroring
+   * how undici falls back https→http — this keeps each family's value distinct,
+   * so a UI can list HTTP_PROXY / HTTPS_PROXY / ALL_PROXY verbatim. `https`
+   * checks HTTPS_PROXY first, then HTTP, matching dsh-http-proxy's fallback;
+   * `http` and `all` are reported exactly as found.
+   */
+  function proxyEnvSummary(): {
+    http: string | null
+    https: string | null
+    all: string | null
+  } {
+    return {
+      // HTTPS falls back to the HTTP proxy when no HTTPS_PROXY is set — that is
+      // an undici behaviour (https uses https_proxy, else http_proxy) and the
+      // display should mirror what routing actually does.
+      https: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
+      http: readProxyEnv(['HTTP_PROXY', 'http_proxy']),
+      all: readProxyEnv(['ALL_PROXY', 'all_proxy']),
+    }
   }
 
   /**
@@ -1002,6 +1066,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
       // routing once the dispatcher has been re-installed.
       noProxy: resolveNoProxy(mode, custom) ?? null,
       httpProxy: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
+      proxyEnv: proxyEnvSummary(),
       proxied: route.proxied,
       routeError: route.error,
     }
@@ -1133,7 +1198,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
   // re-apply proxy env and Network Monitor thresholds.
   ctx.on('loader/volatile-update' as any, (paths: string[][]) => {
     const proxyPaths = ['proxyMode', 'customNoProxy', 'useProxy']
-    const monitorPaths = ['netLogCap', 'netSuspectWarn', 'netSuspectErr', 'netWhitelist', 'netPluginWhitelist']
+    const monitorPaths = ['netAuditEnabled', 'netLogCap', 'netSuspectWarn', 'netSuspectErr', 'netWhitelist', 'netPluginWhitelist']
     const alertPaths = ['hostAlertQueueCap', 'hostAlertMaxAge']
     const relevant = (p: string[]) => p.length === 1
     const affectsProxy = paths.some((p) => relevant(p) && proxyPaths.includes(p[0]))
@@ -1193,6 +1258,9 @@ export function apply(ctx: Context, config: ProxyConfig) {
           // telling the user their proxy has no effect when they asked for a
           // bypass.
           httpProxy: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
+          // Per-class proxy variables, each verbatim — lets the client render a
+          // complete read-only inventory (HTTP_PROXY / HTTPS_PROXY / ALL_PROXY).
+          proxyEnv: proxyEnvSummary(),
           routeError: route.error,
         })
       },
@@ -1347,9 +1415,17 @@ export function apply(ctx: Context, config: ProxyConfig) {
       kind: 'exact',
       path: '/plugins/dock-flash/network-log',
       handler: async (req: IncomingMessage, res: ServerResponse) => {
+        // DELETE clears the auditor's captured history (ring buffer + scoring
+        // state), so the stream log and the alert stream both come back empty —
+        // what the panel 清空 button must do, not just blank the displayed list.
+        if (req.method === 'DELETE') {
+          if (_networkMonitor) _networkMonitor.clear()
+          sendJson(res, 200, { ok: true })
+          return
+        }
         if (req.method !== 'GET') {
           res.statusCode = 405
-          res.setHeader('allow', 'GET')
+          res.setHeader('allow', 'GET, DELETE')
           res.end()
           return
         }

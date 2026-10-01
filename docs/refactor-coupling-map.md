@@ -51,14 +51,14 @@
 
 | # | 耦合位置 | 涉及子系统 | 说明（含行号） |
 |---|---|---|---|
-| **K1** | `loader/volatile-update` handler（[src/index.ts:1134-1151](src/index.ts#L1134-L1151)） | A→B、A→C、A→D | 一个事件处理器按路径前缀同时驱动代理重装与审计 reconfigure，是**三套子系统的公共入口**。 |
-| **K2** | 单一 `ctx.inject(['webServer'], …)` 块（[src/index.ts:1162-1468](src/index.ts#L1162-L1468)） | B+C+D | 8 条路由全部注册在同一个官方长函数里，无法单独启用/卸载任一子系统。 |
-| **K3** | `reconfigure()`（[src/index.ts:831-837](src/index.ts#L831-L837)） | A→C、A→D | 从同一个 config 同时刷新「审计容量/白名单」(C) 与「告警队列容量」(D)。 |
-| **K4** | 全局 `fetch` 包装（`installRequestTracer()`，[src/index.ts:740-782](src/index.ts#L740-L782)） | C + 宿主全局 | 网络审计**默认安装**，影响整个 DSH 进程的所有 outbound 请求。 |
-| **K5** | `resolvePluginId()` / `_pluginIdFromStack()`（[src/index.ts:541-569](src/index.ts#L541-L569)） | C | 用 `new Error().stack` 归因请求来源，脆弱的启发式。 |
-| **K6** | **代理路由被告警用**：`createNetworkAlertProvider` 轮询 `/proxy-status` 测网速（[lib/client.js:4185-4198](lib/client.js#L4185-L4198)） | D→B（反向） | 告警子系统依赖代理子系统的 HTTP 路由来估网络延迟——跨子系统硬依赖。 |
-| **K7** | 客户端 `loadHostPreferences()` 单一映射（[lib/client.js:3106-3135](lib/client.js#L3106-L3135)） | A+B+C+D | 34 个设置项在**一个对象**里映射到宿主命名空间，被注释明示「this list IS the contract」。任一子系统新增设置都耦合到这个清单。 |
-| **K8** | 客户端 `apply()` 内 `ctx.provide('quickControl')` 与 `ctx.provide('dockFlashAlerts')` 并行（[lib/client.js:9910-9924](lib/client.js#L9910-L9924)） | A+D | 两个 service 在同一个 apply 生命周期里注册，dispose 相互纠缠（`alertRegistry.start()/stop()` 与面板状态机同生命周期）。 |
+| **K1** | `loader/volatile-update` handler（[src/index.ts:1174-1191](../src/index.ts#L1174-L1191)） | A→B、A→C、A→D | 一个事件处理器按路径前缀同时驱动代理重装与审计 reconfigure，是**三套子系统的公共入口**。 |
+| **K2** | 单一 `ctx.inject(['webServer'], …)` 块（[src/index.ts:1202-1516](../src/index.ts#L1202-L1516)） | B+C+D | 8 条路由全部注册在同一个官方长函数里，无法单独启用/卸载任一子系统。 |
+| **K3** | `reconfigure()`（[src/index.ts:858-878](../src/index.ts#L858-L878)） | A→C、A→D | 从同一个 config 同时刷新「审计容量/白名单」(C) 与「告警队列容量」(D)。 |
+| **K4** | 全局 `fetch` 包装（`installRequestTracer()`，[src/index.ts:765-807](../src/index.ts#L765-L807)） | C + 宿主全局 | 网络审计**默认安装**，影响整个 DSH 进程的所有 outbound 请求。 |
+| **K5** | `resolvePluginId()` / `_pluginIdFromStack()`（[src/index.ts:554-569](../src/index.ts#L554-L569)） | C | 用 `new Error().stack` 归因请求来源，脆弱的启发式。 |
+| **K6** | **代理路由被告警用**：`createNetworkAlertProvider` 轮询 `/proxy-status` 测网速（[lib/client.js:4753-4870](../lib/client.js#L4753-L4870)） | D→B（反向） | 告警子系统依赖代理子系统的 HTTP 路由来估网络延迟——跨子系统硬依赖。 |
+| **K7** | 客户端 `loadHostPreferences()` 单一映射（[lib/client.js:3409-3470](../lib/client.js#L3409-L3470)） | A+B+C+D | 34 个设置项在**一个对象**里映射到宿主命名空间，被注释明示「this list IS the contract」。任一子系统新增设置都耦合到这个清单。 |
+| **K8** | 客户端 `apply()` 内 `ctx.provide('quickControl')` 与 `ctx.provide('dockFlashAlerts')` 并行（[lib/client.js:10310-10324](../lib/client.js#L10310-L10324)） | A+D | 两个 service 在同一个 apply 生命周期里注册，dispose 相互纠缠（`alertRegistry.start()/stop()` 与面板状态机同生命周期）。 |
 
 ---
 
