@@ -85,40 +85,90 @@ const TEST_TIMEOUT_MS = 10000;
 const MAX_REDIRECTS = 5;
 /** Bytes of response body echoed back for inspection. */
 const BODY_SNIPPET_LIMIT = 200;
-const entry = {
-    proxyMode: DEFAULT_MODE,
-    customNoProxy: DEFAULT_CUSTOM,
-    testUrl: DEFAULT_TEST_URL,
-    panelOrder: DEFAULT_PANEL_ORDER,
-    activeSkin: DEFAULT_ACTIVE_SKIN,
-    triggerPosition: DEFAULT_TRIGGER_POSITION,
-    triggerOverlayOffset: DEFAULT_TRIGGER_OVERLAY_OFFSET,
-    triggerSize: DEFAULT_TRIGGER_SIZE,
-    triggerLayer: DEFAULT_TRIGGER_LAYER,
-    overlayOpacity: DEFAULT_OVERLAY_OPACITY,
-    // Alert thresholds
-    memThresholdInfo: DEFAULT_MEM_THRESHOLD_INFO,
-    memThresholdWarning: DEFAULT_MEM_THRESHOLD_WARNING,
-    memThresholdError: DEFAULT_MEM_THRESHOLD_ERROR,
-    memPollBase: DEFAULT_MEM_POLL_BASE,
-    memPollMin: DEFAULT_MEM_POLL_MIN,
-    ctxApproxWindow: DEFAULT_CTX_APPROX_WINDOW,
-    ctxTokensPerMsg: DEFAULT_CTX_TOKENS_PER_MSG,
-    ctxThresholdInfo: DEFAULT_CTX_THRESHOLD_INFO,
-    ctxThresholdWarning: DEFAULT_CTX_THRESHOLD_WARNING,
-    ctxThresholdError: DEFAULT_CTX_THRESHOLD_ERROR,
-    ctxPollBase: DEFAULT_CTX_POLL_BASE,
-    ctxPollMin: DEFAULT_CTX_POLL_MIN,
-    netSlowThreshold: DEFAULT_NET_SLOW_THRESHOLD,
-    netPollBase: DEFAULT_NET_POLL_BASE,
-    netPollMin: DEFAULT_NET_POLL_MIN,
-    netLogCap: DEFAULT_NET_LOG_CAP,
-    netSuspectWarn: DEFAULT_NET_SUSPECT_WARN,
-    netSuspectErr: DEFAULT_NET_SUSPECT_ERR,
-    netWhitelist: [],
-    hostAlertQueueCap: DEFAULT_HOST_ALERT_QUEUE_CAP,
-    hostAlertMaxAge: DEFAULT_HOST_ALERT_MAX_AGE,
-};
+/**
+ * `dict`'s arguments are (value, key) — value schema first, contrary to how
+ * the call reads. Nested objects need `.default()` at every level: a
+ * property whose schema resolves to `undefined` fails the whole thing with
+ * `unsupported type "undefined"`, which surfaced while building this.
+ */
+const PanelOrderSchema = Schema.object({
+    builtin: Schema.array(Schema.string()).default([]),
+    ext: Schema.array(Schema.string()).default([]),
+    switches: Schema.dict(Schema.array(Schema.string()), Schema.string()).default({}),
+    hidden: Schema.dict(Schema.array(Schema.string()), Schema.string()).default({}),
+}).default(DEFAULT_PANEL_ORDER);
+/**
+ * The plugin's `Config` schema — the host's composition defaults, exported so
+ * the Cordis loader publishes it as `runtime.Config`.
+ *
+ * This is not a cosmetic nicety. dsh-settings resolves a namespace's editable
+ * form from `entry.fiber.runtime.Config` (its `schema(entry)` reads exactly
+ * that), so a plugin without an exported `Config` is NOT configurable by the
+ * native configuration editor — and a client preference write through
+ * `settings.update('dock-flash', …)` is refused with `No configurable plugin
+ * entry "dock-flash"`.
+ *
+ * Every field is marked `.volatile()`: live-editable without plugin restart.
+ * The settings configuration editor only shows volatile fields; ordinary
+ * (non-volatile) config requires a Cordis configuration file edit and a
+ * restart. Since all dock-flash settings are user preferences the client
+ * writes through `ctx.remote.settings`, they must all be volatile.
+ */
+export const Config = Schema.object({
+    proxyMode: Schema.string().default(DEFAULT_MODE).volatile(),
+    customNoProxy: Schema.string().default(DEFAULT_CUSTOM).volatile(),
+    testUrl: Schema.string().default(DEFAULT_TEST_URL).volatile(),
+    // Keep the old field so legacy clients don't break; migrated on read.
+    useProxy: Schema.boolean().default(true).volatile(),
+    // Client-owned preferences. The host stores them and never interprets
+    // them, so they are typed loosely on purpose: `activeSkin` names a skin
+    // that may not be installed on this machine, and `triggerPosition` names
+    // a slot the client validates against its own TRIGGER_POSITIONS list.
+    // Pinning either to an enum here would make a stored preference
+    // un-writable the moment the client's lists change.
+    panelOrder: PanelOrderSchema.volatile(),
+    activeSkin: Schema.string().default(DEFAULT_ACTIVE_SKIN).volatile(),
+    triggerPosition: Schema.string().default(DEFAULT_TRIGGER_POSITION).volatile(),
+    // Every level of a nested object needs `.default()`, or the whole resolve
+    // fails with `unsupported type "undefined"` — both the object and each
+    // number, which is the trap that cost a round in 1.1.0.
+    triggerOverlayOffset: Schema.object({
+        dx: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dx),
+        dy: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dy),
+    }).default(DEFAULT_TRIGGER_OVERLAY_OFFSET).volatile(),
+    // No min/max on purpose — see the field's comment: the range belongs to
+    // the client, and it moves with the selected trigger position.
+    triggerSize: Schema.number().default(DEFAULT_TRIGGER_SIZE).volatile(),
+    // Both are client-owned presets the host never interprets: the sensible
+    // range depends on the host UI they sit among, and clamping them here
+    // would make a stored value un-writable the moment the client's preset
+    // list changes (the 1.1.0 lesson this namespace already records).
+    triggerLayer: Schema.number().default(DEFAULT_TRIGGER_LAYER).volatile(),
+    overlayOpacity: Schema.number().default(DEFAULT_OVERLAY_OPACITY).volatile(),
+    // Alert thresholds — percentages (0–100) for thresholds, ms for intervals
+    memThresholdInfo: Schema.number().default(DEFAULT_MEM_THRESHOLD_INFO).volatile(),
+    memThresholdWarning: Schema.number().default(DEFAULT_MEM_THRESHOLD_WARNING).volatile(),
+    memThresholdError: Schema.number().default(DEFAULT_MEM_THRESHOLD_ERROR).volatile(),
+    memPollBase: Schema.number().default(DEFAULT_MEM_POLL_BASE).volatile(),
+    memPollMin: Schema.number().default(DEFAULT_MEM_POLL_MIN).volatile(),
+    ctxApproxWindow: Schema.number().default(DEFAULT_CTX_APPROX_WINDOW).volatile(),
+    ctxTokensPerMsg: Schema.number().default(DEFAULT_CTX_TOKENS_PER_MSG).volatile(),
+    ctxThresholdInfo: Schema.number().default(DEFAULT_CTX_THRESHOLD_INFO).volatile(),
+    ctxThresholdWarning: Schema.number().default(DEFAULT_CTX_THRESHOLD_WARNING).volatile(),
+    ctxThresholdError: Schema.number().default(DEFAULT_CTX_THRESHOLD_ERROR).volatile(),
+    ctxPollBase: Schema.number().default(DEFAULT_CTX_POLL_BASE).volatile(),
+    ctxPollMin: Schema.number().default(DEFAULT_CTX_POLL_MIN).volatile(),
+    netSlowThreshold: Schema.number().default(DEFAULT_NET_SLOW_THRESHOLD).volatile(),
+    netPollBase: Schema.number().default(DEFAULT_NET_POLL_BASE).volatile(),
+    netPollMin: Schema.number().default(DEFAULT_NET_POLL_MIN).volatile(),
+    hostAlertQueueCap: Schema.number().default(DEFAULT_HOST_ALERT_QUEUE_CAP).volatile(),
+    hostAlertMaxAge: Schema.number().default(DEFAULT_HOST_ALERT_MAX_AGE).volatile(),
+    // Network Monitor (outbound request auditor)
+    netLogCap: Schema.number().default(DEFAULT_NET_LOG_CAP).volatile(),
+    netSuspectWarn: Schema.number().default(DEFAULT_NET_SUSPECT_WARN).volatile(),
+    netSuspectErr: Schema.number().default(DEFAULT_NET_SUSPECT_ERR).volatile(),
+    netWhitelist: Schema.array(Schema.string()).default([]).volatile(),
+});
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
 const API_BYPASS_DOMAINS = 'api.deepseek.com,chat.deepseek.com';
 /** Map a proxyMode (+ optional customNoProxy) to the actual NO_PROXY value. */
@@ -158,18 +208,13 @@ let _disposeProxyPolicy = null;
  * The last `(mode, custom)` pair this plugin actually applied, joined by a NUL
  * so `("a","b\0c")` cannot collide with `("a\0b","c")`.
  *
- * Two paths reach `applyProxyEnv` at startup: `installSection` invokes its
- * `onChange` synchronously while installing (dsh-settings does — see
- * `installSection` in `@deepseek-ai/dsh-settings`), and the composition then
- * applies the initial state explicitly. Both ran, and because `applyProxyEnv`
+ * Two paths can reach `applyProxyEnv`: the initial startup apply below and the
+ * `loader/volatile-update` handler after a settings edit. Both are async — each
  * suspends on `await loadProxyModule()` *before* it touches
- * `_disposeProxyPolicy`, neither install could see the other: the second
- * overwrote the field and the first disposer was dropped — one leaked
- * ProxyAgent and socket pool per startup, which is exactly the leak the
- * release-before-install step exists to prevent. The duplicate also meant the
- * pair was logged twice, so the proxy log could no longer distinguish a real
- * mode switch from startup noise, and every unrelated edit in this namespace
- * (changing `testUrl`, say) re-installed the dispatcher as well.
+ * `_disposeProxyPolicy` — so without a guard the later caller would overwrite
+ * the field and the earlier disposer would be dropped, leaking one ProxyAgent
+ * and its socket pool. The duplicate would also log the pair twice, so the
+ * proxy log could no longer distinguish a real mode switch from startup noise.
  *
  * The guard is assigned before the first `await` on purpose — that is what
  * makes the second caller in the same tick a no-op — and cleared again on the
@@ -524,21 +569,18 @@ async function readJsonBody(req, limit = 4096) {
         return null;
     }
 }
-export function apply(ctx) {
-    // The authoritative config: the settings section while one is attached,
-    // the composition entry otherwise.
-    let source = () => entry;
+export function apply(ctx, config) {
     // ── Network Monitor bootstrap ──────────────────────────────────────────
-    // One bounded monitor per process. Config is (re)read from `source()` so a
-    // late settings reply or an unrelated field edit refreshes thresholds and
-    // whitelist. The tracer wrapper is installed once and restored on dispose.
+    // One bounded monitor per process. Config is (re)read from volatile
+    // references so a late settings reply or an unrelated field edit refreshes
+    // thresholds and whitelist. The tracer wrapper is installed once and
+    // restored on dispose.
     if (!_networkMonitor)
-        _networkMonitor = new NetworkMonitor(entry.netLogCap || DEFAULT_NET_LOG_CAP);
+        _networkMonitor = new NetworkMonitor(config.netLogCap.get() || DEFAULT_NET_LOG_CAP);
     const reconfigure = () => {
-        const cfg = source();
         if (_networkMonitor) {
-            _networkMonitor.setCap(cfg.netLogCap);
-            _networkMonitor.setUserTrusted(Array.isArray(cfg.netWhitelist) ? cfg.netWhitelist : []);
+            _networkMonitor.setCap(config.netLogCap.get());
+            _networkMonitor.setUserTrusted(Array.isArray(config.netWhitelist.get()) ? config.netWhitelist.get() : []);
         }
     };
     reconfigure();
@@ -578,6 +620,18 @@ export function apply(ctx) {
                 return raw;
         }
         return null;
+    }
+    /**
+     * Resolve the effective proxy mode, accounting for the legacy `useProxy`
+     * migration: if `proxyMode` sits at its default but `useProxy` was explicitly
+     * set, the old boolean takes over.
+     */
+    function resolveMode() {
+        let mode = config.proxyMode.get() || DEFAULT_MODE;
+        if (!config.proxyMode.get() && typeof config.useProxy?.get() === 'boolean') {
+            mode = config.useProxy.get() ? 'all-proxy' : 'all-bypass';
+        }
+        return mode;
     }
     /**
      * Publish the chosen bypass list and re-install the process-wide dispatcher.
@@ -675,7 +729,7 @@ export function apply(ctx) {
      */
     function resolveTestUrl(override) {
         const fromOverride = typeof override === 'string' ? override.trim() : '';
-        const raw = fromOverride || String(source().testUrl || '').trim();
+        const raw = fromOverride || String(config.testUrl.get() || '').trim();
         return raw || DEFAULT_TEST_URL;
     }
     /**
@@ -686,12 +740,8 @@ export function apply(ctx) {
      * own `InvalidTestUrl` only prints the same message twice.
      */
     async function describeProxyRoute(url, probeRoute = true) {
-        const cfg = source();
-        let mode = cfg.proxyMode || DEFAULT_MODE;
-        if (!cfg.proxyMode && typeof cfg.useProxy === 'boolean') {
-            mode = cfg.useProxy ? 'all-proxy' : 'all-bypass';
-        }
-        const custom = cfg.customNoProxy || '';
+        const mode = resolveMode();
+        const custom = config.customNoProxy.get() || '';
         const route = probeRoute
             ? await proxyRouteForUrl(url)
             : { proxied: false, error: null };
@@ -819,111 +869,43 @@ export function apply(ctx) {
         });
     }
     // When the settings service is available, register the dock-flash
-    // namespace: the proxy preference the host acts on, plus the user
-    // preferences the client previously kept in localStorage.
+    // namespace's page policy. Volatile fields in the exported `Config` schema
+    // are what make this plugin's settings editable without restart —
+    // `settings.configure` tells the settings UI to show a form for this
+    // instance; it does not register a schema (that is `Config`'s job).
     ctx.inject(['settings'], (settingsCtx) => {
-        /**
-         * `dict`'s arguments are (value, key) — value schema first, contrary to how
-         * the call reads. Nested objects need `.default()` at every level: a
-         * property whose schema resolves to `undefined` fails the whole thing with
-         * `unsupported type "undefined"`, which surfaced while building this.
-         */
-        const PanelOrderSchema = Schema.object({
-            builtin: Schema.array(Schema.string()).default([]),
-            ext: Schema.array(Schema.string()).default([]),
-            switches: Schema.dict(Schema.array(Schema.string()), Schema.string()).default({}),
-            hidden: Schema.dict(Schema.array(Schema.string()), Schema.string()).default({}),
-        }).default(DEFAULT_PANEL_ORDER);
-        const SettingsSchema = Schema.object({
-            proxyMode: Schema.string().default(DEFAULT_MODE),
-            customNoProxy: Schema.string().default(DEFAULT_CUSTOM),
-            testUrl: Schema.string().default(DEFAULT_TEST_URL),
-            // Keep the old field so legacy clients don't break; migrated on read.
-            useProxy: Schema.boolean().default(true),
-            // Client-owned preferences. The host stores them and never interprets
-            // them, so they are typed loosely on purpose: `activeSkin` names a skin
-            // that may not be installed on this machine, and `triggerPosition` names
-            // a slot the client validates against its own TRIGGER_POSITIONS list.
-            // Pinning either to an enum here would make a stored preference
-            // un-writable the moment the client's lists change.
-            panelOrder: PanelOrderSchema,
-            activeSkin: Schema.string().default(DEFAULT_ACTIVE_SKIN),
-            triggerPosition: Schema.string().default(DEFAULT_TRIGGER_POSITION),
-            // Every level of a nested object needs `.default()`, or the whole resolve
-            // fails with `unsupported type "undefined"` — both the object and each
-            // number, which is the trap that cost a round in 1.1.0.
-            triggerOverlayOffset: Schema.object({
-                dx: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dx),
-                dy: Schema.number().default(DEFAULT_TRIGGER_OVERLAY_OFFSET.dy),
-            }).default(DEFAULT_TRIGGER_OVERLAY_OFFSET),
-            // No min/max on purpose — see the field's comment: the range belongs to
-            // the client, and it moves with the selected trigger position.
-            triggerSize: Schema.number().default(DEFAULT_TRIGGER_SIZE),
-            // Both are client-owned presets the host never interprets: the sensible
-            // range depends on the host UI they sit among, and clamping them here
-            // would make a stored value un-writable the moment the client's preset
-            // list changes (the 1.1.0 lesson this namespace already records).
-            triggerLayer: Schema.number().default(DEFAULT_TRIGGER_LAYER),
-            overlayOpacity: Schema.number().default(DEFAULT_OVERLAY_OPACITY),
-            // Alert thresholds — percentages (0–100) for thresholds, ms for intervals
-            memThresholdInfo: Schema.number().default(DEFAULT_MEM_THRESHOLD_INFO),
-            memThresholdWarning: Schema.number().default(DEFAULT_MEM_THRESHOLD_WARNING),
-            memThresholdError: Schema.number().default(DEFAULT_MEM_THRESHOLD_ERROR),
-            memPollBase: Schema.number().default(DEFAULT_MEM_POLL_BASE),
-            memPollMin: Schema.number().default(DEFAULT_MEM_POLL_MIN),
-            ctxApproxWindow: Schema.number().default(DEFAULT_CTX_APPROX_WINDOW),
-            ctxTokensPerMsg: Schema.number().default(DEFAULT_CTX_TOKENS_PER_MSG),
-            ctxThresholdInfo: Schema.number().default(DEFAULT_CTX_THRESHOLD_INFO),
-            ctxThresholdWarning: Schema.number().default(DEFAULT_CTX_THRESHOLD_WARNING),
-            ctxThresholdError: Schema.number().default(DEFAULT_CTX_THRESHOLD_ERROR),
-            ctxPollBase: Schema.number().default(DEFAULT_CTX_POLL_BASE),
-            ctxPollMin: Schema.number().default(DEFAULT_CTX_POLL_MIN),
-            netSlowThreshold: Schema.number().default(DEFAULT_NET_SLOW_THRESHOLD),
-            netPollBase: Schema.number().default(DEFAULT_NET_POLL_BASE),
-            netPollMin: Schema.number().default(DEFAULT_NET_POLL_MIN),
-            hostAlertQueueCap: Schema.number().default(DEFAULT_HOST_ALERT_QUEUE_CAP),
-            hostAlertMaxAge: Schema.number().default(DEFAULT_HOST_ALERT_MAX_AGE),
-            // Network Monitor (outbound request auditor)
-            netLogCap: Schema.number().default(DEFAULT_NET_LOG_CAP),
-            netSuspectWarn: Schema.number().default(DEFAULT_NET_SUSPECT_WARN),
-            netSuspectErr: Schema.number().default(DEFAULT_NET_SUSPECT_ERR),
-            netWhitelist: Schema.array(Schema.string()).default([]),
-        });
-        settingsCtx.settings.installSection(ctx, 'dock-flash', SettingsSchema, entry, {
-            setSource: (current) => {
-                source = current;
-            },
-            onChange: () => {
-                try {
-                    const cfg = source();
-                    // Keep the Network Monitor thresholds/whitelist in step with any
-                    // settings write (a whitelist edit flows through this path).
-                    reconfigure();
-                    // Migrate legacy useProxy → proxyMode on first change
-                    let mode = cfg.proxyMode || DEFAULT_MODE;
-                    if (!cfg.proxyMode && typeof cfg.useProxy === 'boolean') {
-                        mode = cfg.useProxy ? 'all-proxy' : 'all-bypass';
-                        cfg.proxyMode = mode;
-                    }
-                    applyProxyEnv(mode, cfg.customNoProxy || '');
-                }
-                catch (e) {
-                    console.error('[dock-flash] failed to update proxy setting:', e);
-                }
-            },
-        });
-        // Apply the initial state immediately
-        try {
-            const cfg = source();
-            let mode = cfg.proxyMode || DEFAULT_MODE;
-            if (!cfg.proxyMode && typeof cfg.useProxy === 'boolean') {
-                mode = cfg.useProxy ? 'all-proxy' : 'all-bypass';
-                cfg.proxyMode = mode;
-            }
-            applyProxyEnv(mode, cfg.customNoProxy || '');
-        }
-        catch (_) { }
+        settingsCtx.effect(() => settingsCtx.settings.configure({ auto: false }, ctx.fiber));
     });
+    // React to volatile config updates in-place. The loader's `_commitVolatile()`
+    // updates the `Volatile<T>` references in `config` and then emits
+    // `loader/volatile-update` with the paths that changed. This is where we
+    // re-apply proxy env and Network Monitor thresholds.
+    ctx.on('loader/volatile-update', (paths) => {
+        const proxyPaths = ['proxyMode', 'customNoProxy', 'useProxy'];
+        const monitorPaths = ['netLogCap', 'netSuspectWarn', 'netSuspectErr', 'netWhitelist'];
+        const alertPaths = ['hostAlertQueueCap', 'hostAlertMaxAge'];
+        const relevant = (p) => p.length === 1;
+        const affectsProxy = paths.some((p) => relevant(p) && proxyPaths.includes(p[0]));
+        const affectsMonitor = paths.some((p) => relevant(p) && monitorPaths.includes(p[0]));
+        const affectsAlerts = paths.some((p) => relevant(p) && alertPaths.includes(p[0]));
+        if (affectsMonitor || affectsAlerts)
+            reconfigure();
+        if (affectsProxy) {
+            try {
+                const mode = resolveMode();
+                applyProxyEnv(mode, config.customNoProxy.get() || '');
+            }
+            catch (e) {
+                console.error('[dock-flash] failed to update proxy setting:', e);
+            }
+        }
+    });
+    // Apply the initial proxy state immediately
+    try {
+        const mode = resolveMode();
+        applyProxyEnv(mode, config.customNoProxy.get() || '');
+    }
+    catch (_) { }
     // ── HTTP API routes for client-side features ──────────────────────────
     // The webServer type augmentation lives in @deepseek-ai/dsh-host-webserver
     // which is not a direct dependency; cast through `any` for the register calls.
@@ -941,12 +923,8 @@ export function apply(ctx) {
                     res.end();
                     return;
                 }
-                const cfg = source();
-                let mode = cfg.proxyMode || DEFAULT_MODE;
-                if (!cfg.proxyMode && typeof cfg.useProxy === 'boolean') {
-                    mode = cfg.useProxy ? 'all-proxy' : 'all-bypass';
-                }
-                const custom = cfg.customNoProxy || '';
+                const mode = resolveMode();
+                const custom = config.customNoProxy.get() || '';
                 const testUrl = resolveTestUrl();
                 const route = await proxyRouteForUrl(testUrl);
                 sendJson(res, 200, {
@@ -1060,9 +1038,8 @@ export function apply(ctx) {
                     sendJson(res, 400, { error: 'Missing required fields: id, title' });
                     return;
                 }
-                const cfg = source();
-                const cap = cfg.hostAlertQueueCap || DEFAULT_HOST_ALERT_QUEUE_CAP;
-                const maxAgeHours = cfg.hostAlertMaxAge ?? DEFAULT_HOST_ALERT_MAX_AGE;
+                const cap = config.hostAlertQueueCap.get() || DEFAULT_HOST_ALERT_QUEUE_CAP;
+                const maxAgeHours = config.hostAlertMaxAge.get() ?? DEFAULT_HOST_ALERT_MAX_AGE;
                 const maxAgeMs = (maxAgeHours > 0 ? maxAgeHours : DEFAULT_HOST_ALERT_MAX_AGE) * 3600_000;
                 const cutoff = Date.now() - maxAgeMs;
                 // Prune expired entries first, then cap the queue
@@ -1098,8 +1075,7 @@ export function apply(ctx) {
                     res.end();
                     return;
                 }
-                const cfg = source();
-                const maxAgeHours = cfg.hostAlertMaxAge ?? DEFAULT_HOST_ALERT_MAX_AGE;
+                const maxAgeHours = config.hostAlertMaxAge.get() ?? DEFAULT_HOST_ALERT_MAX_AGE;
                 const maxAgeMs = (maxAgeHours > 0 ? maxAgeHours : DEFAULT_HOST_ALERT_MAX_AGE) * 3600_000;
                 const cutoff = Date.now() - maxAgeMs;
                 // Prune expired entries before draining
@@ -1153,8 +1129,7 @@ export function apply(ctx) {
                     sendJson(res, 200, { alerts: [] });
                     return;
                 }
-                const cfg = source();
-                const threshold = cfg.netSuspectWarn ?? DEFAULT_NET_SUSPECT_WARN;
+                const threshold = config.netSuspectWarn.get() ?? DEFAULT_NET_SUSPECT_WARN;
                 sendJson(res, 200, { alerts: _networkMonitor.alerts(threshold).reverse() });
             },
         }), 'dock-flash: GET /plugins/dock-flash/network-alerts');
