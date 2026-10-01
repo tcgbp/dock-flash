@@ -168,6 +168,7 @@ export const Config = Schema.object({
     netSuspectWarn: Schema.number().default(DEFAULT_NET_SUSPECT_WARN).volatile(),
     netSuspectErr: Schema.number().default(DEFAULT_NET_SUSPECT_ERR).volatile(),
     netWhitelist: Schema.array(Schema.string()).default([]).volatile(),
+    netPluginWhitelist: Schema.array(Schema.string()).default([]).volatile(),
 });
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
 const API_BYPASS_DOMAINS = 'api.deepseek.com,chat.deepseek.com';
@@ -351,6 +352,8 @@ class NetworkMonitor {
     _seq = 0;
     /** Resolved once; the mutable set of user-trusted hosts. */
     _userTrusted = new Set();
+    /** Resolved once; the mutable set of user-trusted plugin IDs. */
+    _pluginTrusted = new Set();
     _seenHosts = new Map();
     constructor(_cap) {
         this._cap = _cap;
@@ -362,6 +365,16 @@ class NetworkMonitor {
     }
     setUserTrusted(hosts) {
         this._userTrusted = new Set((hosts || []).map((h) => String(h).toLowerCase()));
+    }
+    setPluginTrusted(plugins) {
+        this._pluginTrusted = new Set((plugins || []).map((p) => String(p).toLowerCase()));
+    }
+    /** A plugin on the user-trusted list, or a request not attributable to any */
+    isTrustedPlugin(pluginId) {
+        const p = (pluginId || '').toLowerCase();
+        if (!p || p === _UNKNOWN_PLUGIN)
+            return false;
+        return this._pluginTrusted.has(p);
     }
     isTrusted(host) {
         const h = host.toLowerCase();
@@ -377,8 +390,9 @@ class NetworkMonitor {
         }
         return false;
     }
-    _score(host, method, reqBytes, tls, isNew) {
-        if (this.isTrusted(host))
+    _score(host, pluginId, method, reqBytes, tls, isNew) {
+        // Trusted host OR trusted plugin ⇨ no suspicion, no flags.
+        if (this.isTrusted(host) || this.isTrustedPlugin(pluginId))
             return { risk: 0, flags: [] };
         let risk = 30; // unknown host
         const flags = ['unknown-host'];
@@ -415,10 +429,11 @@ class NetworkMonitor {
         }
         const firstSeen = !this._seenHosts.has(host);
         this._seenHosts.set(host, (this._seenHosts.get(host) || 0) + 1);
-        const { risk, flags } = this._score(host, input.method, input.reqBytes, input.tls, firstSeen);
+        const pluginId = resolvePluginId();
+        const { risk, flags } = this._score(host, pluginId, input.method, input.reqBytes, input.tls, firstSeen);
         const entry = {
             seq: ++this._seq,
-            pluginId: resolvePluginId(),
+            pluginId,
             method: input.method,
             host,
             pathname,
@@ -581,6 +596,7 @@ export function apply(ctx, config) {
         if (_networkMonitor) {
             _networkMonitor.setCap(config.netLogCap.get());
             _networkMonitor.setUserTrusted(Array.isArray(config.netWhitelist.get()) ? config.netWhitelist.get() : []);
+            _networkMonitor.setPluginTrusted(Array.isArray(config.netPluginWhitelist.get()) ? config.netPluginWhitelist.get() : []);
         }
     };
     reconfigure();
@@ -882,7 +898,7 @@ export function apply(ctx, config) {
     // re-apply proxy env and Network Monitor thresholds.
     ctx.on('loader/volatile-update', (paths) => {
         const proxyPaths = ['proxyMode', 'customNoProxy', 'useProxy'];
-        const monitorPaths = ['netLogCap', 'netSuspectWarn', 'netSuspectErr', 'netWhitelist'];
+        const monitorPaths = ['netLogCap', 'netSuspectWarn', 'netSuspectErr', 'netWhitelist', 'netPluginWhitelist'];
         const alertPaths = ['hostAlertQueueCap', 'hostAlertMaxAge'];
         const relevant = (p) => p.length === 1;
         const affectsProxy = paths.some((p) => relevant(p) && proxyPaths.includes(p[0]));
@@ -1192,5 +1208,52 @@ export function apply(ctx, config) {
                 sendJson(res, 200, { ok: true, hosts });
             },
         }), 'dock-flash: POST /plugins/dock-flash/network-whitelist');
+        // Plugin whitelist management — same shape as the host whitelist, but keyed
+        // on plugin ID. The auditor zeroes the risk of every request attributed to
+        // a whitelisted plugin (the log still records it).
+        wsCtx.effect(() => wsCtx.webServer.register({
+            kind: 'exact',
+            path: '/plugins/dock-flash/network-plugin-whitelist',
+            handler: async (req, res) => {
+                if (req.method !== 'POST') {
+                    res.statusCode = 405;
+                    res.setHeader('allow', 'POST');
+                    res.end();
+                    return;
+                }
+                const body = await readJsonBody(req);
+                if (!body || !Array.isArray(body.plugins)) {
+                    sendJson(res, 400, { error: 'Missing or invalid plugins array' });
+                    return;
+                }
+                const plugins = [];
+                for (const p of body.plugins) {
+                    if (typeof p !== 'string') {
+                        sendJson(res, 400, { error: 'plugins must be strings' });
+                        return;
+                    }
+                    const s = p.trim();
+                    if (!s)
+                        continue;
+                    plugins.push(s.toLowerCase());
+                }
+                if (_networkMonitor)
+                    _networkMonitor.setPluginTrusted(plugins);
+                let rs = null;
+                try {
+                    rs = ctx.get ? ctx.get('remote.settings') ?? ctx.remote?.settings ?? null : null;
+                }
+                catch (_) {
+                    rs = null;
+                }
+                if (rs && typeof rs.update === 'function') {
+                    try {
+                        await rs.update('dock-flash', { netPluginWhitelist: plugins });
+                    }
+                    catch (_) { /* memory override already in force */ }
+                }
+                sendJson(res, 200, { ok: true, plugins });
+            },
+        }), 'dock-flash: POST /plugins/dock-flash/network-plugin-whitelist');
     });
 }

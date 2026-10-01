@@ -171,6 +171,8 @@ export interface ProxyConfig {
   netSuspectErr: Volatile<number>
   /** Network Monitor: user-trusted hosts that never raise alerts. */
   netWhitelist: Volatile<string[]>
+  /** Network Monitor: user-trusted plugin IDs whose requests never raise alerts. */
+  netPluginWhitelist: Volatile<string[]>
 
   /** Host alert queue: maximum entries. */
   hostAlertQueueCap: Volatile<number>
@@ -379,6 +381,7 @@ export const Config = Schema.object({
   netSuspectWarn: Schema.number().default(DEFAULT_NET_SUSPECT_WARN).volatile(),
   netSuspectErr: Schema.number().default(DEFAULT_NET_SUSPECT_ERR).volatile(),
   netWhitelist: Schema.array(Schema.string()).default([]).volatile(),
+  netPluginWhitelist: Schema.array(Schema.string()).default([]).volatile(),
 })
 
 /** Domains that bypass the proxy when proxyMode is 'api-bypass'. */
@@ -606,6 +609,8 @@ class NetworkMonitor {
   private _seq = 0
   /** Resolved once; the mutable set of user-trusted hosts. */
   private _userTrusted = new Set<string>()
+  /** Resolved once; the mutable set of user-trusted plugin IDs. */
+  private _pluginTrusted = new Set<string>()
   private _seenHosts = new Map<string, number>()
 
   constructor(private _cap: number) {}
@@ -617,6 +622,17 @@ class NetworkMonitor {
 
   setUserTrusted(hosts: readonly string[]) {
     this._userTrusted = new Set((hosts || []).map((h) => String(h).toLowerCase()))
+  }
+
+  setPluginTrusted(plugins: readonly string[]) {
+    this._pluginTrusted = new Set((plugins || []).map((p) => String(p).toLowerCase()))
+  }
+
+  /** A plugin on the user-trusted list, or a request not attributable to any */
+  isTrustedPlugin(pluginId: string): boolean {
+    const p = (pluginId || '').toLowerCase()
+    if (!p || p === _UNKNOWN_PLUGIN) return false
+    return this._pluginTrusted.has(p)
   }
 
   isTrusted(host: string): boolean {
@@ -631,8 +647,9 @@ class NetworkMonitor {
     return false
   }
 
-  private _score(host: string, method: string, reqBytes: number, tls: boolean, isNew: boolean): { risk: number; flags: string[] } {
-    if (this.isTrusted(host)) return { risk: 0, flags: [] }
+  private _score(host: string, pluginId: string, method: string, reqBytes: number, tls: boolean, isNew: boolean): { risk: number; flags: string[] } {
+    // Trusted host OR trusted plugin ⇨ no suspicion, no flags.
+    if (this.isTrusted(host) || this.isTrustedPlugin(pluginId)) return { risk: 0, flags: [] }
     let risk = 30                 // unknown host
     const flags: string[] = ['unknown-host']
     if (isNew) { risk += 15; flags.push('new-host') }
@@ -658,10 +675,11 @@ class NetworkMonitor {
     }
     const firstSeen = !this._seenHosts.has(host)
     this._seenHosts.set(host, (this._seenHosts.get(host) || 0) + 1)
-    const { risk, flags } = this._score(host, input.method, input.reqBytes, input.tls, firstSeen)
+    const pluginId = resolvePluginId()
+    const { risk, flags } = this._score(host, pluginId, input.method, input.reqBytes, input.tls, firstSeen)
     const entry: NetworkEntry = {
       seq: ++this._seq,
-      pluginId: resolvePluginId(),
+      pluginId,
       method: input.method,
       host,
       pathname,
@@ -814,6 +832,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
     if (_networkMonitor) {
       _networkMonitor.setCap(config.netLogCap.get())
       _networkMonitor.setUserTrusted(Array.isArray(config.netWhitelist.get()) ? config.netWhitelist.get()! : [])
+      _networkMonitor.setPluginTrusted(Array.isArray(config.netPluginWhitelist.get()) ? config.netPluginWhitelist.get()! : [])
     }
   }
   reconfigure()
@@ -1114,7 +1133,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
   // re-apply proxy env and Network Monitor thresholds.
   ctx.on('loader/volatile-update' as any, (paths: string[][]) => {
     const proxyPaths = ['proxyMode', 'customNoProxy', 'useProxy']
-    const monitorPaths = ['netLogCap', 'netSuspectWarn', 'netSuspectErr', 'netWhitelist']
+    const monitorPaths = ['netLogCap', 'netSuspectWarn', 'netSuspectErr', 'netWhitelist', 'netPluginWhitelist']
     const alertPaths = ['hostAlertQueueCap', 'hostAlertMaxAge']
     const relevant = (p: string[]) => p.length === 1
     const affectsProxy = paths.some((p) => relevant(p) && proxyPaths.includes(p[0]))
@@ -1409,5 +1428,42 @@ export function apply(ctx: Context, config: ProxyConfig) {
         sendJson(res, 200, { ok: true, hosts })
       },
     }), 'dock-flash: POST /plugins/dock-flash/network-whitelist')
+
+    // Plugin whitelist management — same shape as the host whitelist, but keyed
+    // on plugin ID. The auditor zeroes the risk of every request attributed to
+    // a whitelisted plugin (the log still records it).
+    wsCtx.effect(() => wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/plugins/dock-flash/network-plugin-whitelist',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405
+          res.setHeader('allow', 'POST')
+          res.end()
+          return
+        }
+        const body = await readJsonBody(req)
+        if (!body || !Array.isArray(body.plugins)) {
+          sendJson(res, 400, { error: 'Missing or invalid plugins array' })
+          return
+        }
+        const plugins: string[] = []
+        for (const p of body.plugins) {
+          if (typeof p !== 'string') { sendJson(res, 400, { error: 'plugins must be strings' }); return }
+          const s = p.trim()
+          if (!s) continue
+          plugins.push(s.toLowerCase())
+        }
+        if (_networkMonitor) _networkMonitor.setPluginTrusted(plugins)
+        let rs: any = null
+        try { rs = ctx.get ? ctx.get('remote.settings') ?? (ctx as any).remote?.settings ?? null : null } catch (_) { rs = null }
+        if (rs && typeof rs.update === 'function') {
+          try {
+            await rs.update('dock-flash', { netPluginWhitelist: plugins })
+          } catch (_) { /* memory override already in force */ }
+        }
+        sendJson(res, 200, { ok: true, plugins })
+      },
+    }), 'dock-flash: POST /plugins/dock-flash/network-plugin-whitelist')
   })
 }
