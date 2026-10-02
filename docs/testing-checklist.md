@@ -37,33 +37,29 @@ easiest to break invisibly.
    persists after the retry loop. `bloom-theme` / `black-hole` / `theme-manager` never appear in
    the dropdown. Claude Style appears exactly once while active *and* exactly once after
    switching away (no `data-skin-chrome` phantom).
-   **`dsh-skin-market` must NOT be in the list** — it supplies the skin list and is not a skin. It
-   appears as **"Market"** (or "Market (未启用)") because `_labelFromId()` strips `dsh-` and a trailing
-   `-skin`; picking it does nothing, since the market's own registry row is disabled. Removing it is
-   `_skinExclude`'s job, **by name** — narrowing the bare `skin` token in `_skinHint` would take every
-   real `<name>-skin` package with it. The whole list must be read, not spot-checked: a derived label
-   makes a wrong entry look deliberate. `pnpm run check:overlay` section 15 pins the result.
-   **And the list must follow the MARKET's classification, not a name guess.** A package the market
-   does not classify as a theme (`category: theme`, matched by name or by repo) cannot be activated —
-   `/dsh-market/use-skin` answers **400 `not an installed theme`** — so offering it is not just a dead
-   row, it WEDGES the dropdown, because a refused activation used to leave `_pendingSkinId` set and
-   `_getActiveSkinId()` echoes it back over every later choice. `dsh-client-liang-intensity-skin` is
-   that case. Two checks:
-   - every entry in the dropdown must be genuinely activatable — pick it, and the row must end up
-     showing what is actually live (not stuck on the pick, and not silently reverted);
-   - a refused pick must **log the market's own reason** (`[dock-flash] the market refused to
-     activate "…" — not an installed theme`) and leave the rest of the list usable.
-   The classification is fetched once per session from `/dsh-market/registry` (~1.1 MB,
-   `no-store`); confirm in the Network panel that a second dropdown open does **not** re-fetch it,
-   and that with the registry unreachable the list is **unchanged** (every package stays listed —
-   hiding real skins is the worse failure).
-   - **Check the four OTHER entry paths, not just the market list.** A skin reaches the dropdown
-     through five routes, and 1.4.2 gated only the market one — so `dsh-client-liang-intensity-skin`
-     survived, because it also injects its own `<style data-plugin="…">` tag. The fastest manual
-     check: with a plugin installed, run `document.querySelectorAll('head style[data-plugin]')` in
-     the console and confirm **every** id in it that is also market-installed appears (or does not)
-     consistently with the dropdown. Sections 16–17 of `pnpm run check:overlay` pin all five paths,
-     and its negative control (gates removed) fails on the DOM-scan path specifically.
+   **`dsh-skin-market` must NOT be in the list** — it is a market/catalog plugin, not a skin.
+   It would appear as **"Market"** (or "Market (未启用)") because `_labelFromId()` strips `dsh-`
+   and a trailing `-skin`; picking it would do nothing useful. Removing it is `_skinExclude`'s job,
+   **by name** — narrowing the bare `skin` token in `_skinHint` would take every real `<name>-skin`
+   package with it. The whole list must be read, not spot-checked: a derived label makes a wrong
+   entry look deliberate. `pnpm run check:overlay` section 15 pins the result.
+   **Classification is now a name heuristic.** Without the market's `category: theme` registry,
+   `_skinAllowed(id)` is `_skinHint.test(id) && !_skinExclude.test(id)`. A non-theme package
+   whose name matches `_skinHint` (e.g. `dsh-client-liang-intensity-skin`) may appear — this is
+   the accepted trade-off. Two checks:
+   - every entry in the dropdown must be genuinely activatable through the plugin manager — pick it,
+     and the row must end up showing what is actually live (not stuck on the pick, and not silently
+     reverted);
+   - a refused pick must **release the pending selection** and log the reason, leaving the rest of
+     the list usable.
+   - **Check all five entry paths, not just the plugin-manager list.** A skin reaches the dropdown
+     through five routes, and a filter applied to four of the five leaks through the fifth.
+     `dsh-client-liang-intensity-skin` survived an earlier gate because it also injects its own
+     `<style data-plugin="…">` tag. The fastest manual check: with a plugin installed, run
+     `document.querySelectorAll('head style[data-plugin]')` in the console and confirm **every**
+     id in it appears (or does not) consistently with the dropdown. Sections 16–17 of
+     `pnpm run check:overlay` pin all five paths, and its negative control (gates removed) fails
+     on the DOM-scan path specifically.
 3. **Skin preference**: Set a skin, refresh → it restores after ~300ms.
 4. **Language**: Toggle → every label updates immediately, including inside the log block.
 5. **Sidebar sash**: Drag it with dock-flash enabled → the width resizes correctly (nothing has

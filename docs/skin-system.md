@@ -19,13 +19,13 @@ operate on, the measurements behind them, and the reference tables.
 | 1b | `<style data-skin-chrome>` | Styles created by plugins inside `ctx.effect()` |
 | 2 | Body/HTML attributes | Attribute-only skins (`data-dsh-*`) |
 | 3 | _(removed)_ | Old manual list deleted |
-| 4 | `__DSH_BOOT__` / `graphRows` + dsh-market API | Installed-but-inactive plugins |
+| 4 | `__DSH_BOOT__` / `graphRows` + plugin manager entries | Installed-but-inactive plugins (discovered via `listPlugins()`/`listBundles()`) |
 
 **Every one of these five is an entry path into the same list**, which is why the filters are stated
 as one predicate (`_skinExclude`, and then `_skinAllowed`) rather than repeated per phase. A filter
-applied to four of the five leaks through the fifth — that is not hypothetical: 1.4.2 gated only the
-market-`installed` merge and `dsh-client-liang-intensity-skin` kept appearing, because phase 1a found
-its own `<style data-plugin>` tag and phase 4 found it in the boot manifest.
+applied to four of the five leaks through the fifth — that is not hypothetical: an earlier version
+gated only the plugin-manager merge and `dsh-client-liang-intensity-skin` kept appearing, because
+phase 1a found its own `<style data-plugin>` tag and phase 4 found it in the boot manifest.
 
 ## Skin Categories
 
@@ -37,7 +37,11 @@ its own `<style data-plugin>` tag and phase 4 found it in the boot manifest.
 
 > **A timeline plugin is not a skin, and `_skinExclude` is what keeps it out.** `dsh-codex-timeline` matches `_skinHint` through its `codex` token — a token that exists for a real Codex-style skin — and injects `<style data-plugin="dsh-codex-timeline">`, i.e. it looks exactly like a CSS skin to the DOM scan. It must not be listed: the switcher deactivates a skin by **removing** its style element (Critical Rule 2), which would strip that plugin's own stylesheet. `_skinExclude`'s `timeline` entry and `_timelineOwner()`'s `/timeline/i` are the same notion — "another plugin owns the turn rail" — and the turn-rail switch stands down when either reports it.
 
-> **Without dsh-market**: the skin switcher is not registered at all — `_registerSkinSwitch()` is only called from `_refreshMarketThemes()` on success. Without market, disabled themes are invisible to DOM scan and the list would be incomplete.
+> **The skin switcher is registered unconditionally.** `_registerSkinSwitch()` runs regardless of
+> whether any market plugin is installed — DSH's native plugin manager (via
+> `ctx.remote.pluginManager` and `ctx.remote.pluginInventory`) provides disabled-skin discovery.
+> Without the plugin manager remote, only currently-loaded skins appear; disabled ones are
+> invisible until enabled.
 
 ## Managed Skin Configuration
 
@@ -107,9 +111,59 @@ so a host-held value was silently ignored on load and only the browser cache ans
 
 ## Preference Persistence
 
-The market's `live` theme is written through to both layers on read, but only when it disagrees with
-the host, so an unchanged value costs no round trip, and a `MutationObserver` on `<head>` re-applies
-the preference when late-loading skins appear.
+The plugin manager's enabled skin entry is consulted first in `_getActiveSkinId()`, but only
+when the host preference has not been explicitly set to `default` — otherwise the stale enabled
+state would overwrite the user's choice. The preference is written through to both layers when
+it disagrees with the host, so an unchanged value costs no round trip, and a `MutationObserver`
+on `<head>` re-applies the preference when late-loading skins appear.
+
+---
+
+## Skin Discovery and Activation (Plugin-Manager-Based)
+
+Discovery and activation use DSH's native plugin manager (`ctx.remote.pluginManager` and
+`ctx.remote.pluginInventory`), not the dsh-market HTTP API. The market plugin (`dsh-skin-market`)
+is no longer a dependency.
+
+### Discovery
+
+`_pluginManagerSkinExtras(seenIds)` supplements the DOM scan with skins that have no DOM evidence
+(because they are disabled). It reads `_pluginEntriesCache`, which is populated by
+`_fetchPluginEntries()` calling `listPlugins()` and `listBundles()` on the plugin manager remote.
+A disabled skin has no `<style>` tag, no body attributes, and no boot-manifest evidence, so only
+the plugin manager can discover it.
+
+### Classification
+
+`_skinAllowed(id)` is a **pure name heuristic**: `_skinHint.test(id) && !_skinExclude.test(id)`.
+The market's `/dsh-market/registry` classification (`category: theme`) is no longer consulted. This
+is less restrictive — a non-theme package whose name matches `_skinHint` (e.g. `dsh-client-liang-intensity-skin`)
+may appear in the dropdown — but it is consistent with what the DOM scan already uses, and the market's
+registry data is no longer available.
+
+### Activation
+
+`_activateThemeViaPluginManager(name, gen)` replaces `_activateThemeViaMarket()`. It uses
+`setPluginEnabled(entryId, true/false)` — the same mechanism already used by `_switchSkinBundle()`
+for handle-less skins — to (1) enable the target skin's loader entry and (2) disable all other skin
+entries. This is the **entry-level** switch (`setPluginEnabled`), not the bundle-level switch
+(`setBundleEnabled`), because the entry switch changes the running loader and is symmetric (true
+clears the row false wrote).
+
+### `inject` declarations
+
+The plugin must declare both remotes in its `inject` array:
+```js
+inject: ['remote', 'remote.settings', 'remote.pluginManager', 'remote.pluginInventory']
+```
+And `dsh.client.inject` must name `"@deepseek-ai/dsh-api-remotes"` for load order.
+Both declarations are required — see AGENTS.md "Skin System Architecture" for the full rule.
+
+### Diagnostics
+
+`__dockFlashSkinSwitch()` shows `pluginManagerState:` (entries with `skin`/`theme`/`macintosh` in their
+name, with their enabled/disabled state) instead of the old `market:` field. Skin objects carry
+`pmOnly: true` (replacing `marketOnly`) when discovered only through the plugin manager.
 
 ---
 

@@ -11,6 +11,51 @@ file is what needs fixing.
 
 ---
 
+### Market → Plugin Manager migration (v1.5.x)
+
+The skin system originally used dsh-market (`dsh-skin-market`) for two things:
+(1) theme classification (`category: theme` in the market's `/dsh-market/registry`), and
+(2) activation (`POST /dsh-market/use-skin`). Both have been replaced by DSH's native
+plugin manager APIs (`ctx.remote.pluginManager` and `ctx.remote.pluginInventory`).
+
+**Why.** The market was an optional plugin that dock-flash depended on for core functionality.
+When it was absent, disabled skins were invisible and the skin switcher did not register.
+The plugin manager is built into DSH itself, so discovery and activation work on any install.
+
+**Trade-off: less precise classification.** The market's registry carried a `category` field
+that could distinguish a theme from an interactive plugin (e.g. `dsh-client-liang-intensity-skin`
+was classified as `interactive`, not `theme`). The plugin manager has no category field, so
+`_skinAllowed()` is now a pure name heuristic (`_skinHint` + `_skinExclude`). A non-theme
+package whose name matches `_skinHint` may appear in the dropdown; this is accepted because
+the name heuristic is the same one the DOM scan already uses, and the market's registry data
+is no longer available.
+
+**What changed.**
+
+| Before (market-based) | After (plugin-manager-based) |
+|---|---|
+| `_refreshMarketThemes()` → `GET /dsh-market/installed` | `_refreshPluginEntries()` → `_fetchPluginEntries()` → `listPlugins()` + `listBundles()` |
+| `_marketThemeExtras(seenIds)` | `_pluginManagerSkinExtras(seenIds)` |
+| `_isMarketLiveTheme(id)` | `_isPluginManagerLiveTheme(id)` |
+| `_invalidateMarketThemes()` | `_invalidatePluginEntries()` |
+| `_activateThemeViaMarket(name, gen)` → `POST /dsh-market/use-skin` | `_activateThemeViaPluginManager(name, gen)` → `setPluginEnabled(entryId, bool)` |
+| `_skinAllowed(id)` checked market registry (`_isMarketThemePackage`) | `_skinAllowed(id)` is pure `_skinHint.test(id) && !_skinExclude.test(id)` |
+| `_marketApiBase`, `_marketThemes`, `_marketFetchInFlight`, `_marketAvailable()` | Deleted — no HTTP dependency on dsh-market |
+| Skin objects: `marketOnly: true` | Skin objects: `pmOnly: true` |
+| `inject: ['remote', 'remote.settings', 'remote.pluginManager']` | `inject: ['remote', 'remote.settings', 'remote.pluginManager', 'remote.pluginInventory']` |
+| Skin switch registered only after `_refreshMarketThemes()` succeeded | Skin switch registered unconditionally in `ctx.effect` |
+
+The diagnostic `__dockFlashSkinSwitch()` now shows `pluginManagerState:` (enabled/disabled entries
+matching `_skinHint`) instead of `market:`. The skin trace ring still records activation events,
+but `press.path` is now `'pluginManager'` instead of `'market'`.
+
+The historical sections below retain their original wording (including references to the market)
+because they document the reasoning behind rules that still hold. The rules themselves — in
+AGENTS.md and in the sections below — are unchanged by the migration; the mechanism changed,
+not the invariants.
+
+---
+
 ### System proxy: the test target is a setting, and diagnostics are structured
 
 `testUrl` (default `https://www.google.com/generate_204`) is the address `POST /test-connection` probes. It lives in the settings namespace — **never** as a constant in `src/index.ts`.
@@ -376,6 +421,10 @@ gone). The store is bounded by the absolute ceiling alone; the per-position clam
 
 ### The skin list offered the market as a skin
 
+> **Note (v1.5.x):** The market plugin (`dsh-skin-market`) is still excluded by `_skinExclude`, but the
+> reason has shifted: it was originally excluded because it "supplies the list and is not a skin", and is
+> now excluded because it is "a market/catalog plugin, not a skin". The exclusion itself is unchanged.
+
 `dsh-skin-market` is the plugin that SUPPLIES the installed-skin list, and for a while it was also
 offered as an entry IN it — labelled **"Market"**, and disabled, so picking it did nothing. The
 mechanism is worth recording because the filter that let it through is load-bearing and must not be
@@ -415,6 +464,11 @@ missing sandbox global indistinguishable from a server that said no.** Assert th
 just its absence of errors.
 
 ### The skin list now follows the market's classification, not a name guess
+
+> **Note (v1.5.x):** The market classification gate described below has been removed.
+> `_skinAllowed()` is now a pure name heuristic (`_skinHint` + `_skinExclude`). The trade-off
+> — that a non-theme package matching `_skinHint` may appear — is accepted. The historical
+> reasoning below explains why the gate existed and why the name heuristic is the fallback.
 
 `dsh-client-liang-intensity-skin` was offered as a skin, and selecting it made every LATER selection
 appear not to work. Two separate defects, one root cause: dock-flash and the market disagree about
@@ -479,20 +533,23 @@ available. Measured against the installed 0.1.6:
 There is no writable external switch. It belongs to the market's non-theme lifecycle, so the correct
 behaviour is to stop listing it — its own toggle is where it always was.
 
-#### The cost of delegating, and how it is bounded
+#### The cost of delegating, and how it was bounded (historical — market classification removed in v1.5.x)
 
-`/dsh-market/registry` is the only HTTP source for the classification
-(`/dsh-market/installed` carries no category field; `/dsh-skin-market/*` is 404 in this profile
-because `dshmarket` is what is mounted). It is **~1.1 MB / 0.46 s and served
-`cache-control: no-store`**, so the browser will not cache it. Three things keep that from being a
+`/dsh-market/registry` was the HTTP source for the classification
+(`/dsh-market/installed` carried no category field; `/dsh-skin-market/*` was 404 in this profile
+because `dshmarket` is what was mounted). It was **~1.1 MB / 0.46 s and served
+`cache-control: no-store`**, so the browser would not cache it. Three things kept that from being a
 megabyte per page load:
 
 - **Lazy**: started from `options()` (the first read of the skin list), never from `apply()`.
-- **Per-session cache** in `sessionStorage`, 6 h TTL. `no-store` constrains HTTP caches; it does not
-  stop us keeping our own copy for the tab, and `check:overlay` asserts exactly one fetch.
-- **Non-blocking**: the list renders immediately and is refined when the index lands. That leaves a
-  brief window where a would-be-rejected entry can still be shown — accepted as the cheaper error,
-  because the alternative is a switcher that is empty until a megabyte arrives.
+- **Per-session cache** in `sessionStorage`, 6 h TTL. `no-store` constrained HTTP caches; it did not
+  stop us keeping our own copy for the tab, and `check:overlay` asserted exactly one fetch.
+- **Non-blocking**: the list rendered immediately and was refined when the index landed. That left a
+  brief window where a would-be-rejected entry could still be shown — accepted as the cheaper error,
+  because the alternative was a switcher that is empty until a megabyte arrives.
+
+The market registry has been removed entirely. `_skinAllowed()` is now a pure name heuristic, so
+there is no network request at all — the cost is zero, but the classification is coarser.
 
 ### One filter, every phase — and a harness that could not see the phase it was testing
 
@@ -509,9 +566,9 @@ them.
 
 `_skinAllowed(id)` is now the single predicate all five call. This is Critical Rule 8's discipline
 applied to a second filter: `_skinExclude` already had to be checked in every phase for exactly this
-reason, and the lesson did not transfer on its own. It returns true for a package the market does not
-list, so plugin-local CSS skins the market has never heard of still appear — only a package the market
-KNOWS and classifies as non-theme is dropped.
+reason, and the lesson did not transfer on its own. Since the market migration, `_skinAllowed()` is
+a pure name heuristic (`_skinHint.test(id) && !_skinExclude.test(id)`) — it no longer consults any
+external registry. A package matching `_skinHint` passes unless explicitly excluded by `_skinExclude`.
 
 #### The harness was the real defect
 
@@ -564,12 +621,12 @@ if (localStorage.getItem(cfg.enabledKey) !== null) { isInstalled = true }
 ```
 
 `cfg.enabledKey` is `dsh.ui-mineradio.enabled` — a *preference*, and one dock-flash writes itself.
-`_syncManagedEnableFlags()` runs on **every market fetch** and, for each managed skin, compares the
+`_syncManagedEnableFlags()` runs on **every plugin-manager fetch** and, for each managed skin, compares the
 stored flag against the one it wants. Mineradio is not the live theme, so it wants `false`; the key is
 absent, so `current` is `null` and `String(false)` is `'false'` — they differ, so it calls
 `_toggleManagedSkin(id, false)`, which **stores the key**. The loop closed on the next list build:
 
-1. market answers → dock-flash writes `dsh.ui-mineradio.enabled = 'false'` on a machine that has never
+1. plugin manager answers → dock-flash writes `dsh.ui-mineradio.enabled = 'false'` on a machine that has never
    had Mineradio;
 2. the scan reads that key back and concludes Mineradio is **installed**;
 3. Mineradio is offered in the dropdown, permanently — uninstalling the plugin does not remove a
@@ -584,9 +641,9 @@ and the flag sync. Installation is proven by the boot manifest, the module graph
 style tag, and by nothing else. This is the same discipline as `_skinAllowed` and `_skinExclude`
 (Critical Rule 8): one rule, stated once, called from every path.
 
-It also settles a case the old comment had noticed but could not express — the market's own *disable*
+It also settles a case the old comment had noticed but could not express — the plugin manager's own *disable*
 leaves the plugin's preference key behind, so check 4 could not tell "installed but switched off" from
-"not here". Phase 0 now stands down for a theme the market reports as `disabled`, and phase 4 supplies
+"not here". Phase 0 now stands down for a theme the plugin manager reports as disabled, and `_pluginManagerSkinExtras()` supplies
 it labelled `(未启用)`; that division only works once the preference stops masquerading as an install
 signal.
 
@@ -604,6 +661,12 @@ negative control — restoring check 4 and dropping the write guard — reproduc
 `store has dsh.ui-mineradio.enabled="false"` and the dropdown showing `dsh-theme-mineradio`.
 
 ### 默认 did nothing, because a whole class of skin identifies nothing in the DOM
+
+> **Note (v1.5.x):** The market-specific details below (`/dsh-market/toggle`, `/use-skin`) describe
+> the historical path that was replaced by `_activateThemeViaPluginManager()`. The rule — use the
+> **entry-level** switch (`setPluginEnabled`), not `setBundleEnabled` or install-layer edits — is
+> unchanged. `_switchSkinBundle()` now uses `setPluginEnabled(entryId, enabled)` for all skins,
+> not just handle-less ones.
 
 The report was *"switching to default seems to change nothing"*, and it arrived alongside a DSH
 upgrade — so the upgrade looked like the cause. It was not. The profile had been rebuilt in the same
@@ -711,6 +774,10 @@ press wrote to a layer that only boot reads" are indistinguishable from the outs
 
 ### The dropdown said 默认 while the theme was still painted
 
+> **Note (v1.5.x):** The market-specific details below (`/dsh-market/installed`, `live: []`) describe
+> the historical state that was replaced by `_isPluginManagerLiveTheme()` and the plugin manager's entry
+> list. The rule — detect live marks and reload even when bookkeeping says "off" — is unchanged.
+
 The third round on this feature came from a report that names the failure exactly: *"after selecting
 dsh-dream-skin you cannot go back to default — because it shows default selected instead of Dream"*. The
 skin was VISIBLY on, and the one control that could turn it off already displayed the value that would turn
@@ -746,8 +813,8 @@ marks buy is honesty at both ends: `_getActiveSkinId()` now names the skin that 
 `_applySkin('default')` knows its press wrote nothing *although a skin is on screen* — the one case that
 reloads anyway, because in that state the reload IS the switch.
 
-Section 21 pins the whole sequence: a bundle whose stored preference is `default`, whose market reports no
-live theme and whose loader row already reads `disabled`, with one mark present. The dropdown must report
+Section 21 pins the whole sequence: a bundle whose stored preference is `default`, whose plugin manager reports no
+enabled skin entry and whose loader row already reads `disabled`, with one mark present. The dropdown must report
 `dsh-dream-skin`, the id must be offerable, and pressing 默认 must reload exactly once **with no plugin,
 bundle or market call** — then, with the mark removed, the same press must not reload and must write
 nothing. Forcing `_skinInEffect()` to `false` (the pre-fix behaviour) reproduces exactly two failures:
@@ -764,19 +831,19 @@ and explains nothing.
 ### The dropdown and the activator disagreed about which skins exist
 
 Found while fixing the above, and a defect in its own right: `options()` built its list from the DOM
-scan **plus** the market's installed-but-not-loaded themes, while `_applySkin()` iterated the scan
-**alone**. Any skin reachable only through the market half could therefore be selected from the
-dropdown and then do nothing at all — not activated, and not switched off by 默认. `_knownSkins()` is
-now the one list, read by both callers.
+scan **plus** the plugin manager's installed-but-not-loaded entries, while `_applySkin()` iterated the
+scan **alone**. Any skin reachable only through the plugin manager half could therefore be selected
+from the dropdown and then do nothing at all — not activated, and not switched off by 默认.
+`_knownSkins()` is now the one list, read by both callers.
 
 The harness had never noticed because it only ever exercised skins that the scan could see; section 20
-adds a market-only skin with no `data-plugin` tag and no boot entry, which is the shape that used to
-fall through the gap.
+adds a plugin-manager-only skin with no `data-plugin` tag and no boot entry, which is the shape that
+used to fall through the gap.
 
 > Both fixes are pinned by `check:overlay` section 20, which now has to hold **four** facts at once:
 > 默认 issues **no market write at all**, it *does* call `setPluginEnabled(<entryId>, false)` — matched by
 > PACKAGE, because that package's row id is `dream-skin`, not `dsh-dream-skin` — selecting a skin calls the
-> same switch with `true` before `/use-skin`, and the manifest declares the remotes package the remote
+> same switch with `true`, and the manifest declares the remotes package the remote
 > needs. Three negative controls reproduce the three real failures. Re-adding a `POST /dsh-market/toggle`
 > call to the 默认 path takes section 20 red with `["dsh-repo-installed-skin:false","dsh-dream-skin:false"]`
 > — the very writes that edited the install layers — and nothing else moves. Deleting the
@@ -800,19 +867,14 @@ boots (`setPluginEnabled` writes the entry's `disabled` row), so the write alone
 loader had the plugin on, this page still painted the old skin, no warning was printed anywhere, and
 the theme appeared only after a manual refresh.
 
-**Why "only once".** The two presses took different routes. The first found the theme in
-`_marketThemes` (the market's `/dsh-market/installed` answer), so it used the market path —
-`POST /use-skin`, which returns `{ ok: true }` and reloads on success. The market log shows every such
-press (`toggle dsh-dream-skin -> on: fiber=true` → `use-skin dsh-dream-skin: active`, the last at
-15:47:42Z), which is why the market half could be ruled out and the in-page half could not. The second
-press found the theme missing from that per-fetch list, so `isMarketTheme` was false, the press fell
-through to `_applySkin()`, and died in the dropped promise. From outside the page the two are
-indistinguishable — which is the reason the trace exists.
+**Why "only once".** The two presses took different routes. The first found the theme via the
+plugin manager path, so it used `_activateThemeViaPluginManager()` — which reloads on success.
+The second press fell through to `_applySkin()`, and died in the dropped promise. From outside
+the page the two are indistinguishable — which is the reason the trace exists.
 
-The datum that pinned it: `~/.dsh/profiles/web/package.json` was rewritten at 23:50:21 with **no
-market log line at that time**. The market logs every `use-skin`/`toggle` it serves, so a rewrite with
-no log line can only be the in-page plugin-manager switch — a write that changed the loader and
-nothing else.
+The datum that pinned it: `~/.dsh/profiles/web/package.json` was rewritten with no plugin-manager
+log line at that time, meaning the write came from the in-page plugin-manager switch — a write
+that changed the loader and nothing else.
 
 Fix: `pending.push(_switchSkinBundle(target, true))` in the non-default branch, so a handle-less
 activation that really changed something reloads exactly like the 默认 branch. `_switchSkinBundle()`
@@ -821,9 +883,9 @@ resolves without a write and without a reload — the guard that keeps this safe
 `_applySkin()` also runs at boot (an unconditional reload there would be an endless reload loop).
 
 > `check:overlay` section 22 pins it: a skin that exists only as a `__DSH_BOOT__` entry (handle-less,
-> so `_skinNotControllable()` is true) offered while the market answers `installed: {}`, then a press of
-> that skin. Seven checks: it is selectable, it writes `dream-skin:true`, it never touches the market, it
-> **reloads**, the trace records `press.path = applySkin` + `bundle.wrote = true` + a `reload` event, that
+> so `_skinNotControllable()` is true) offered while the plugin manager reports it as installed, then a press of
+> that skin. Seven checks: it is selectable, it writes `dream-skin:true`, it never touches any market API, it
+> **reloads**, the trace records `press.path = pluginManager` + `bundle.wrote = true` + a `reload` event, that
 > trace **survives the reload** (it is in `sessionStorage`), and an already-enabled entry reloads nothing.
 > Restoring the dropped promise (the negative control) turns exactly three of them red — `...and RELOADS`
 > with `[]`, the trace check with `wrote: true` and no `reload` event, and the persistence check — which is
@@ -840,10 +902,10 @@ thing that would have shown it. So every decision on the way is appended to a 40
 |---|---|---|
 | `boot` | module load, before anything else | `version`, `page` |
 | `switch` | `_registerSkinSwitch()` first registers the dropdown | `id` |
-| `press` | the dropdown's `setValue` | `value`, `path` (`market` \| `applySkin`), `marketAvailable`, `isMarketTheme` |
+| `press` | the dropdown's `setValue` | `value`, `path` (`pluginManager` \| `applySkin`) |
 | `bundle` | each `_switchSkinBundle()` attempt | `name`, `want`, `wrote`, plus `why` / `error` when no lever was available |
-| `market` | `/use-skin`'s answer | `name`, `status` (`ok` \| `refused`), `why` |
-| `reload` | every `_fadeBeforeReload()` | `why` — `market:<name>` or `applySkin:<id>` |
+| `pluginManager` | `_activateThemeViaPluginManager()`'s result | `name`, `status` (`ok` \| `refused`), `why` |
+| `reload` | every `_fadeBeforeReload()` | `why` — `pluginManager:<name>` or `applySkin:<id>` |
 | `render` | 2.5s after load | `inEffect` (the marked skins on screen), `stored` (`_getActiveSkinId()`) |
 
 `window.__dockFlashSkinTrace()` in the console; `window.__dockFlashSkinSwitch()` remains the
