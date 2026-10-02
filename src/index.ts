@@ -1057,6 +1057,24 @@ export function apply(ctx: Context, config: ProxyConfig) {
       },
     }), 'dock-flash: GET /plugins/dock-flash/host-alerts')
 
+    // Clear the host-side alert queue — called when the client's master
+    // system-alerts toggle is switched OFF so no stale data survives.
+    wsCtx.effect(() => wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/plugins/dock-flash/clear-alerts',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405
+          res.setHeader('allow', 'POST')
+          res.end()
+          return
+        }
+        const count = _alertQueue.length
+        _alertQueue.splice(0, _alertQueue.length)
+        sendJson(res, 200, { ok: true, cleared: count })
+      },
+    }), 'dock-flash: POST /plugins/dock-flash/clear-alerts')
+
     // D-owned connectivity heartbeat — the client's network-alert provider
     // polls THIS route to gauge latency, not B's /proxy-status (K6 dropped).
     // A probe that answers quickly regardless of proxy state is exactly what a
