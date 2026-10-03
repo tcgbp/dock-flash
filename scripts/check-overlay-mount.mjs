@@ -1963,6 +1963,17 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
 
   if (skinSwitch) {
     const names = () => toggleCalls.map((c) => c.name + ':' + c.enabled)
+    // The switch now writes TWO layers per skin — the loader ENTRY and
+    // `dsh.profile.bundles` — and the roster write is a LONGER promise chain
+    // (`listBundles()` first, then the write) than the entry write. Two ticks were
+    // enough while the deactivation loop only wrote the entry, and they no longer
+    // are: MEASURED, the second skin's roster write landed after the assertion that
+    // says "pressing it again writes nothing", so it read as a stray write from the
+    // wrong press. Settling is what keeps an assertion from measuring a
+    // half-finished switch.
+    const settle = async () => {
+      for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0))
+    }
 
     // A skin with no DOM handle is still listed — the list is honest about what is
     // INSTALLED, and hiding it would be a different lie.
@@ -1979,9 +1990,8 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
       bundleCalls.length = 0
       bundleState[0].enabled = true
       skinSwitch.setValue('default')
-      // The bundle write is asynchronous; give the chain a full turn to settle.
-      await new Promise((r) => setTimeout(r, 0))
-      await new Promise((r) => setTimeout(r, 0))
+      // The bundle write is asynchronous; let the whole chain settle.
+      await settle()
     } finally {
       console.warn = origWarn
     }
@@ -2015,8 +2025,7 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
     pluginCalls.length = 0
     bundleCalls.length = 0
     skinSwitch.setValue('default')
-    await new Promise((r) => setTimeout(r, 0))
-    await new Promise((r) => setTimeout(r, 0))
+    await settle()
     check('...and pressing it again writes nothing, because the state is read first',
       pluginCalls.length === 0 && bundleCalls.length === 0,
       JSON.stringify({ pluginCalls, bundleCalls }))
@@ -2056,8 +2065,7 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
     console.warn = (...a) => { warns2.push(a.map(String).join(' ')) }
     try {
       skinSwitch.setValue('default')
-      await new Promise((r) => setTimeout(r, 0))
-      await new Promise((r) => setTimeout(r, 0))
+      await settle()
     } finally {
       console.warn = origWarn2
     }
