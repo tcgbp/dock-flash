@@ -1956,8 +1956,13 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
   // that the whole path is dead and 默认 silently does nothing — which is exactly
   // what shipped once, so the manifest is asserted here too.
   //
-  // The install layers are still off limits: 'toggleCalls' must stay empty in
-  // every one of these flows.
+  // The MARKET's route is still off limits: 'toggleCalls' must stay empty in every
+  // one of these flows — it is the one that edits the install layers destructively
+  // (it writes the patch row AND drops the package from `dsh.profile.bundles`, a
+  // one-way door for a theme). That is NOT the same statement as "bundleCalls must
+  // stay empty": the plugin manager's own bundle switch is the second half of a
+  // correct skin switch, and the assertion that used to forbid it was pinning the
+  // very bug this section exists for. See the roster check further down.
   const skinSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:skin')
   check('the skin switch is registered once the market answers', !!skinSwitch, 'not found')
 
@@ -1973,6 +1978,41 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
     // half-finished switch.
     const settle = async () => {
       for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0))
+    }
+
+    // ── the bundle fallback, exercised FIRST ──────────────────────────────────
+    // It has to run BEFORE the presses below, because the "restart DSH" notice is
+    // emitted ONCE PER NAME per page session (`_bundleReported`). Run last — which
+    // is where it was — the earlier press has already spent `dsh-dream-skin`'s
+    // notice, so the scenario asserts silence: the anti-spam rule working, read as
+    // the fallback failing.
+    //
+    // It also has to put the roster UP first. `byBundlePath()` keeps an
+    // already-satisfied guard, so a row an earlier press switched off makes the
+    // fallback a legitimate no-op and the assertion reads `[]`.
+    {
+      const savedPluginState = pluginState.slice()
+      pluginState.length = 0
+      bundleState.forEach((b) => { b.enabled = true })
+      toggleCalls.length = 0
+      bundleCalls.length = 0
+      useSkinCalls.length = 0
+      const origWarn2 = console.warn
+      const warns2 = []
+      console.warn = (...a) => { warns2.push(a.map(String).join(' ')) }
+      try {
+        skinSwitch.setValue('default')
+        await settle()
+      } finally {
+        console.warn = origWarn2
+      }
+      check('with no addressable entry, 默认 falls back to the bundle switch',
+        bundleCalls.includes('dsh-dream-skin:false'), JSON.stringify(bundleCalls))
+      check('...and SAYS a DSH restart is needed instead of looking dead',
+        warns2.some((w) => w.indexOf('restart DSH') !== -1), JSON.stringify(warns2.slice(-3)))
+      check('...still with no market write', toggleCalls.length === 0, JSON.stringify(names()))
+      pluginState.push(...savedPluginState)
+      bundleState.forEach((b) => { b.enabled = true })
     }
 
     // A skin with no DOM handle is still listed — the list is honest about what is
@@ -2018,8 +2058,18 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
     check('...and it does NOT fall back to "you have to do it yourself"',
       !warns.some((w) => w.indexOf('cannot be switched off') !== -1),
       JSON.stringify(warns.slice(0, 3)))
-    check('...and it never touches the bundle list while an entry is addressable',
-      bundleCalls.length === 0, JSON.stringify(bundleCalls))
+    // ── the roster is not optional: this assertion used to FORBID the fix ──
+    // It read `bundleCalls.length === 0` — "an addressable entry is enough". That is
+    // the belief this whole fix exists to correct. The ENTRY row governs the RUNNING
+    // loader; `dsh.profile.bundles` governs the NEXT BOOT; and an entry switched off
+    // while the package stays bundled is a skin that comes back after a reload — the
+    // reported "停不掉 Claude". MEASURED before this line was changed, with an ENABLED
+    // entry: `name=dsh-repo-installed-skin want=false row=...:true` wrote the entry
+    // and never called `byBundlePath()` at all, so the roster still read `true`. The
+    // MARKET's route is what must stay untouched here (`toggleCalls`, asserted just
+    // above); the plugin manager's own roster write is required.
+    check('...and the ROSTER follows, so the skin cannot come back on the next boot',
+      bundleCalls.includes('dsh-dream-skin:false'), JSON.stringify(bundleCalls))
     // Pressing 默认 again is a no-op: the state is read first, so an already-off
     // entry is not written again (and so the page cannot reload in a loop).
     pluginCalls.length = 0
@@ -2051,30 +2101,6 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
     useSkinCalls.length = 0
     skinSwitch.setValue('dsh-repo-installed-skin')
     await new Promise((r) => setTimeout(r, 0))
-
-    // The fallback, pinned so it cannot rot: with no addressable entry row the
-    // switch falls back to the bundle list — and says a DSH restart is needed
-    // rather than looking like a dead control.
-    const savedPluginState = pluginState.slice()
-    pluginState.length = 0
-    toggleCalls.length = 0
-    bundleCalls.length = 0
-    useSkinCalls.length = 0
-    const origWarn2 = console.warn
-    const warns2 = []
-    console.warn = (...a) => { warns2.push(a.map(String).join(' ')) }
-    try {
-      skinSwitch.setValue('default')
-      await settle()
-    } finally {
-      console.warn = origWarn2
-    }
-    check('with no addressable entry, 默认 falls back to the bundle switch',
-      bundleCalls.includes('dsh-dream-skin:false'), JSON.stringify(bundleCalls))
-    check('...and SAYS a DSH restart is needed instead of looking dead',
-      warns2.some((w) => w.indexOf('restart DSH') !== -1), JSON.stringify(warns2.slice(-3)))
-    check('...still with no market write', toggleCalls.length === 0, JSON.stringify(names()))
-    pluginState.push(...savedPluginState)
   }
 }
 
