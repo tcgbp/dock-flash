@@ -25,8 +25,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type {} from '@deepseek-ai/dsh-settings'
 
 import { execFileSync } from 'node:child_process'
-import { platform } from 'node:os'
-import { existsSync } from 'node:fs'
+import { platform, homedir } from 'node:os'
+import { existsSync, readdirSync } from 'node:fs'
+import { readFile, writeFile, rename, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import type { Volatile } from '@deepseek-ai/cordis'
@@ -523,6 +525,151 @@ async function readJsonBody(req: IncomingMessage, limit = 4096): Promise<any> {
 
 export function apply(ctx: Context, config: ProxyConfig) {
 
+  /**
+   * This plugin's own package name. A profile's `package.json` lists what is
+   * installed in it, so the profile whose dependencies name THIS plugin is the
+   * one we are running in — see `profileDirCandidates()`.
+   */
+  const PLUGIN_NAME = name
+
+  /**
+   * The profile's PATCH document — the `disabled:` row DSH's own plugin manager
+   * writes, and the LIVE switch. `@deepseek-ai/dsh-plugin-manager`'s patch module
+   * sets `disabled: !enabled` on the matching item and writes the file atomically;
+   * the loader watches that document, which is why its `setPluginEnabled()` can
+   * answer `applied` instead of `restart-required`.
+   *
+   * A plugin cannot reach that call on DSH Desktop: the client remote answers
+   * `unknown-plugin` for EVERY id, because its inventory does not manage this
+   * reserved profile (`listPlugins()` is empty there). That left the bundle layer
+   * as the only lever — and that one shapes the NEXT boot only, which is exactly
+   * why every handle-less-skin switch demanded a DSH restart. The HOST half needs
+   * no remote: it has the profile directory and the filesystem.
+   *
+   * Edits are textual and targeted rather than a YAML round trip, so the rest of
+   * the document keeps its formatting, ordering and comments.
+   */
+  const PATCH_FILENAME = 'cordis.patch.yml'
+
+  /** Same-directory temp + rename, so a reader never sees a partial document. */
+  async function writePatchDocument(
+    file: string, dir: string, text: string,
+  ): Promise<{ error?: string }> {
+    const temp = join(dir, '.' + PATCH_FILENAME + '.dock-flash-' + String(process.pid) + '.tmp')
+    try {
+      await writeFile(temp, text, { mode: 0o600 })
+      await rename(temp, file)
+      return {}
+    } catch (error) {
+      try { await unlink(temp) } catch (_) { /* nothing to clean up */ }
+      return { error: String((error as Error).message || error) }
+    }
+  }
+
+  /**
+   * Set or clear one plugin's `disabled:` row. Mirrors the plugin manager's own
+   * behaviour, including its two short-circuits: an item already in the wanted
+   * state is left alone, and clearing a row that does not exist changes nothing.
+   */
+  /**
+   * The LOADER ENTRY ID for a package — which is what a patch row must key on, and it is
+   * NOT the package name. MEASURED, and it cost the whole feature: the profile's patch
+   * carried `- id: dream-skin / disabled: false` (written by DSH's OWN plugin page) beside
+   * my `- id: dsh-dream-skin / name: dsh-dream-skin / disabled: true`, and Dream kept
+   * running — two different entries, and only the first is the loaded plugin. The remote
+   * answered `unknown-plugin` for the package name for exactly the same reason.
+   *
+   * The composed graph (`cordis.yml`) is the one file on disk that spells both, so find the
+   * row whose 2-space-indented `name:` is this package and take its `- id:` (the indent
+   * matters: a plugin config may carry a nested `name:` too). Falls back to the package
+   * name, which is only right when a plugin's entry id happens to equal it.
+   */
+  async function entryIdFor(dir: string, pkg: string): Promise<string> {
+    try {
+      // The package's OWN patch layer declares the entry id it inserts, and that is the id
+      // DSH's own plugin page switches. MEASURED on `dsh-dream-skin`: its cordis.patch.yml
+      // carries `- insert: [ - id: dream-skin / name: 'dsh-dream-skin' ]`, which is also why
+      // the plugin detail lists TWO rows — the package/bundle row and this loader entry — and
+      // why addressing the PACKAGE name switched nothing. The profile's own layer is only a
+      // fallback: the composed graph does not even carry a row for such a plugin.
+      const text = await readFile(join(dir, 'node_modules', pkg, 'cordis.patch.yml'), 'utf8')
+      const lines = text.split(/\r?\n/)
+      const unquote = (v: string) => v.trim().replace(/^['"]|['"]$/g, '')
+      let id: string | null = null
+      for (let i = 0; i < lines.length; i++) {
+        const mi = /^\s*-?\s*id:\s*(.*)$/.exec(lines[i])
+        if (mi) { id = unquote(mi[1]); continue }
+        const mn = /^\s*name:\s*(.*)$/.exec(lines[i])
+        if (mn && id && unquote(mn[1]) === pkg) return id
+      }
+    } catch (_) { /* no graph on disk — the caller keeps the package name */ }
+    return pkg
+  }
+  async function setPatchDisabled(
+    dir: string, id: string, disabled: boolean,
+  ): Promise<{ changed: boolean; error?: string }> {
+    const file = join(dir, PATCH_FILENAME)
+    let text: string
+    try {
+      text = await readFile(file, 'utf8')
+    } catch (error) {
+      return { changed: false, error: PATCH_FILENAME + ' unreadable: ' + String((error as Error).message || error) }
+    }
+    const eol = text.indexOf('\r\n') === -1 ? '\n' : '\r\n'
+    const lines = text.split(/\r?\n/)
+    const wanted = disabled ? 'true' : 'false'
+    // Item boundaries: a top-level sequence entry begins at column 0 with `- `.
+    const starts: number[] = []
+    for (let i = 0; i < lines.length; i++) if (/^-(\s|$)/.test(lines[i])) starts.push(i)
+    const unquote = (v: string) => v.trim().replace(/^['"]|['"]$/g, '')
+    // `-?\s*` is REQUIRED: a top-level item's id sits on its own `- id: X` line, so
+    // a pattern demanding leading whitespace before `id:` matches NOTHING and every
+    // call treats the plugin as absent. MEASURED: three identical
+    // `- id: dsh-dream-skin` rows accumulated that way, and the duplicate rows then
+    // left the disable ineffectual.
+    const idOf = (line: string): string | null => {
+      const m = /^\s*-?\s*id:\s*(.*)$/.exec(line)
+      return m ? unquote(m[1]) : null
+    }
+    const found = starts.find((start, k) => {
+      const end = k + 1 < starts.length ? starts[k + 1] : lines.length
+      for (let i = start; i < end; i++) {
+        if (idOf(lines[i]) === id) return true
+      }
+      return false
+    })
+    if (found === undefined) {
+      if (!disabled) return { changed: false }  // no row, and nothing to clear
+      const body = lines.length > 0 && lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines
+      // `name:` is REQUIRED, and omitting it is why the first version of this writer
+      // changed the file and nothing else. MEASURED against `dshmarket` — a peer plugin
+      // that writes this SAME layer and whose toggles DO take effect: every row it writes
+      // carries a module name (its `- insert:` list with `id:`+`name:`, or the top-level
+      // `- id:`+`name:` pair this profile already uses, e.g. `- id: dock-flash / name:
+      // dock-flash`). DSH's own profile check even warns "loader entry … has no module
+      // name". Here the package name IS the loader id, so both fields carry the same value.
+      const next = body.concat(['- id: ' + id, '  name: ' + id, '  disabled: ' + wanted, '']).join(eol)
+      const wrote = await writePatchDocument(file, dir, next)
+      return wrote.error ? { changed: false, error: wrote.error } : { changed: true }
+    }
+    const k = starts.indexOf(found)
+    const end = k + 1 < starts.length ? starts[k + 1] : lines.length
+    let at = -1
+    let indent = '  '
+    for (let i = found + 1; i < end; i++) {
+      const m = /^(\s+)disabled:\s*/.exec(lines[i])
+      if (m) { at = i; indent = m[1]; break }
+    }
+    if (at >= 0) {
+      if (lines[at] === indent + 'disabled: ' + wanted) return { changed: false }
+      lines[at] = indent + 'disabled: ' + wanted
+    } else {
+      if (!disabled) return { changed: false }
+      lines.splice(found + 1, 0, '  disabled: ' + wanted)
+    }
+    const wrote = await writePatchDocument(file, dir, lines.join(eol))
+    return wrote.error ? { changed: false, error: wrote.error } : { changed: true }
+  }
 
   /** The launch-environment snapshot DSH resolved the boot-time policy from. */
   function launchEnvironment(): EnvLookup | null {
@@ -535,10 +682,12 @@ export function apply(ctx: Context, config: ProxyConfig) {
   }
 
   /**
-   * Read a proxy variable the way the policy resolved it: the launch snapshot
-   * first (it merges process / project-env / user-env), process.env as fallback.
+   * Read a launch-environment variable the way the policy resolved it: the
+   * launch snapshot first (it merges process / project-env / user-env),
+   * process.env as fallback. The proxy variables are the main caller; the
+   * profile inventory reads DSH_PROFILE_DIR / DSH_HOME through it too.
    */
-  function readProxyEnv(names: string[]): string | null {
+  function readLaunchEnv(names: string[]): string | null {
     const snapshot = launchEnvironment()
     for (const name of names) {
       const fromSnapshot = snapshot ? snapshot.get(name) : undefined
@@ -547,6 +696,127 @@ export function apply(ctx: Context, config: ProxyConfig) {
       if (raw) return raw
     }
     return null
+  }
+
+  /**
+   * Candidate directories for the profile this host boots plugins for, best
+   * first.
+   *
+   * **Do not assume `DSH_PROFILE_DIR` is set here.** MEASURED: the harness
+   * exports `DSH_PROFILE` / `DSH_PROFILE_DIR` into every *model shell call* of a
+   * profile-launched session and omits both when it was booted without a
+   * profile — they are shell facts, not facts of the Electron host process, so
+   * a host plugin sees neither. The first version of this function trusted them
+   * and answered "the launch environment names no profile directory" from the
+   * running Desktop app.
+   *
+   * So the profile is FOUND rather than declared, and the strongest signal needs
+   * no environment fact at all: a profile's `package.json` lists the plugins
+   * installed in it, so **the profile that lists THIS plugin is the one we are
+   * running in**.
+   */
+  function profileDirCandidates(): string[] {
+    const out: string[] = []
+    const push = (dir: string | null | undefined) => {
+      if (dir && out.indexOf(dir) === -1) out.push(dir)
+    }
+    push(readLaunchEnv(['DSH_PROFILE_DIR']))
+    const home = readLaunchEnv(['DSH_HOME']) || join(homedir(), '.dsh')
+    const named = readLaunchEnv(['DSH_PROFILE'])
+    if (named) push(join(home, 'profiles', named))
+    const argv = process.argv
+    for (let i = 0; i < argv.length - 1; i++) {
+      if (argv[i] === '--profile') push(join(home, 'profiles', argv[i + 1]))
+      else if (argv[i] === '--profile-dir') push(argv[i + 1])
+    }
+    try {
+      for (const entry of readdirSync(join(home, 'profiles'))) push(join(home, 'profiles', entry))
+    } catch (_) { /* no profiles directory — the other candidates still stand */ }
+    push(process.cwd())
+    return out
+  }
+
+  /**
+   * What the profile's OWN manifest says: `dependencies` is what is installed,
+   * `dsh.profile.bundles` is what this DSH actually composes at boot. The gap
+   * between the two is "installed but switched off" — and on DSH Desktop that
+   * gap is the only place the fact exists at all: the plugin manager refuses
+   * the reserved desktop profile (`manageDesktopProfile` / `rejectElectronProfile`),
+   * so its `listPlugins()` / `listBundles()` answer nothing there, and a skin
+   * that is switched off becomes invisible (listed nowhere, so it can never be
+   * switched back on).
+   *
+   * Failures are returned as data, never thrown — this route cannot 500.
+   */
+  async function readProfilePackages(): Promise<{
+    dir: string | null
+    installed: string[]
+    active: string[]
+    tried: string[]
+    error?: string
+  }> {
+    const candidates = profileDirCandidates()
+    const tried: string[] = []
+    let fallback: { dir: string; installed: string[]; active: string[] } | null = null
+    for (const dir of candidates) {
+      tried.push(dir)
+      try {
+        const pkg = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'))
+        const raw = pkg && pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles
+        if (!Array.isArray(raw)) continue  // not a profile manifest
+        const installed = Object.keys((pkg && pkg.dependencies) || {}).sort()
+        // A package can sit in `bundles` and still be switched OFF at the ENTRY level:
+        // DSH's own switch writes `- id: <entry>` + `disabled: true` into the profile patch,
+        // and that entry id comes from the PACKAGE's own patch layer (`dsh-dream-skin`
+        // declares `dream-skin`). Reporting such a package as ACTIVE is what made it vanish
+        // from the skin list: it is neither an active skin (no marks, not loaded) nor
+        // "installed but off" (`installed - active` was empty), so no discovery phase could
+        // see it. Excluding it here fixes BOTH readers at once — phase 6 lists it again, and
+        // `_switchSkinBundle()` reads its state as off.
+        const disabledByEntry = await (async (): Promise<Set<string>> => {
+          const off = new Set<string>()
+          const unquote = (v: string) => v.trim().replace(/^['"]|['"]$/g, '')
+          try {
+            const ids = new Set<string>()
+            const patch = await readFile(join(dir, 'cordis.patch.yml'), 'utf8')
+            let pending: string | null = null
+            for (const line of patch.split(/\r?\n/)) {
+              const mi = /^\s*-?\s*id:\s*(.*)$/.exec(line)
+              if (mi) { pending = unquote(mi[1]); continue }
+              if (pending && /^\s*disabled:\s*true\s*$/.test(line)) ids.add(pending)
+            }
+            for (const name of installed) {
+              try {
+                const own = await readFile(join(dir, 'node_modules', name, 'cordis.patch.yml'), 'utf8')
+                for (const line of own.split(/\r?\n/)) {
+                  const mi = /^\s*-?\s*id:\s*(.*)$/.exec(line)
+                  if (mi && ids.has(unquote(mi[1]))) { off.add(name); break }
+                }
+              } catch (_) { /* this package ships no patch layer of its own */ }
+            }
+          } catch (_) { /* no profile patch — nothing is switched off there */ }
+          return off
+        })()
+        let active = raw
+          .filter((name: unknown): name is string => typeof name === 'string')
+          .sort()
+        active = active.filter((name: string) => !disabledByEntry.has(name))
+        const claimsUs = installed.some((name) => name === PLUGIN_NAME || name.endsWith('/' + PLUGIN_NAME))
+        // The profile that lists this plugin is the one we run in; a profile
+        // that merely looks like one is only kept in case nothing claims us.
+        if (claimsUs) return { dir, installed, active, tried }
+        if (!fallback) fallback = { dir, installed, active }
+      } catch (_) { /* not a readable profile manifest — try the next candidate */ }
+    }
+    if (fallback) return { ...fallback, tried }
+    return {
+      dir: null,
+      installed: [],
+      active: [],
+      tried,
+      error: 'no profile manifest found (none of these had a readable package.json ' +
+        'with dsh.profile.bundles): ' + tried.join(', '),
+    }
   }
 
   /**
@@ -567,9 +837,9 @@ export function apply(ctx: Context, config: ProxyConfig) {
       // HTTPS falls back to the HTTP proxy when no HTTPS_PROXY is set — that is
       // an undici behaviour (https uses https_proxy, else http_proxy) and the
       // display should mirror what routing actually does.
-      https: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
-      http: readProxyEnv(['HTTP_PROXY', 'http_proxy']),
-      all: readProxyEnv(['ALL_PROXY', 'all_proxy']),
+      https: readLaunchEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
+      http: readLaunchEnv(['HTTP_PROXY', 'http_proxy']),
+      all: readLaunchEnv(['ALL_PROXY', 'all_proxy']),
     }
   }
 
@@ -703,7 +973,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
       // What this plugin published for the current mode: the value that governs
       // routing once the dispatcher has been re-installed.
       noProxy: resolveNoProxy(mode, custom) ?? null,
-      httpProxy: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
+      httpProxy: readLaunchEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
       proxyEnv: proxyEnvSummary(),
       proxied: route.proxied,
       routeError: route.error,
@@ -902,7 +1172,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
           // URL is deliberately bypassed" — the client needs both to avoid
           // telling the user their proxy has no effect when they asked for a
           // bypass.
-          httpProxy: readProxyEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
+          httpProxy: readLaunchEnv(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']),
           // Per-class proxy variables, each verbatim — lets the client render a
           // complete read-only inventory (HTTP_PROXY / HTTPS_PROXY / ALL_PROXY).
           proxyEnv: proxyEnvSummary(),
@@ -1087,6 +1357,75 @@ export function apply(ctx: Context, config: ProxyConfig) {
         sendJson(res, 200, { ok: true, ts: Date.now() })
       },
     }), 'dock-flash: GET /plugins/dock-flash/health')
+
+    // E · Profile inventory — the profile's own manifest, which on DSH Desktop
+    // is the ONLY source that can see an INSTALLED-BUT-SWITCHED-OFF plugin: the
+    // plugin manager refuses the reserved desktop profile, so the client's
+    // `listPlugins()` / `listBundles()` answer nothing there. Without this the
+    // skin switcher could turn such a skin OFF but never back ON, because a
+    // switched-off handle-less skin has no DOM mark either — nothing could prove
+    // it was installed, so it was listed nowhere.
+    wsCtx.effect(() => wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/plugins/dock-flash/profile-packages',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') {
+          res.statusCode = 405
+          res.setHeader('allow', 'GET')
+          res.end()
+          return
+        }
+        sendJson(res, 200, await readProfilePackages())
+      },
+    }), 'dock-flash: GET /plugins/dock-flash/profile-packages')
+
+    // F · The LIVE plugin switch. The client remote cannot address anything on DSH
+    // Desktop — `unknown-plugin` for every id, because its inventory does not
+    // manage this reserved profile — and the bundle layer only shapes the NEXT
+    // boot. So this route performs the edit DSH's OWN plugin manager performs:
+    // set/clear `disabled:` in the profile's patch document, atomically. The
+    // loader watches that document, which is what makes the change land on the
+    // RUNNING page rather than at the next restart.
+    //
+    // The reply deliberately mirrors the remote's `ChangeResult` shape
+    // (`{ ok, value: { stage, target, enabled, changed, application, error } }`)
+    // so the client can drive both levers through one code path.
+    wsCtx.effect(() => wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/plugins/dock-flash/set-plugin-entry',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405
+          res.setHeader('allow', 'POST')
+          res.end()
+          return
+        }
+        const body = await readJsonBody(req)
+        const target = body && typeof body.name === 'string' ? body.name : ''
+        const enabled = !!(body && body.enabled)
+        const value: Record<string, unknown> = { stage: 'enable', target, enabled }
+        const fail = (code: string, message: string) => {
+          value.application = 'failed'
+          value.error = { code, message }
+          sendJson(res, 200, { ok: false, value })
+        }
+        if (!target) return fail('invalid-spec', 'name is required')
+        if (!/^[@a-z0-9][\w@./-]*$/i.test(target)) return fail('invalid-spec', 'name is not a package id')
+        const dir = (await readProfilePackages()).dir
+        if (!dir) return fail('unaddressable', 'the profile directory could not be resolved')
+        const entryId = await entryIdFor(dir, target)
+        const outcome = await setPatchDisabled(dir, entryId, !enabled)
+        if (outcome.error) return fail('operation-error', outcome.error)
+        value.changed = outcome.changed
+        // `applied`, MEASURED — the earlier `restart-required` here was MY error, not
+        // DSH's: the row this route first wrote omitted the required `name:`, so the loader
+        // ignored it and the plugin kept running. With the correct shape
+        // (`- id: X` / `name: X` / `disabled: true`) the running loader drops the plugin at
+        // once, with no restart — exactly how the peer plugin `dshmarket` behaves.
+        value.application = 'applied'
+        sendJson(res, 200, { ok: true, value })
+      },
+    }), 'dock-flash: POST /plugins/dock-flash/set-plugin-entry')
   })
 
 
