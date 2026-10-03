@@ -43,8 +43,8 @@ scripts/          repo tooling — NOT published (see `files` in package.json)
 Docs: `README.md` / `README.zh-CN.md` (English is canonical), `INTEGRATION.md` /
 `INTEGRATION.zh-CN.md` (third-party guide), `CHANGELOG.md` (history), `AGENTS.md` (this file).
 `docs/`: `architecture-notes.md` (the "why" and the measurements), `testing-checklist.md`,
-`releasing.md`, `skin-system.md`. `scripts/`: `check-docs-size.mjs` (`pnpm run check:docs`),
-`check-overlay-mount.mjs` (`pnpm run check:overlay`).
+`releasing.md`, `skin-system.md`, `panel-ordering.md`. `scripts/`: `check-docs-size.mjs`
+(`pnpm run check:docs`), `check-overlay-mount.mjs` (`pnpm run check:overlay`).
 
 - **Host half** (`src/index.ts`): compiled via `pnpm run build` (tsc). Touch only this file for host-side changes.
 - **Client half** (`lib/client.js`): single monolithic file, edited directly — no build, no bundler, no TypeScript. Changes take effect on page refresh (symlinked in profile).
@@ -290,69 +290,17 @@ plain render function, which would make hooks illegal. Do not "tidy this up" int
 
 ### Panel ordering and visibility: two modes, one writer
 
-Users can reorder the panel's groups and switches, and hide individual rows, from icons in the
-header of every page that has something to rearrange (not the Changes page), immediately left of the
-collapse chevron, icon-only, each handler calling `stopPropagation()` because that header is itself
-the collapse control.
+Users reorder the panel's groups and switches, and hide individual rows, from header icons on every
+page that has something to rearrange (not the Changes page); each handler calls `stopPropagation()`,
+because that header is itself the collapse control. **One key, one writer**: order and visibility both
+live in the host namespace (`panelOrder` as `switches` and `hidden`), and every write goes through
+`writePanelOrder()` / `clearPanelOrder()` / `clearPanelHidden()` → `savePrefs()`. **A cluster is one
+card with its members FOLDED by default, never dropped**, and a `visible()` gate is never how it is
+folded.
 
-**Entering either mode opens its tab.** The header is reachable while a tab is folded (`isOpen` gates the body only), so both mode buttons call `ensureTabOpen(page.id)` — open if collapsed, no-op if open, never closing — and do so AFTER `stopPropagation()`, or the header’s own `toggleTab` re-collapses it in the same click.
-
-**Two modes, mutually exclusive by construction, not by a guard**: `◉` opens visibility, `⇅`
-reordering, and while either is open **the other's entry button is not rendered** — header `◉ ⇅ ▶`
-idle, `✓ ↺ ▶` in either mode, no state where a row has both a ▲▼ pair and a hide box. Do not merge them: two adjacent small controls, one of
-which makes a row vanish, is a mis-click that removes the row you were about to move. `↺` is a single button whose
-action follows the open mode, and **each mode resets only its own half** — order and visibility are
-independent intents, so there is deliberately no combined "restore everything".
-
-Seven invariants:
-
-- **One key, one writer, and the writer is the preference bridge.** Order AND visibility both live
-  in the host settings namespace (`panelOrder`, as `switches` and `hidden`); `writePanelOrder()`,
-  `clearPanelOrder()` and `clearPanelHidden()` are the only writers and all go through `savePrefs()`
-  — memory + localStorage + host in one call. Group keys are scope-qualified: `builtin:<group>` for
-  the Workbench tab, `ext:<source>` for an Extensions group, because the two tabs name groups from
-  different namespaces. Each clear carries the OTHER field through untouched, and neither
-  `localStorage.removeItem`s the key: removing it would drop the half it preserves.
-- **Two layers of "not shown", ANDed — but only in the normal view.** A switch's `visible()` is the
-  PLUGIN saying "I do not apply right now"; `panelOrder.hidden` is the USER saying "I do not want
-  it". Neither can override the other: a user cannot force back a row the plugin has stood down, and
-  a plugin cannot drag back one the user put away. **Both editing modes are INVENTORIES and list
-  every registered unit**, stood-down and user-hidden ones included, because a row that is not drawn
-  cannot be ordered or hidden — a stood-down switch used to be unreachable in every mode at once,
-  which is how the turn-rail switch was lost. A row the normal view would filter is dimmed in the
-  editing modes and its tooltip names the layer that removed it.
-- **A unit, not a switch, is what moves.** `groupUnits()` splits a group into units: a plain switch
-  is a unit of one, and switches sharing a `cluster` label are ONE unit keyed by `\0cluster:<label>`
-  — the label, not the head's id, because `visible()` can hide any member, so a head-keyed unit would
-  change key the moment the head was hidden while another member stayed on screen.
-- **Only deviations are stored.** Defaults still come from each switch's `order`, so a newly
-  installed plugin or switch appends to its group. Stale keys are RETAINED when a move writes the
-  list back, so a merely-hidden group or unit keeps its slot; `applyOrder` filters them for display.
-- **One function decides display order.** `displayUnits()` feeds the normal view AND edit mode — the
-  only reason the arrows can be trusted to agree with the result. An untouched group keeps the
-  historical toggles-grid-then-rest look; a customized one renders strictly in the saved order and
-  therefore flattens, because a strict order and a two-bucket split cannot both hold.
-- **A cluster is one card, its members folded — never dropped.** The card carries the head, members
-  hang off a left rail, and the same card is drawn in and out of edit mode. The fold control is the
-  card's **last row, centred**, arrow pointing the way the click moves the content (`▼` reveals,
-  `▲` tucks away) — keep it there rather than beside the head, where it reads as an ornament, and
-  keep it **count-free** (a number beside a triangle reads as a badge). It defaults to **FOLDED**.
-  Reordering forces it open and omits the fold button, because the body is click-through there and a
-  dead control is worse than a long block. Membership never changes shape — that is the point of a
-  fold over a `visible` gate: the panel's structure and the saved order survive a proxy being
-  configured or removed.
-- **A destructive or non-obvious action gets a receipt, and the receipt names the tab.** `↺` and the
-  `⇅` **exit** both replace the tab title with a sentence for ~1.6s. The notice holds the tab id and
-  a `kind`, never a boolean, so only the pressed tab renames. Only `⇅`'s exit direction reports —
-  entering already shows feedback (the arrows appear, the glyph flips), and it reads `orderEdit`
-  *before* toggling to tell the two directions apart. `↺`'s tooltip is per tab because the
-  disabled-plugin records live under `ext:*` alone, so the warning belongs to the Extensions tab and
-  would be a false claim on Workbench.
-
-`__dockFlashPanelOrder()` prints the order the last render resolved next to what is persisted.
-
-> The reasoning, the two-bucket-split trade-off and the fold's history:
-> [docs/architecture-notes.md](docs/architecture-notes.md).
+> The two modes and their mutual exclusion, the tab-opening rule, the unit model, the inline
+> (fold-free) cluster form, the receipt rule and the two-bucket-split trade-off:
+> **[docs/panel-ordering.md](docs/panel-ordering.md)**.
 
 ### Stacking
 
@@ -483,7 +431,7 @@ setValue: (v) => { myState = v; sw._notifyChange?.('old', 'new') }
 
 ### 8. `_skinExclude` Must Be Checked in ALL Scan Phases
 
-Every skin discovery phase (1a, 1b, 2, 4) must filter excluded plugins. Missing a phase causes excluded skins to appear in the dropdown:
+Every skin discovery phase (1a, 1b, 2, 4, 5, 6) must filter excluded plugins. Missing a phase causes excluded skins to appear in the dropdown:
 
 ```js
 // Every scan loop must include:
@@ -497,17 +445,41 @@ installed-skin list and was also offered as one of the skins, labelled `Market` 
 put every real skin at risk. A derived label makes such an entry look deliberate, so the list is
 asserted rather than eyeballed: `check:overlay` section 15 drives the real scan and pins the dropdown.
 
-**A market-sourced candidate must also pass the MARKET's own classification — in EVERY phase.** The
-market refuses `/use-skin` for anything outside its theme set (`category: theme` in the registry,
-matched by name or by repo), so listing a package it would refuse does not merely add a dead entry, it
-WEDGES the dropdown: a failed activation must release the optimistic `_pendingSkinId` or
-`_getActiveSkinId()` echoes it back forever. `_skinAllowed(id)` is the ONE predicate — call it from
-**all five** entry paths into `_scanInstalledSkins()`: managed (0), `style[data-plugin]` (1a),
-`style[data-skin-chrome]` (1b), body attributes (2), boot manifest / graph rows (4). Gating the market
-merge alone is not enough: the same package injects its own `<style data-plugin>` tag. **A package the
-market does not list PASSES** (a plugin-local CSS skin must stay; only a KNOWN non-theme is dropped).
+**A candidate must pass the ONE name predicate — in EVERY phase.** `_skinAllowed(id)` is stated once
+and called from **all seven** entry paths into `_scanInstalledSkins()`: managed (0),
+`style[data-plugin]` (1a), `style[data-skin-chrome]` (1b), body attributes (2), boot manifest / graph
+rows (4), live marks (5), the profile manifest (6). It is a **pure name predicate** now, and
+**both halves are inside it** — `_skinHint.test(id) && !_skinExclude.test(id)`. The market's registry
+classification it once consulted is gone, along with the `/use-skin` path; see the skin section's
+note. Phases 0 and 4 call `_skinAllowed` ALONE (the redundant standalone `_skinExclude.test` above is
+the shape of the other five, not of those two) — anything that narrows the exclusion must go inside
+`_skinAllowed`, because an id that skips it is listed. **A package nothing recognises PASSES** (a
+plugin-local CSS skin must stay; only a KNOWN non-skin is dropped).
 `dsh-client-liang-intensity-skin` is the worked example —
 [docs/architecture-notes.md](docs/architecture-notes.md) has the measurements.
+
+**ONE skin must yield ONE id, and that id is the PACKAGE name.** Filtering has one predicate;
+identity had no single spelling, and that is the same defect twice: the dedup is exact string equality
+while the phases and the plugin-manager merge each spell an id differently, so one skin enters the list
+twice — and only ONE of those ids is addressable, so picking the other refuses silently. **The
+canonicalization lives in phases 1a and 1b, because those are the two that read a RAW DOM string**:
+`_canonicalSkinId()` strips a subpath and a scope, and 1b additionally strips a decorative suffix
+(`-style`, `-chrome`, `-css`) **only when the stripped name is CONFIRMED by a known source, never
+blindly** (a package may genuinely be called `foo-style`). The confirming set is the boot manifest /
+graphRows, `_managedSkins`, **`_skinBodyAttrs`** — the strongest for a skin it lists, being this
+plugin's own curated canonical-id table — and the ids earlier phases already saw. Phases 0, 2, 4, 5 and
+6 need no canonicalization step: their ids come from a table or a manifest that already spells the
+package name. **A new phase that reads a raw string must canonicalize before `seen.has()`/`seen.add()`**
+— the plugin-manager path did not, which is how the 0.15.3 duplicate came back. The worked case and its
+dump: [docs/skin-system.md](docs/skin-system.md).
+
+> **The assertions that pinned the market are RED, on purpose.** `check:overlay`'s skin sections still
+> test behaviour the plugin-manager rewrite REPLACED rather than removed: classifying a theme by the
+> market's registry (16), releasing the optimistic selection when an activation is REFUSED and echoing
+> the market's own wording (17), handing over to `/use-skin` (20), and the trace naming a
+> `pluginManager` route with its entry detail (22). Ten assertions fail, for those causes and no other.
+> That is a **known, accepted red** while the skin switcher refactor is finished — do not "fix" it by
+> restoring the market, and do not treat a green `check:overlay` as a precondition for unrelated work.
 
 ### 9. Never Use CSS `zoom` on `<html>` Element
 
@@ -555,11 +527,26 @@ When adding a host-side dependency, import it statically and declare it in `pack
 
 ## Skin System Architecture
 
-**Five entry paths, one predicate per filter.** A skin reaches the dropdown through phase 0 (managed),
-1a (`style[data-plugin]`), 1b (`style[data-skin-chrome]`), 2 (body attributes) or 4 (`__DSH_BOOT__` /
-`graphRows`). `_skinExclude` and `_skinAllowed` are each stated ONCE and called from all five — see
-**Critical Rule 8** for why a filter applied to four of the five leaks through the fifth, and for the
-two rules that keep the market from being offered as a skin.
+**Seven entry paths, one predicate per filter.** A skin reaches the dropdown through phase 0 (managed),
+1a (`style[data-plugin]`), 1b (`style[data-skin-chrome]`), 2 (body attributes), 4 (`__DSH_BOOT__` /
+`graphRows`), 5 (**a live mark from `_skinLiveMarks`**) or 6 (**installed but switched off, from the
+profile's own manifest — host route `/plugins/dock-flash/profile-packages`**). `_skinAllowed` states
+BOTH filters (`_skinHint` AND `_skinExclude`) and is called from all seven — see **Critical Rule 8**,
+which also carries the two rules that keep the market from being offered as a skin.
+
+**Phases 5 and 6 are the last-resort sources, and each exists because the usual ones can be blind.**
+Phase 5: a mark in the document IS proof of installation, so a handle-less skin that is still
+rendering can be listed at all. Phase 6: **DSH Desktop lets no client plugin enumerate installed
+plugins** (its plugin manager refuses the reserved desktop profile, so `listPlugins()` /
+`listBundles()` answer nothing) and a switched-off handle-less skin has no mark either — so the
+profile's own `package.json`, read by the HOST half, is the only proof left. Without them such a
+case could be turned OFF but never back ON. Details: [docs/skin-system.md](docs/skin-system.md).
+
+> **`__DSH_BOOT__.entries` is not a complete install list**, and **a REJECTED `listPlugins()` is not
+> an empty one** — the second was cached for the session as "no plugins", making every skin read
+> `NO ADDRESSABLE ROW` until a reload. The cache now keys on a read that CONCLUDED (`ok`), and
+> `_refreshPluginEntries()` notifies only when rows arrived, which is what stops "do not cache a
+> failure" from becoming a render → fetch → notify loop.
 
 - **Excluded, never listed**: bloom-theme, black-hole, theme-manager, `dsh-skin-market` (the market
   itself — supplies the list and is not a skin) and any `timeline` plugin, which looks exactly like a
@@ -573,18 +560,22 @@ two rules that keep the market from being offered as a skin.
   tag — NEVER by `enabledKey` in localStorage**, which dock-flash writes itself; and that key must not
   be written for a skin that is not installed. `_managedInstallReason()` is the ONE predicate for that,
   called by the scan AND by the flag sync.
-- **Switch a handle-less skin off as a WHOLE PLUGIN, through DSH's own plugin manager — never through the
-  market.** Some skins (`dsh-dream-skin`, `dsh-theme-macintosh`) inject `<style>` tags carrying no
-  `data-plugin` / `data-skin-chrome`, drive themselves from their own `<html>` attributes and re-insert
-  themselves from a `MutationObserver`, so there is no selector, no tag and no activation attribute to act
-  on; DSH ships no remove-by-owner API either (`removeOwnedStyles()` keys on `data-plugin` too).
+- **Switch a handle-less skin off as a WHOLE PLUGIN, through DSH's own plugin manager.** Some skins
+  (`dsh-dream-skin`, `dsh-theme-macintosh`) inject `<style>` tags carrying no `data-plugin` /
+  `data-skin-chrome`, drive themselves from their own `<html>` attributes and re-insert themselves from
+  a `MutationObserver`, so there is no selector, no tag and no activation attribute to act on; DSH ships
+  no remove-by-owner API either (`removeOwnedStyles()` keys on `data-plugin` too).
   `_skinNotControllable()` is the ONE predicate for that shape, and its consequence is
   `_switchSkinBundle()` → `ctx.remote.pluginManager`. **Two switches exist there and they are NOT
   interchangeable: use the ENTRY one.** `setPluginEnabled(entryId, enabled)` acts on the RUNNING loader
   and writes or clears that entry's `disabled:` row — live AND symmetric, which is what 默认 needs.
-  `setBundleEnabled(package, enabled)` only edits `dsh.profile.bundles`, and **DSH composes that list at
-  BOOT**: it cannot change the page the user is looking at, so it is only the fallback for a package with
-  no addressable row, and it must SAY a DSH restart is needed rather than look like a dead control.
+  `setBundleEnabled(package, enabled)` only edits `dsh.profile.bundles`, so it is only the fallback for a
+  package with no addressable row. **The entry id need not come from `listPlugins()`: when that yields no
+  row, take it from the BOOT MANIFEST** — that is what makes the LIVE entry switch reachable on DSH
+  Desktop, where the manager refuses the reserved profile while DSH's own Plugins page toggles the same
+  plugin live. `setPluginEnabled()` answers `application: "applied" | "restart-required"`, DSH's own words
+  for "live" vs "needs a restart". The bundle fallback is composed at the running host's OWN boot, so a
+  page reload cannot apply it (MEASURED) — that path is the one that must say so.
   **A remote resolves only for a client plugin that DECLARES it — twice over, and the second half is the
   one that bites.** `dsh.client.inject` must name `@deepseek-ai/dsh-api-remotes` (load order — the package
   that owns `ctx.remote.$mount()`), AND the plugin object's own `inject` must name the NAMESPACE SERVICE
@@ -593,32 +584,25 @@ two rules that keep the market from being offered as a skin.
   `"remote.settings"`. The official `dsh-client-ui-plugin-manager` declares all three. Either entry
   missing makes every 默认 press a silent no-op that writes nothing — which is how it shipped, twice:
   first with no package entry, then again with the package entry but only `"remote"`/`"remote.settings"`.
-  Reaching for `POST /dsh-market/toggle` instead looks right and is not — **that route is
-  the market's PLUGIN switch, not a skin switch**: it appends a `disabled: true` row to the profile's
-  `cordis.patch.yml` AND drops the package from `dsh.profile.bundles`, while the only path back
-  (`/use-skin` → `activateTheme()`) does live loader work and clears neither, so the write is a
-  **one-way door** — two installed themes became impossible to re-enable from the theme page. The state is
+  The state is
   read first in every case, so an already-satisfied press writes nothing and cannot reload in a loop.
   **A UI control never edits the install layers: it must use a switch that has an inverse.**
 - **Collect EVERY promise that represents a loader write — a write with no reload is a silent half-switch.**
   Switching a handle-less skin ON is the same kind of write as switching it off, and both only change what the
   NEXT page load boots, so `_applySkin()` pushes `_switchSkinBundle()` into `pending` in BOTH directions and
   reloads when any of them reports a real change. The activation side once dropped that promise
-  (`_switchSkinBundle(target, true)` with no `pending`): selecting a theme the market had stopped listing enabled
-  the plugin in the loader, printed nothing anywhere, changed nothing on screen, and appeared only after a manual
-  refresh — "from 默认 I can switch to Dream once, then nothing until I reload the page". The state is read first,
-  so an already-satisfied switch resolves `false` and reloads nothing; that guard is what makes collecting the
+  (`_switchSkinBundle(target, true)` with no `pending`): the plugin was enabled in the loader, nothing was
+  printed anywhere, nothing changed on screen, and it appeared only after a manual refresh — "from 默认 I can
+  switch to Dream once, then nothing until I reload the page". The state is read first, so an
+  already-satisfied switch resolves `false` and reloads nothing; that guard is what makes collecting the
   promise safe even though `_applySkin()` also runs at boot. When a press still does nothing,
-  `window.__dockFlashSkinTrace()` (a 40-entry ring) names the route that ran (`press.path` = `market` |
-  `applySkin`), whether the plugin manager actually wrote (`bundle.wrote`) and whether a reload was scheduled
-  (`reload`) — without it those two causes are indistinguishable from the outside. **The ring lives in
-  `sessionStorage` for that reason**: the switches it records are the ones that reload the page, so a
-  memory-only trace is wiped by the very event it exists to explain, and empty then reads as "nothing was
-  pressed". It is seeded with `boot` / `switch` lines and closes with a `render` line 2.5s later, which answers
-  the other half — the write happened, the reload happened, and the theme still is not painted.
-- **A handle-less skin that is still RENDERING has to be reported, or 默认 becomes unreachable.** The
-  plugin manager's rows and the market's `live` list are bookkeeping: a theme can read `disabled` in both
-  and still be painted in the page (a mounted instance, or styles left behind by an earlier load) while the
+  `window.__dockFlashSkinTrace()` (a 40-entry ring) is what tells the two causes apart — it names the route
+  that ran (`press.path`), whether the plugin manager actually wrote (`bundle.wrote`) and whether a reload
+  was scheduled (`reload`). **The ring lives in `sessionStorage` for that reason**: the switches it records
+  are the ones that reload the page, so a memory-only trace is wiped by the very event it exists to explain.
+- **A handle-less skin that is still RENDERING has to be reported, or 默认 becomes unreachable.** Every
+  record — the plugin manager's rows included — is bookkeeping: a theme can read `disabled` there and
+  still be painted in the page (a mounted instance, or styles left behind by an earlier load) while the
   stored preference says `default`. The `<select>` then SHOWS `default`, and a select fires no event for the
   value it already shows — so the user has no control left to press. `_skinLiveMarks` + `_skinInEffect()`
   read the plugins' own marks (`html[data-dsh-material]`, `style#dsh-dream-skin-nav-icon`,
@@ -626,32 +610,84 @@ two rules that keep the market from being offered as a skin.
   both plugins re-inject themselves. `_getActiveSkinId()` returns the marked id, so the dropdown names what
   actually renders; and `_applySkin('default')` knows that press wrote nothing (`changed` is all-false,
   the row already read `disabled`) and **reloads anyway** — in that state the reload IS the switch.
+- **默认 is not a package name, and the switch to it must go through `_applySkin()`.** MEASURED
+  defect: `setValue('default')` called `_activateThemeViaPluginManager('default')`, and every branch
+  there is about ONE package (`_skinEntryRow(rows, _skinBundleName(name))`, "enable the target, disable
+  the others") — no row exists for `default`, so it fell to the `!targetRow` fallback, which calls
+  `_applySkin(v)` and **stopped there**. The branch in `_applySkin()` that switches EVERY skin off was
+  never reached on that route, which is why 默认 switched a handle-less skin off (its path is
+  `_switchSkinBundle()`, reached through the fallback) and left a CSS skin bundled and repainting.
+  `_activateThemeViaPluginManager()` now short-circuits `'default'` to `_applySkin('default')`.
+- **A CSS skin is a WHOLE PLUGIN, and the switch has THREE call sites plus TWO halves — all five
+  must agree.** A press runs `_activateThemeViaPluginManager()`, which has its OWN "enable the
+  target, disable the others" loop; `_applySkin()`'s two loops (默认 and deactivate-others) and
+  `_switchSkinBundle()` are the others. Every one needs both halves: the entry row
+  (`setPluginEnabled`, HOST half) and `dsh.profile.bundles` (`_switchSkinBundle()` →
+  `byBundlePath()`, VISIBLE half). Measured defects, one per site: the row paths returned before
+  `byBundlePath()`, so a skin with an addressable row had its entry flipped and stayed bundled for
+  ever (Dream escaped only because its `!row` path ends there); that loop treated its target as
+  "already done" (`row.enabled === enabled`) and hard-coded `false` for every other skin, so 默认
+  worked and selecting the skin back never re-added it; a row path resolved `false` for an `applied`
+  switch — the flag `_applySkin()` reloads on (`pending.some(Boolean)`) — so a press wrote the
+  rosters and never reloaded; `byBundle()` resolved `undefined`, reading as "nothing changed"; and
+  `byBundlePath()`'s guard was inverted for ON (`enabled: false` means NOT in the roster, a real
+  write). **`_isMarketLiveTheme()` gates nothing here — nothing ever assigns `_marketThemes`, so it
+  is always `false`. See [docs/skin-system.md].**
+- **The entry id is NOT derivable, and an EMPTY candidate list is not "nothing to do".**
+  `_entryIdCandidates()` only GUESSES, and every wrong guess answers `unknown-plugin` (MEASURED:
+  `dsh-dream-skin`'s real id is `dream-skin`); `POST /plugins/dock-flash/set-plugin-entry` is the
+  authority, because the HOST reads the package's own `cordis.patch.yml`. The list is ALSO empty
+  before `/plugins/dock-flash/profile-packages` answers — `enabledNow` then reads `false`, which for
+  a DISABLE equals the wanted `false`. That is the first press of 默认 after a cold load ("需要切两次"),
+  so that branch must drive the HOST route instead of falling through to `byBundlePath()`. **Write
+  BOTH halves** — the ENTRY row (running loader) and `dsh.profile.bundles` (next boot); writing only
+  the entry left `dsh-dream-skin` installed but out of the roster, so it could not come back.
+  Measurements: [docs/skin-system.md](docs/skin-system.md).
+- **A CSS skin that is active while the stored skin is NOT a CSS skin is a stray, and the boot sweep
+  must switch it off as a PLUGIN.** Both CSS branches of `enforceBootSkin()` are gated on
+  `targetIsCss`, so a handle-less target (Dream) fell through to "do nothing" — MEASURED:
+  `claude-style-skin` stayed loaded and painting on every boot ("Claude 不会被停用,它的样式会污染别的
+  皮肤"). The `else` branch now runs `_switchSkinBundle(s, false)` over
+  `activeCss.filter((s) => s.id !== storedSkin)`, deliberately NOT `_applySkin(storedSkin, true)`.
+- **A skin with a CSS handle is switched off by REMOVING its style tag — so the boot check is a
+  LADDER plus an observer, never one pass.** This is the SECOND line of defence, for a profile whose
+  stored preference is `default` while the skin is still bundled (an older version's press, or a
+  write that never landed). It reads the DOM, and it runs when this plugin's
+  `apply()` does, which is not necessarily after the skin's own: MEASURED with
+  `dsh-client-liang-intensity-skin` (tag absent at that moment) and with `dsh-claude-style`, whose
+  889 KB client half can still be executing seconds later. The pass then sees no active CSS skin, 默认
+  has nothing to remove, and the skin stays painted for the whole session — every write it made was
+  correct, which is what made it look like a switch that did nothing. `enforceBootSkin()` is therefore
+  a NAMED function run at 0 / 1.2 / 3 / 6 / 10 s **and** on a `MutationObserver` watching
+  documentElement + head for the announcements a skin makes (`data-plugin` / `data-skin-chrome` /
+  `data-dsh-material`, or a `<style>`/`<link>` landing) — that observer is what turns "within
+  1.2 s" into "at once", and its RECORD TEST is what keeps it affordable, because one enforcement is a
+  full five-query scan. **Every pass must be idempotent** (an already-clean page falls through every
+  branch), the observer disconnects at 12 s, and each pass re-reads `_hostPrefs.activeSkin` so a
+  selection made in between wins. A skin that survives even the ladder means a longer ladder — never a
+  bigger first delay.
 - **`options()` and `_applySkin()` must read ONE list.** The dropdown merges the DOM/boot scan with the
-  market's installed-but-not-loaded themes, while `_applySkin()` once iterated the SCAN ALONE — so a
-  skin reachable only through the market half could be selected but not acted on: not activated, and not
-  switched off by 默认. `_knownSkins()` is that one list, for both callers.
-- **Without dsh-market the skin switcher is not registered at all** — `_registerSkinSwitch()` runs
-  only from `_refreshMarketThemes()` on success, because disabled themes are invisible to the DOM scan
-  and the list would be incomplete.
+  skins the scan cannot see, while `_applySkin()` once iterated the SCAN ALONE — so a skin reachable
+  only through the merge could be selected but not acted on: not activated, and not switched off by
+  默认. `_knownSkins()` is that one list, for both callers.
+- **The switcher no longer needs dsh-market, and the market is not what it reads.** Discovery and
+  switching go through DSH's own plugin manager (`_pluginManagerSkinExtras()` over the entry and bundle
+  lists; `_activateThemeViaPluginManager()` for activation — its own comment records the replacement of
+  `_activateThemeViaMarket()`), and `_skinAllowed()` is a **pure name heuristic**, as its comment says. So
+  the market-classification rule earlier in this section described a mechanism that is gone; what
+  survives is the name heuristic stated there. **`_registerSkinSwitch()` is called unconditionally**, not
+  from a market callback.
 
-**User preferences are host settings, not localStorage keys** — localStorage is a cache, never the
-authority. Adding one means touching all four places: `SettingsSchema` in `src/index.ts` with a
-`.default()`, the mapping in the client's `loadHostPreferences()`, a read from `_hostPrefs`, and a
-write through `savePrefs()`. `triggerOverlayOffset` shipped declared-and-read but **never mapped**, so
-a host-held value was silently ignored on load — the mapping list IS the contract.
+> **Preferences and the `remote`/`inject` contract live in one place** —
+> [docs/skin-system.md](docs/skin-system.md): the four-layer preference bridge, why localStorage is a
+> cache and never the authority, the `describe()` nesting, the three-argument `settings.update`, the
+> schemastery traps, and the migration rules. Read it before adding a preference. The one line that must
+> stay in mind while editing: **a new preference means `SettingsSchema` + the `loadHostPreferences()`
+> mapping + a read from `_hostPrefs` + a write through `savePrefs()` — the mapping list IS the contract**
+> (`triggerOverlayOffset` shipped declared-and-read but unmapped, so the host value was silently ignored).
 
-**A typert namespace resolves only if declared in `inject`, ONE ENTRY PER NAMESPACE** — the mount point
-`"remote"` plus `"remote.<ns>"` for every namespace actually used (`"remote.settings"`,
-`"remote.pluginManager"`, `"remote.pluginInventory"` …): the gateway registers each namespace as its own
-service (`remoteServiceKey(ns)` is `remote.${ns}`) and the guard proxy refuses an undeclared one, so a
-plugin that merely `ctx.get('remote')`s a namespace gets `undefined`. **`dsh.client.inject` naming the
-remotes package is load order, not access** — both declarations are needed. `describe()` answers
-`{ ok, value }` with the namespace list at `value.namespaces`, and
-`settings.update(ns, patch, expectedRevision)` takes **three** arguments.
-
-> The phase and category tables, the managed-skin configuration, and the full preference-bridge
-> reference — the `describe()` nesting, the schemastery traps, and why the host wins:
-> [docs/skin-system.md](docs/skin-system.md).
+> The phase/category tables, the managed-skin configuration, the `/use-skin` one-way-door history, and
+> the diagnostics hooks: [docs/skin-system.md](docs/skin-system.md).
 
 ---
 
@@ -678,9 +714,15 @@ reordering, a fixed internal order (their `order`). Use it for controls whose me
 staying together; the System proxy controls are the case that motivated it. Its members stay
 registered and are only *folded* — never gated out by `visible`, never removed — because a block that
 changes shape is the problem the fold exists to solve. A cluster is never a grid item
-(`isGridToggle()`). **The mechanics live in one place**: see "Panel ordering and visibility: two
-modes, one writer" under Architecture for the fold's position, the label-keyed unit, the
+(`isGridToggle()`). **The mechanics live in one place**:
+[docs/panel-ordering.md](docs/panel-ordering.md) — the fold's position, the label-keyed unit, the
 default-folded rule and the editing-mode inventory.
+
+`clusterInline: true` + `clusterLabel` turn a `select`-only cluster into the **inline form**: the
+cluster's title on one row, the members' dropdowns right-aligned on the row below it, each naming
+itself through its own `label`, and no fold. Declare `clusterInline` on **every** member or the unit
+falls back to the card; declare the title once, on any member. A member that is not a `select` also
+falls back — the inline row draws controls, not label columns.
 
 `visible: () => boolean` drops the switch from the panel while it stays registered, so its state, its
 changelog entries and every other reader keep working — no dispose/re-register dance. It applies at

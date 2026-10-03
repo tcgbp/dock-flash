@@ -52,14 +52,19 @@ easiest to break invisibly.
      reverted);
    - a refused pick must **release the pending selection** and log the reason, leaving the rest of
      the list usable.
-   - **Check all five entry paths, not just the plugin-manager list.** A skin reaches the dropdown
-     through five routes, and a filter applied to four of the five leaks through the fifth.
-     `dsh-client-liang-intensity-skin` survived an earlier gate because it also injects its own
-     `<style data-plugin="…">` tag. The fastest manual check: with a plugin installed, run
-     `document.querySelectorAll('head style[data-plugin]')` in the console and confirm **every**
-     id in it appears (or does not) consistently with the dropdown. Sections 16–17 of
-     `pnpm run check:overlay` pin all five paths, and its negative control (gates removed) fails
-     on the DOM-scan path specifically.
+   - **Check all seven entry paths, not just the plugin-manager list.** A skin reaches the dropdown
+     through seven routes (0, 1a, 1b, 2, 4, 5, 6), and a filter applied to six of the seven leaks
+     through the seventh. `dsh-client-liang-intensity-skin` survived an earlier gate because it also
+     injects its own `<style data-plugin="…">` tag. The fastest manual check: with a plugin installed,
+     run `document.querySelectorAll('head style[data-plugin]')` in the console and confirm **every**
+     id in it appears (or does not) consistently with the dropdown. `pnpm run check:overlay`
+     pins the DOM-scan path, and its negative control (gates removed) fails on that path specifically.
+   - **The 默认 boot sweep runs TWICE, and the second pass is the one that matters after a refresh.**
+     Load the page with 默认 stored and a CSS skin active: the late pass (~1.5 s) must remove the
+     skin's `<style data-plugin>` tag even when the tag appeared after dock-flash's own `apply()`.
+     `__dockFlashSkinTrace()` shows `boot-enforce {reason: 'deactivate-css-at-boot'}` only when the
+     scan actually SAW an active CSS skin, so a missing line plus a styled page means the tag arrived
+     after both passes.
 3. **Skin preference**: Set a skin, refresh → it restores after ~300ms.
 4. **Language**: Toggle → every label updates immediately, including inside the log block.
 5. **Sidebar sash**: Drag it with dock-flash enabled → the width resizes correctly (nothing has
