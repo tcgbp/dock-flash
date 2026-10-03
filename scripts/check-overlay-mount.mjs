@@ -2095,12 +2095,33 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
     check('...and it puts the entry 默认 switched off back on',
       pluginCalls.includes('dream-skin:true'), JSON.stringify(pluginCalls))
 
-    // The route that IS correct for a market theme, unchanged by this fix and
-    // asserted here so a future "fix" cannot quietly reroute it through /toggle.
+    // ── the ENABLE direction, in the shape that had no roster write at all ──────
+    // A CSS skin WITH a loader row: `_activateThemeViaPluginManager()` enabled the
+    // entry and stopped, leaving the package out of `dsh.profile.bundles` — so it
+    // could be switched off but never switched on, the reported "Claude 能被停用
+    // 但是没法启用了". The handle has to be re-created here, deliberately: the 默认
+    // press above REMOVED the style tag (Critical Rule 2 — deactivation removes, it
+    // never disables), and without a handle the scan classifies the skin as
+    // handle-less, which takes a different branch that already wrote the roster.
+    // Testing it handle-less would prove nothing.
     toggleCalls.length = 0
     useSkinCalls.length = 0
+    pluginCalls.length = 0
+    bundleCalls.length = 0
+    {
+      const repoTag = new El('style')
+      repoTag.setAttribute('data-plugin', 'dsh-repo-installed-skin')
+      head.appendChild(repoTag)
+    }
+    pluginState.find((q) => q.moduleName === 'dsh-repo-installed-skin').enabled = false
+    bundleState.find((b) => b.name === 'dsh-repo-installed-skin').enabled = false
     skinSwitch.setValue('dsh-repo-installed-skin')
-    await new Promise((r) => setTimeout(r, 0))
+    await settle()
+    check('enabling a CSS skin restores its ENTRY row',
+      pluginCalls.includes('dsh-repo-installed-skin:true'), JSON.stringify(pluginCalls))
+    check('...and its place in the ROSTER, or the next boot cannot load it',
+      bundleCalls.includes('dsh-repo-installed-skin:true'), JSON.stringify(bundleCalls))
+    check('...still with no market write', toggleCalls.length === 0, JSON.stringify(names()))
   }
 }
 
