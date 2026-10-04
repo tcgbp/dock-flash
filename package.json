@@ -41,6 +41,7 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-session-controller",
         "dock-base"
       ],
       "platform": "web"
