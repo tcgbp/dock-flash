@@ -28,9 +28,9 @@ import { execFileSync } from 'node:child_process'
 import { platform, homedir } from 'node:os'
 import { existsSync, readdirSync } from 'node:fs'
 import { readFile, writeFile, rename, unlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { Volatile } from '@deepseek-ai/cordis'
 // Default export only (`export default Schema`); there is no named `Schema`.
 import Schema from '@deepseek-ai/schemastery'
@@ -389,6 +389,22 @@ function resolveNoProxy(mode: string, custom: string): string | undefined {
  */
 const LAUNCH_ENVIRONMENT_SERVICE = 'launchEnvironment'
 
+/**
+ * The ctx service DSH's profile launcher publishes with the facts of the profile
+ * it booted: `{ name, dir, patchPath, installAnchor, startedBundles, cwd, home }`
+ * (`@deepseek-ai/dsh-app-boot` → `ProfileContext`). It is provided from the boot
+ * callback in `dsh`'s `runProfile()` *before* any profile plugin is mounted, so a
+ * host plugin sees it during `apply()` — DSH's own `dsh-app-boot`,
+ * `dsh-shell-env`, `dsh-plugin-manager`, `dsh-settings` and `dsh-config-editor`
+ * all read it. DSH Desktop ships the identical `runProfile()` and provides the
+ * same service, so this is the one profile signal correct in BOTH environments.
+ *
+ * `dsh-shell-env` builds `DSH_PROFILE` / `DSH_PROFILE_DIR` from this context per
+ * shell execution — which is why those variables reach a model shell call and
+ * never this process, and why they cannot be used to find the profile from here.
+ */
+const PROFILE_CONTEXT_SERVICE = 'profileContext'
+
 /** The slice of @deepseek-ai/dsh-http-proxy this plugin uses. */
 interface ProxyModule {
   installProxyFromEnvironment(
@@ -567,11 +583,6 @@ export function apply(ctx: Context, config: ProxyConfig) {
   }
 
   /**
-   * Set or clear one plugin's `disabled:` row. Mirrors the plugin manager's own
-   * behaviour, including its two short-circuits: an item already in the wanted
-   * state is left alone, and clearing a row that does not exist changes nothing.
-   */
-  /**
    * The LOADER ENTRY ID for a package — which is what a patch row must key on, and it is
    * NOT the package name. MEASURED, and it cost the whole feature: the profile's patch
    * carried `- id: dream-skin / disabled: false` (written by DSH's OWN plugin page) beside
@@ -579,10 +590,11 @@ export function apply(ctx: Context, config: ProxyConfig) {
    * running — two different entries, and only the first is the loaded plugin. The remote
    * answered `unknown-plugin` for the package name for exactly the same reason.
    *
-   * The composed graph (`cordis.yml`) is the one file on disk that spells both, so find the
-   * row whose 2-space-indented `name:` is this package and take its `- id:` (the indent
-   * matters: a plugin config may carry a nested `name:` too). Falls back to the package
-   * name, which is only right when a plugin's entry id happens to equal it.
+   * The package's OWN patch layer declares the id it inserts, so read
+   * `node_modules/<pkg>/cordis.patch.yml` and take the `- id:` of the row whose
+   * `name:` is this package (the indent matters: a plugin CONFIG may carry a
+   * nested `name:` too). Falls back to the package name, which is only right when
+   * a plugin's entry id happens to equal it.
    */
   async function entryIdFor(dir: string, pkg: string): Promise<string> {
     try {
@@ -605,6 +617,11 @@ export function apply(ctx: Context, config: ProxyConfig) {
     } catch (_) { /* no graph on disk — the caller keeps the package name */ }
     return pkg
   }
+  /**
+   * Set or clear one plugin's `disabled:` row. Mirrors the plugin manager's own
+   * behaviour, including its two short-circuits: an item already in the wanted
+   * state is left alone, and clearing a row that does not exist changes nothing.
+   */
   async function setPatchDisabled(
     dir: string, id: string, disabled: boolean,
   ): Promise<{ changed: boolean; error?: string }> {
@@ -641,14 +658,21 @@ export function apply(ctx: Context, config: ProxyConfig) {
     if (found === undefined) {
       if (!disabled) return { changed: false }  // no row, and nothing to clear
       const body = lines.length > 0 && lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines
-      // `name:` is REQUIRED, and omitting it is why the first version of this writer
-      // changed the file and nothing else. MEASURED against `dshmarket` — a peer plugin
-      // that writes this SAME layer and whose toggles DO take effect: every row it writes
-      // carries a module name (its `- insert:` list with `id:`+`name:`, or the top-level
-      // `- id:`+`name:` pair this profile already uses, e.g. `- id: dock-flash / name:
-      // dock-flash`). DSH's own profile check even warns "loader entry … has no module
-      // name". Here the package name IS the loader id, so both fields carry the same value.
-      const next = body.concat(['- id: ' + id, '  name: ' + id, '  disabled: ' + wanted, '']).join(eol)
+      // NO `name:`. MEASURED against DSH's own writer (`dsh-plugin-manager`'s
+      // `writePluginEnabled`): when it has to append a row it writes exactly
+      // `{ id, disabled }`. `dsh-app-boot`'s `applyEntryPatches` — the one algorithm that
+      // composes this layer, the live loader included — SKIPS a row whose `name` differs
+      // from the target entry's own name:
+      //   warn("patch: name mismatch for %C (expected %C, got %C), skipping")
+      // An earlier version of this writer echoed the ENTRY ID into `name:`, which could
+      // never switch a skin whose entry id differs from its package name: `dsh-dream-skin`
+      // inserts `- id: dream-skin / name: 'dsh-dream-skin'`, so every row written as
+      // `id: dream-skin / name: dream-skin` was a name mismatch and was ignored. The
+      // opposite mistake is just as fatal: keying the row by the PACKAGE name
+      // (`- id: dsh-dream-skin`) matches no entry at all and is dropped with
+      // "patch: entry … not found" — which is how three duplicate rows accumulated in a
+      // profile before this was understood. `name` is optional here; the id is not.
+      const next = body.concat(['- id: ' + id, '  disabled: ' + wanted, '']).join(eol)
       const wrote = await writePatchDocument(file, dir, next)
       return wrote.error ? { changed: false, error: wrote.error } : { changed: true }
     }
@@ -699,30 +723,78 @@ export function apply(ctx: Context, config: ProxyConfig) {
   }
 
   /**
+   * The profile facts the launcher published for THIS process, when there are
+   * any. This is the only signal that NAMES the running profile; everything else
+   * in `profileDirCandidates()` is inference. Absent when DSH was booted without
+   * a profile launcher (an explicit `--config`, a test harness).
+   */
+  function profileContext(): { name?: string; dir?: string; patchPath?: string } | null {
+    try {
+      const svc = ctx.get ? ctx.get(PROFILE_CONTEXT_SERVICE) : undefined
+      return svc && typeof svc === 'object'
+        ? (svc as { name?: string; dir?: string; patchPath?: string })
+        : null
+    } catch (_) {
+      return null
+    }
+  }
+
+  /** The config directory cordis booted from — the profile dir in a profile boot. */
+  function bootBaseDir(): string | null {
+    try {
+      const base = (ctx as { baseUrl?: string }).baseUrl
+      return typeof base === 'string' && base.startsWith('file:') ? dirname(fileURLToPath(base)) : null
+    } catch (_) {
+      return null
+    }
+  }
+
+  /**
    * Candidate directories for the profile this host boots plugins for, best
    * first.
    *
    * **Do not assume `DSH_PROFILE_DIR` is set here.** MEASURED: the harness
    * exports `DSH_PROFILE` / `DSH_PROFILE_DIR` into every *model shell call* of a
    * profile-launched session and omits both when it was booted without a
-   * profile — they are shell facts, not facts of the Electron host process, so
-   * a host plugin sees neither. The first version of this function trusted them
-   * and answered "the launch environment names no profile directory" from the
+   * profile — they are shell facts, not facts of the Electron host process, so a
+   * host plugin sees neither. The first version of this function trusted them and
+   * answered "the launch environment names no profile directory" from the
    * running Desktop app.
    *
-   * So the profile is FOUND rather than declared, and the strongest signal needs
-   * no environment fact at all: a profile's `package.json` lists the plugins
-   * installed in it, so **the profile that lists THIS plugin is the one we are
-   * running in**.
+   * The launcher does publish the answer, though: every profile boot provides
+   * `profileContext` (`name`, `dir`, `patchPath`, …) before any plugin mounts, so
+   * that is the first candidate, with `ctx.baseUrl` (the boot config's directory)
+   * behind it as an independent second.
+   *
+   * The rest is a FOUND profile rather than a declared one, kept for a boot with
+   * no profile launcher behind it. The old best signal — "a profile's
+   * `package.json` lists the plugins installed in it, so the profile that lists
+   * THIS plugin is the one we are running in" — is NOT sufficient:
+   * MEASURED, `~/.dsh/profiles` held BOTH `desktop` and `web`, both installed
+   * dock-flash, `readdirSync` returns `desktop` first, and a `dsh web` process
+   * therefore resolved the DESKTOP profile: `/plugins/dock-flash/profile-packages`
+   * answered `dir: …\profiles\desktop` and every skin toggle wrote
+   * `profiles/desktop/cordis.patch.yml` while the running loader watched
+   * `profiles/web/cordis.patch.yml`. Each write honestly reported
+   * `application: "applied"`, the page reloaded, and no skin ever came up —
+   * because the document being edited was not the one being watched.
    */
   function profileDirCandidates(): string[] {
     const out: string[] = []
     const push = (dir: string | null | undefined) => {
       if (dir && out.indexOf(dir) === -1) out.push(dir)
     }
+    const facts = profileContext()
+    if (facts) {
+      push(facts.dir)
+      // `patchPath` is the document the running loader actually watches, so its
+      // directory is the profile even if `dir` were missing or ever renamed.
+      if (facts.patchPath) push(dirname(facts.patchPath))
+    }
+    push(bootBaseDir())
     push(readLaunchEnv(['DSH_PROFILE_DIR']))
     const home = readLaunchEnv(['DSH_HOME']) || join(homedir(), '.dsh')
-    const named = readLaunchEnv(['DSH_PROFILE'])
+    const named = readLaunchEnv(['DSH_PROFILE']) || (facts && facts.name)
     if (named) push(join(home, 'profiles', named))
     const argv = process.argv
     for (let i = 0; i < argv.length - 1; i++) {
