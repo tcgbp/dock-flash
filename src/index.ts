@@ -128,19 +128,28 @@ export interface ProxyConfig {
   overlayOpacity: Volatile<number>
 
   // ── Alert thresholds and intervals ────────────────────────────────────────
-  // All thresholds are stored as percentages (0–100); the client divides by
-  // 100 to obtain the ratio used in comparisons. Poll intervals are in ms.
+  // Memory thresholds are in MB (RSS absolute value); GC thresholds are
+  // major GC cycles per minute. Poll intervals are in ms.
 
-  /** Memory alert: info threshold (% of V8 heap). */
+  /** Memory alert: info threshold (RSS MB). */
   memThresholdInfo: Volatile<number>
-  /** Memory alert: warning threshold (% of V8 heap). */
+  /** Memory alert: warning threshold (RSS MB). */
   memThresholdWarning: Volatile<number>
-  /** Memory alert: error threshold (% of V8 heap). */
+  /** Memory alert: error threshold (RSS MB). */
   memThresholdError: Volatile<number>
+  /** Memory alert: critical threshold (RSS MB). */
+  memThresholdCritical: Volatile<number>
   /** Memory polling: base interval (ms). */
   memPollBase: Volatile<number>
   /** Memory polling: minimum interval (ms). */
   memPollMin: Volatile<number>
+
+  /** GC alert: info threshold (major GC/min). */
+  gcThresholdInfo: Volatile<number>
+  /** GC alert: warning threshold (major GC/min). */
+  gcThresholdWarning: Volatile<number>
+  /** GC alert: error threshold (major GC/min). */
+  gcThresholdError: Volatile<number>
 
   /** Context estimate: approximate token window. */
   ctxApproxWindow: Volatile<number>
@@ -219,16 +228,22 @@ const DEFAULT_TRIGGER_LAYER = 1150
 const DEFAULT_OVERLAY_OPACITY = 0.55
 
 // ── Alert threshold defaults ──────────────────────────────────────────────
-// Stored as percentages (0–100) for user-friendliness; providers divide by
-// 100 internally to obtain the ratio used in comparisons.
+// Memory thresholds are now in MB (RSS absolute value).
+// GC thresholds: majorPerMin = major GC cycles per minute.
 
-/** Memory alert thresholds (% of V8 heap). */
-const DEFAULT_MEM_THRESHOLD_INFO = 80
-const DEFAULT_MEM_THRESHOLD_WARNING = 90
-const DEFAULT_MEM_THRESHOLD_ERROR = 95
+/** Memory alert thresholds (RSS MB). */
+const DEFAULT_MEM_THRESHOLD_INFO = 256
+const DEFAULT_MEM_THRESHOLD_WARNING = 512
+const DEFAULT_MEM_THRESHOLD_ERROR = 1024
+const DEFAULT_MEM_THRESHOLD_CRITICAL = 1536
 /** Memory polling: base interval and minimum (ms). */
 const DEFAULT_MEM_POLL_BASE = 30000
 const DEFAULT_MEM_POLL_MIN = 2000
+
+/** GC alert thresholds (major GC cycles per minute). */
+const DEFAULT_GC_THRESHOLD_INFO = 2
+const DEFAULT_GC_THRESHOLD_WARNING = 5
+const DEFAULT_GC_THRESHOLD_ERROR = 10
 
 /** Context window approximation (tokens). */
 const DEFAULT_CTX_APPROX_WINDOW = 128000
@@ -339,13 +354,17 @@ export const Config = Schema.object({
   overlayOpacity: Schema.number().default(DEFAULT_OVERLAY_OPACITY).volatile(),
 
   // ── D · System alerts (merged with A per §7 decision) ────────────────
-  // Alert thresholds — percentages (0–100) for thresholds, ms for intervals.
+  // Memory thresholds: RSS absolute value (MB). GC thresholds: major GC/min.
   // When physical splitting occurs, these stay in dock-flash alongside A.
   memThresholdInfo: Schema.number().default(DEFAULT_MEM_THRESHOLD_INFO).volatile(),
   memThresholdWarning: Schema.number().default(DEFAULT_MEM_THRESHOLD_WARNING).volatile(),
   memThresholdError: Schema.number().default(DEFAULT_MEM_THRESHOLD_ERROR).volatile(),
+  memThresholdCritical: Schema.number().default(DEFAULT_MEM_THRESHOLD_CRITICAL).volatile(),
   memPollBase: Schema.number().default(DEFAULT_MEM_POLL_BASE).volatile(),
   memPollMin: Schema.number().default(DEFAULT_MEM_POLL_MIN).volatile(),
+  gcThresholdInfo: Schema.number().default(DEFAULT_GC_THRESHOLD_INFO).volatile(),
+  gcThresholdWarning: Schema.number().default(DEFAULT_GC_THRESHOLD_WARNING).volatile(),
+  gcThresholdError: Schema.number().default(DEFAULT_GC_THRESHOLD_ERROR).volatile(),
   ctxApproxWindow: Schema.number().default(DEFAULT_CTX_APPROX_WINDOW).volatile(),
   ctxTokensPerMsg: Schema.number().default(DEFAULT_CTX_TOKENS_PER_MSG).volatile(),
   ctxThresholdInfo: Schema.number().default(DEFAULT_CTX_THRESHOLD_INFO).volatile(),
@@ -557,6 +576,19 @@ export interface MemorySample {
   arrayBuffers: number
 }
 
+export interface GcStats {
+  /** Number of minor (Scavenge) GC cycles in the reporting window. */
+  minorCount: number
+  /** Number of major (MarkSweep/MarkCompact) GC cycles in the reporting window. */
+  majorCount: number
+  /** Major GC frequency (cycles per minute) over the reporting window. */
+  majorPerMin: number
+  /** Total GC pause time (ms) in the reporting window. */
+  gcPauseMs: number
+  /** GC pause rate (ms per minute) over the reporting window. */
+  gcPausePerMin: number
+}
+
 export interface MemoryTrendSummary {
   current: MemorySample | null
   peak: { heapUsed: number; rss: number; ts: number } | null
@@ -567,6 +599,10 @@ export interface MemoryTrendSummary {
   heapRatio: number
   /** Interval in seconds between the first and last sample (0 if < 2). */
   spanSeconds: number
+  /** RSS linear-regression slope per minute (MB/min). Positive = growing. */
+  rssSlopePerMin: number
+  /** GC statistics aggregated over the last ~5 minutes. */
+  gc: GcStats | null
 }
 
 class MemoryTrendCollector {
@@ -574,12 +610,18 @@ class MemoryTrendCollector {
   private _timer: ReturnType<typeof setInterval> | null = null
   private _cap: number
 
+  // GC monitoring via PerformanceObserver
+  private _gcObserver: any = null  // PerformanceObserver | null
+  private _gcEvents: Array<{ ts: number; kind: number; duration: number }> = []
+  private _gcEventsCap = 2000  // ~5 min at worst-case GC frequency
+
   constructor(cap = 720) {
     this._cap = Math.max(10, cap)
   }
 
   start(baseInterval = 30_000, minInterval = 5_000): void {
     this.stop()
+    this._startGcObserver()
     const poll = () => {
       const mu = process.memoryUsage()
       this._push({
@@ -608,6 +650,7 @@ class MemoryTrendCollector {
       clearTimeout(this._timer)
       this._timer = null
     }
+    this._stopGcObserver()
   }
 
   setCap(cap: number): void {
@@ -623,7 +666,7 @@ class MemoryTrendCollector {
   summary(since?: number): MemoryTrendSummary {
     const data = this.query(since)
     if (data.length === 0) {
-      return { current: null, peak: null, trend: 'stable', sampleCount: 0, heapRatio: 0, spanSeconds: 0 }
+      return { current: null, peak: null, trend: 'stable', sampleCount: 0, heapRatio: 0, spanSeconds: 0, rssSlopePerMin: 0, gc: null }
     }
     const current = data[data.length - 1]
     let peak = { heapUsed: 0, rss: 0, ts: 0 }
@@ -650,7 +693,86 @@ class MemoryTrendCollector {
     }
     const heapRatio = current.heapTotal > 0 ? current.heapUsed / current.heapTotal : 0
     const spanSeconds = data.length >= 2 ? Math.round((data[data.length - 1].ts - data[0].ts) / 1000) : 0
-    return { current, peak, trend, sampleCount: data.length, heapRatio, spanSeconds }
+
+    // RSS linear regression over the last 20 samples → slope per minute (MB/min).
+    let rssSlopePerMin = 0
+    if (tail.length >= 3) {
+      const n = tail.length
+      let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0
+      for (let i = 0; i < n; i++) {
+        sumX += i
+        sumY += tail[i].rss
+        sumXY += i * tail[i].rss
+        sumXX += i * i
+      }
+      const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX)
+      // slope = bytes per sample-index step.  Convert to MB/min.
+      // Average interval between tail samples ≈ spanSeconds / (n-1).
+      const avgIntervalSec = tail.length >= 2 ? spanSeconds / (tail.length - 1) : 30
+      const samplesPerMin = avgIntervalSec > 0 ? 60 / avgIntervalSec : 2
+      rssSlopePerMin = Math.round((slope * samplesPerMin / 1048576) * 100) / 100
+    }
+
+    // GC stats over the last ~5 minutes.
+    const gc = this._gcSummary(5 * 60 * 1000)
+
+    return { current, peak, trend, sampleCount: data.length, heapRatio, spanSeconds, rssSlopePerMin, gc }
+  }
+
+  /** Aggregate GC events in the last `windowMs` milliseconds. */
+  private _gcSummary(windowMs: number): GcStats | null {
+    if (this._gcEvents.length === 0) return null
+    const cutoff = Date.now() - windowMs
+    const recent = this._gcEvents.filter(e => e.ts >= cutoff)
+    if (recent.length === 0) return null
+
+    let minorCount = 0, majorCount = 0, gcPauseMs = 0
+    for (const e of recent) {
+      gcPauseMs += e.duration
+      if (e.kind === 2) majorCount++       // kind=2 → major (MarkSweep/MarkCompact)
+      else if (e.kind === 1) minorCount++   // kind=1 → minor (Scavenge)
+      // kind=4 (incremental marking), kind=8 (weak callbacks) — counted in pause but not as cycles
+    }
+
+    const windowMin = windowMs / 60000
+    return {
+      minorCount,
+      majorCount,
+      majorPerMin: Math.round((majorCount / windowMin) * 100) / 100,
+      gcPauseMs: Math.round(gcPauseMs * 100) / 100,
+      gcPausePerMin: Math.round((gcPauseMs / windowMin) * 100) / 100,
+    }
+  }
+
+  private _startGcObserver(): void {
+    try {
+      // Dynamic import — perf_hooks may not be available in all environments.
+      const { PerformanceObserver } = require('perf_hooks') as typeof import('perf_hooks')
+      this._gcObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          // GC entry kinds: 1=minor, 2=major, 4=incremental, 8=weak callbacks
+          this._gcEvents.push({
+            ts: Date.now(),
+            kind: (entry as any).kind ?? 0,
+            duration: entry.duration,
+          })
+        }
+        // Cap the ring buffer.
+        while (this._gcEvents.length > this._gcEventsCap) this._gcEvents.shift()
+      })
+      this._gcObserver.observe({ type: 'gc', buffered: true })
+    } catch (_) {
+      // GC observation not available — gc will remain null in summaries.
+      this._gcObserver = null
+    }
+  }
+
+  private _stopGcObserver(): void {
+    if (this._gcObserver) {
+      try { this._gcObserver.disconnect() } catch (_) {}
+      this._gcObserver = null
+    }
+    this._gcEvents = []
   }
 
   private _push(s: MemorySample): void {
