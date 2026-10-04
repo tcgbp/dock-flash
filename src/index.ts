@@ -539,6 +539,129 @@ async function readJsonBody(req: IncomingMessage, limit = 4096): Promise<any> {
   }
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Memory trend collector — host-side Node.js process memory ring buffer.
+//
+// Periodically samples `process.memoryUsage()` into a bounded ring buffer
+// and exposes the history over an HTTP route for the client's panel to
+// render trend sparklines / text summaries. The data is session-scoped:
+// lost on restart, deliberately not durable.
+// ───────────────────────────────────────────────────────────────────────────
+
+export interface MemorySample {
+  ts: number
+  rss: number
+  heapTotal: number
+  heapUsed: number
+  external: number
+  arrayBuffers: number
+}
+
+export interface MemoryTrendSummary {
+  current: MemorySample | null
+  peak: { heapUsed: number; rss: number; ts: number } | null
+  /** Linear-regression slope direction over the most recent samples. */
+  trend: 'up' | 'stable' | 'down'
+  sampleCount: number
+  /** Heap usage ratio of the latest sample (0–1). */
+  heapRatio: number
+  /** Interval in seconds between the first and last sample (0 if < 2). */
+  spanSeconds: number
+}
+
+class MemoryTrendCollector {
+  private _samples: MemorySample[] = []
+  private _timer: ReturnType<typeof setInterval> | null = null
+  private _cap: number
+
+  constructor(cap = 720) {
+    this._cap = Math.max(10, cap)
+  }
+
+  start(baseInterval = 30_000, minInterval = 5_000): void {
+    this.stop()
+    const poll = () => {
+      const mu = process.memoryUsage()
+      this._push({
+        ts: Date.now(),
+        rss: mu.rss,
+        heapTotal: mu.heapTotal,
+        heapUsed: mu.heapUsed,
+        external: mu.external,
+        arrayBuffers: mu.arrayBuffers,
+      })
+      // Adaptive: higher heap usage → shorter interval (sample more densely).
+      const ratio = mu.heapUsed / mu.heapTotal
+      const next = Math.max(minInterval, Math.round(baseInterval * Math.pow(1 - Math.min(ratio, 1), 2) + minInterval))
+      this._timer = setTimeout(poll, next)
+      // Unref so the timer never keeps the process alive on its own.
+      if (this._timer && typeof this._timer === 'object' && 'unref' in this._timer) {
+        this._timer.unref()
+      }
+    }
+    // First sample immediately.
+    poll()
+  }
+
+  stop(): void {
+    if (this._timer !== null) {
+      clearTimeout(this._timer)
+      this._timer = null
+    }
+  }
+
+  setCap(cap: number): void {
+    this._cap = Math.max(10, Math.floor(cap) || 10)
+    while (this._samples.length > this._cap) this._samples.shift()
+  }
+
+  query(since?: number): MemorySample[] {
+    if (!since) return this._samples.slice()
+    return this._samples.filter(s => s.ts >= since)
+  }
+
+  summary(since?: number): MemoryTrendSummary {
+    const data = this.query(since)
+    if (data.length === 0) {
+      return { current: null, peak: null, trend: 'stable', sampleCount: 0, heapRatio: 0, spanSeconds: 0 }
+    }
+    const current = data[data.length - 1]
+    let peak = { heapUsed: 0, rss: 0, ts: 0 }
+    for (const s of data) {
+      if (s.heapUsed > peak.heapUsed) peak = { heapUsed: s.heapUsed, rss: s.rss, ts: s.ts }
+    }
+    // Simple linear regression on heapUsed over the last 20 samples (or fewer).
+    const tail = data.slice(-20)
+    let trend: 'up' | 'stable' | 'down' = 'stable'
+    if (tail.length >= 3) {
+      const n = tail.length
+      let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0
+      for (let i = 0; i < n; i++) {
+        sumX += i
+        sumY += tail[i].heapUsed
+        sumXY += i * tail[i].heapUsed
+        sumXX += i * i
+      }
+      const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX)
+      // Threshold: ±0.5% of current heapUsed per sample-index step.
+      const threshold = current.heapUsed * 0.005
+      if (slope > threshold) trend = 'up'
+      else if (slope < -threshold) trend = 'down'
+    }
+    const heapRatio = current.heapTotal > 0 ? current.heapUsed / current.heapTotal : 0
+    const spanSeconds = data.length >= 2 ? Math.round((data[data.length - 1].ts - data[0].ts) / 1000) : 0
+    return { current, peak, trend, sampleCount: data.length, heapRatio, spanSeconds }
+  }
+
+  private _push(s: MemorySample): void {
+    this._samples.push(s)
+    if (this._samples.length > this._cap) this._samples.shift()
+  }
+}
+
+/** Module-level singleton — one collector per process. */
+let _memoryTrend: MemoryTrendCollector | null = null
+
 export function apply(ctx: Context, config: ProxyConfig) {
 
   /**
@@ -547,6 +670,22 @@ export function apply(ctx: Context, config: ProxyConfig) {
    * one we are running in — see `profileDirCandidates()`.
    */
   const PLUGIN_NAME = name
+
+  // ── Memory trend collector bootstrap ──────────────────────────────────
+  // One bounded ring buffer per process. Starts on first apply and stops on
+  // dispose. The timer uses .unref() so it never keeps the process alive.
+  if (!_memoryTrend) _memoryTrend = new MemoryTrendCollector()
+  _memoryTrend.start(
+    (config.memPollBase?.get?.() ?? config.memPollBase) as number || DEFAULT_MEM_POLL_BASE,
+    (config.memPollMin?.get?.()  ?? config.memPollMin)  as number || DEFAULT_MEM_POLL_MIN,
+  )
+  ctx.effect(() => {
+    const collector = _memoryTrend
+    return () => {
+      collector?.stop()
+      _memoryTrend = null
+    }
+  })
 
   /**
    * The profile's PATCH document — the `disabled:` row DSH's own plugin manager
@@ -1565,6 +1704,36 @@ export function apply(ctx: Context, config: ProxyConfig) {
         sendJson(res, 200, { ok: true, value })
       },
     }), 'dock-flash: POST /plugins/dock-flash/set-plugin-entry')
+
+    // G · Memory trend — host-side ring buffer of process.memoryUsage() samples.
+    //    The client polls this for trend sparklines / text summaries in the
+    //    memory config popup. `mode=summary` returns a lightweight snapshot
+    //    (current, peak, trend direction); `mode=full` returns the raw samples
+    //    for rendering a chart. Optional `since` (unix ms) limits the range.
+    wsCtx.effect(() => wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/plugins/dock-flash/memory-trend',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') {
+          res.statusCode = 405
+          res.setHeader('allow', 'GET')
+          res.end()
+          return
+        }
+        if (!_memoryTrend) {
+          sendJson(res, 200, { samples: [], summary: null })
+          return
+        }
+        const u = new URL(req.url || '/', 'http://localhost')
+        const since = parseInt(u.searchParams.get('since') || '0', 10) || 0
+        const mode = u.searchParams.get('mode') || 'summary'
+        if (mode === 'full') {
+          sendJson(res, 200, { samples: _memoryTrend.query(since || undefined) })
+        } else {
+          sendJson(res, 200, _memoryTrend.summary(since || undefined))
+        }
+      },
+    }), 'dock-flash: GET /plugins/dock-flash/memory-trend')
   })
 
 
