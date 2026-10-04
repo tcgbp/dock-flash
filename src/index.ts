@@ -663,6 +663,13 @@ class MemoryTrendCollector {
     return this._samples.filter(s => s.ts >= since)
   }
 
+  /** Return recent GC events (last ~5 min) for chart rendering. */
+  gcEvents(since?: number): Array<{ ts: number; kind: number; duration: number }> {
+    if (this._gcEvents.length === 0) return []
+    const cutoff = since ?? (Date.now() - 5 * 60 * 1000)
+    return this._gcEvents.filter(e => e.ts >= cutoff)
+  }
+
   summary(since?: number): MemoryTrendSummary {
     const data = this.query(since)
     if (data.length === 0) {
@@ -1850,7 +1857,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
         const since = parseInt(u.searchParams.get('since') || '0', 10) || 0
         const mode = u.searchParams.get('mode') || 'summary'
         if (mode === 'full') {
-          sendJson(res, 200, { samples: _memoryTrend.query(since || undefined) })
+          sendJson(res, 200, { samples: _memoryTrend.query(since || undefined), gcEvents: _memoryTrend.gcEvents(since || undefined) })
         } else {
           sendJson(res, 200, _memoryTrend.summary(since || undefined))
         }
