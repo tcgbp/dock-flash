@@ -1423,27 +1423,28 @@ classification (`category: theme`) and the `/use-skin` one-way door were the mec
 wording described; both are gone. See "Market → Plugin Manager migration (v1.5.x)" above and
 [skin-system.md](skin-system.md).
 
-### Context Monitor: Precise vs Heuristic
+### Context Monitor: Precise Only
 
-dock-flash's context monitor has two data paths for estimating token usage:
+dock-flash's context monitor reads token usage from DSH's session event stream:
 
-1. **Precise** — reads `usage.inputTokens` from DSH's session event stream via the `sessions`
-   service (`ctx.get('sessions')`). `SessionEventTokenSource` subscribes to
-   `binding(sessionId).eventSource` (an `ObservableSnapshot<SessionEventWindow>`), accumulates
-   token totals from `assistant/message` events, and reads the model name from
-   `request/header` events. The model name drives a context-window lookup:
-   user-configured overrides (`_alertPref('modelContextWindows')`) → built-in table
-   (`_KNOWN_WINDOWS`) → fuzzy match (strip provider prefix / version suffix) → fallback to
-   `ctxApproxWindow`. Source label: `"precise"`.
+**Precise** — reads `usage.inputTokens` from DSH's session event stream via the `sessions`
+service (`ctx.get('sessions')`). `SessionEventTokenSource` subscribes to
+`binding(sessionId).eventSource` (an `ObservableSnapshot<SessionEventWindow>`), accumulates
+token totals from `assistant/message` events, and reads the model name from
+`request/header` events. The model name drives a context-window lookup:
+user-configured overrides (`_alertPref('modelContextWindows')`) → built-in table
+(`_KNOWN_WINDOWS`) → fuzzy match (strip provider prefix / version suffix) → fallback to
+`ctxApproxWindow`. Source label: `"precise"`.
 
-2. **Heuristic** — counts `[class*="_message"]` DOM nodes × `ctxTokensPerMsg`. This is the
-   original path, kept as automatic fallback when session events are unavailable (no active
-   session, service not injected, model does not report usage). Source label: `"heuristic"`.
+When session events are unavailable or have no usage data (no active session, service
+not injected, model does not report usage), the monitor produces no estimate and shows
+"等待数据" (Awaiting data) — there is no heuristic fallback.
 
-**Why `ctxTokensPerMsg` is kept.** Some models or providers may not include `usage` in their
-event payloads; the DOM-count heuristic is the only data source for those sessions. Removing
-it would make the monitor blind to context pressure in precisely the cases where the user
-cannot know either.
+**Why the DOM-count heuristic was removed.** The page may not have loaded the full
+conversation (DSH uses virtual scrolling / lazy loading, so only visible messages are
+in the DOM). Counting `[class*="_message"]` nodes therefore produces a meaningless
+under-count that only misleads the user. The `ctxTokensPerMsg` setting and the
+heuristic code path were removed entirely.
 
 **SessionEventTokenSource lifecycle.** `start(ctx)` resolves the `sessions` service and
 subscribes to both the event source and the session list store. The list subscription is
@@ -1452,9 +1453,9 @@ switches — when `scopeOf(ctx)` returns a different session id, `_reset()` clea
 state and `_bindToSession()` attaches to the new session's event source. On `replace` changes
 (history reload), the accumulator resets and re-scans from the beginning.
 
-**The monitor toggle subtitle** shows data source quality: "精确 · deepseek-chat" for precise
-mode, "估算中" for heuristic. This makes the data source visible at a glance, so the user
-knows whether the percentage comes from actual token accounting or a rough estimate.
+**The monitor toggle subtitle** shows data source quality: "精确 · deepseek-chat" when
+precise data is flowing, "等待数据" when no data has been received yet. This makes the
+data source visible at a glance.
 
 ---
 

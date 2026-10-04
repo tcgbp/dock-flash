@@ -54,10 +54,9 @@ const DEFAULT_MEM_POLL_MIN = 2000;
 const DEFAULT_GC_THRESHOLD_INFO = 2;
 const DEFAULT_GC_THRESHOLD_WARNING = 5;
 const DEFAULT_GC_THRESHOLD_ERROR = 10;
-/** Context window approximation (tokens). */
+/** Context window approximation (tokens). Used as default when the model
+ *  is not in the built-in or user-configured window table. */
 const DEFAULT_CTX_APPROX_WINDOW = 128000;
-/** Estimated tokens per conversation message. */
-const DEFAULT_CTX_TOKENS_PER_MSG = 200;
 /** Context alert thresholds (% of estimated window). */
 const DEFAULT_CTX_THRESHOLD_INFO = 70;
 const DEFAULT_CTX_THRESHOLD_WARNING = 85;
@@ -160,7 +159,6 @@ export const Config = Schema.object({
     gcThresholdWarning: Schema.number().default(DEFAULT_GC_THRESHOLD_WARNING).volatile(),
     gcThresholdError: Schema.number().default(DEFAULT_GC_THRESHOLD_ERROR).volatile(),
     ctxApproxWindow: Schema.number().default(DEFAULT_CTX_APPROX_WINDOW).volatile(),
-    ctxTokensPerMsg: Schema.number().default(DEFAULT_CTX_TOKENS_PER_MSG).volatile(),
     ctxThresholdInfo: Schema.number().default(DEFAULT_CTX_THRESHOLD_INFO).volatile(),
     ctxThresholdWarning: Schema.number().default(DEFAULT_CTX_THRESHOLD_WARNING).volatile(),
     ctxThresholdError: Schema.number().default(DEFAULT_CTX_THRESHOLD_ERROR).volatile(),

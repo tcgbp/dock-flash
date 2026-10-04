@@ -153,8 +153,6 @@ export interface ProxyConfig {
 
   /** Context estimate: approximate token window. */
   ctxApproxWindow: Volatile<number>
-  /** Context estimate: tokens per conversation message. */
-  ctxTokensPerMsg: Volatile<number>
   /** Context alert: info threshold (% of estimated window). */
   ctxThresholdInfo: Volatile<number>
   /** Context alert: warning threshold (% of estimated window). */
@@ -248,10 +246,9 @@ const DEFAULT_GC_THRESHOLD_INFO = 2
 const DEFAULT_GC_THRESHOLD_WARNING = 5
 const DEFAULT_GC_THRESHOLD_ERROR = 10
 
-/** Context window approximation (tokens). */
+/** Context window approximation (tokens). Used as default when the model
+ *  is not in the built-in or user-configured window table. */
 const DEFAULT_CTX_APPROX_WINDOW = 128000
-/** Estimated tokens per conversation message. */
-const DEFAULT_CTX_TOKENS_PER_MSG = 200
 /** Context alert thresholds (% of estimated window). */
 const DEFAULT_CTX_THRESHOLD_INFO = 70
 const DEFAULT_CTX_THRESHOLD_WARNING = 85
@@ -369,7 +366,6 @@ export const Config = Schema.object({
   gcThresholdWarning: Schema.number().default(DEFAULT_GC_THRESHOLD_WARNING).volatile(),
   gcThresholdError: Schema.number().default(DEFAULT_GC_THRESHOLD_ERROR).volatile(),
   ctxApproxWindow: Schema.number().default(DEFAULT_CTX_APPROX_WINDOW).volatile(),
-  ctxTokensPerMsg: Schema.number().default(DEFAULT_CTX_TOKENS_PER_MSG).volatile(),
   ctxThresholdInfo: Schema.number().default(DEFAULT_CTX_THRESHOLD_INFO).volatile(),
   ctxThresholdWarning: Schema.number().default(DEFAULT_CTX_THRESHOLD_WARNING).volatile(),
   ctxThresholdError: Schema.number().default(DEFAULT_CTX_THRESHOLD_ERROR).volatile(),
