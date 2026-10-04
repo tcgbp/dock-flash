@@ -2126,27 +2126,26 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
 }
 
 
-// ── the 外观 dropdown offers only what the ACTIVE skin can paint ────────────
+// ── the 外观 dropdown offers what the service publishes, minus dead options ──
 // The list comes from `getTheme().themes`, which publishes the base colour
-// schemes AND every palette a skin has registered. Under a skin the base pair is
-// a dead option — a skin's `ctx.theme.overrideTokens()` paints over it, so
-// picking 浅色 changes nothing on screen — and `跟随系统` has nothing to resolve
-// to, because a palette declares a FIXED `colorScheme`. Measured live:
-// `light`/`dark` report `tokens: 0` while all eight Dream palettes report
-// `tokens: 33`, which is what tells them apart. The rule is a property of the
-// THEME, never of a skin's name, so it stays correct for any skin that registers
-// palettes this way.
+// schemes AND every palette a skin has registered. WHILE a theme publishes its own
+// palette the base pair is a dead option — `ctx.theme.overrideTokens()` paints over
+// it, so picking 浅色 changes nothing on screen — and `跟随系统` has nothing to
+// resolve to, because that palette declares a FIXED `colorScheme`. Measured with
+// Dream: `light`/`dark` report `tokens: 0` while all eight of its palettes report
+// `tokens: 33`, which is what tells them apart.
 //
-// With NO skin installed NOTHING is filtered, and `跟随系统` stays: there DSH really
-// does resolve light/dark from the OS, so it is a working preference rather than a
-// dead entry. Withholding it in both cases — which this filter's first version did
-// — took that capability away from the default skin, and section (3) below exists
-// to keep that from happening again.
+// That rule is a property of the THEME, never of "a skin", and this is where the
+// first version of the filter went wrong twice. MEASURED live: Claude is a skin
+// that restyles the base schemes WITHOUT registering a palette, so with Claude
+// active the list is unchanged — 浅色 / 深色 / 跟随系统. Withholding those two in
+// "the skin case" took working options away from Claude and from the default skin
+// alike, so section (3) pins the no-palette state for both of them.
 //
 // No theme service is stubbed anywhere else in this file, so the plugin's own
 // `ctx.get('theme')` answered `undefined` and this row always took its catch
 // branch. That is why the filter needs a stub to be tested at all.
-console.log('\n=== 20b. 外观 offers only the palettes the active skin can paint ===')
+console.log('\n=== 20b. 外观 offers what the service publishes, minus the dead options ===')
 {
   const themeSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:theme')
   check('the theme switch is registered', !!themeSwitch, 'not found')
@@ -2204,9 +2203,12 @@ console.log('\n=== 20b. 外观 offers only the palettes the active skin can pain
       check('...and a stored base scheme the skin painted over resolves to the painted palette',
         themeSwitch.getValue() === 'abyss', String(themeSwitch.getValue()))
 
-      // (3) With no skin installed the base pair IS the working choice, so filtering
+      // (3) With no palette published the base pair IS the working choice, so filtering
       // it away would leave the row empty — and `跟随系统` belongs here, because DSH
-      // resolves light/dark from the OS for exactly these schemes.
+      // resolves light/dark from the OS for exactly these schemes. This is the state
+      // with no skin installed AND the state with a restyling skin such as Claude
+      // (measured live: 跟随系统 is present there), which is why the assertion names
+      // the service state rather than the skin.
       provided.theme = {
         getTheme: () => ({ preference: 'dark', active: { id: 'dark' }, themes: baseThemes }),
       }
