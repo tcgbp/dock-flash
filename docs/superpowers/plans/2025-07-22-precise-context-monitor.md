@@ -961,9 +961,6 @@ Add entry describing the feature. Follow the existing format:
 
 Added Critical Rule 12: "Session Event Token Source Must Subscribe to Session List Unconditionally" — the session-list subscription must start unconditionally in `start()`, not only when no initial session exists, or switches from an already-active session are invisible (the exact defect that Task 8 fixed).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
-```bash
-git add CHANGELOG.md docs/architecture-notes.md AGENTS.md
-git commit -m "docs: add precise context monitoring documentation"
-```
+Committed as `c055783`.
