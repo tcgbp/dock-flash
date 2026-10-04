@@ -632,8 +632,10 @@ case could be turned OFF but never back ON. Details: [docs/skin-system.md](docs/
 - **The entry id is NOT derivable, and an EMPTY candidate list is not "nothing to do".**
   `_entryIdCandidates()` only GUESSES, and every wrong guess answers `unknown-plugin` (MEASURED:
   `dsh-dream-skin`'s real id is `dream-skin`); `POST /plugins/dock-flash/set-plugin-entry` is the
-  authority, because the HOST reads the package's own `cordis.patch.yml`. The list is ALSO empty
-  before `/plugins/dock-flash/profile-packages` answers — `enabledNow` then reads `false`, which for
+  authority, because the HOST reads the package's own `cordis.patch.yml`. **Resolve the profile from
+  `profileContext`, never `readdirSync` order** (two profiles listing dock-flash sent every write to
+  the other one), and write the row with NO `name:` — DSH skips a name mismatch, so the id alone
+  addresses the entry. The list is ALSO empty  before `/plugins/dock-flash/profile-packages` answers — `enabledNow` then reads `false`, which for
   a DISABLE equals the wanted `false`. That is the first press of 默认 after a cold load ("需要切两次"),
   so that branch must drive the HOST route instead of falling through to `byBundlePath()`. **Write
   BOTH halves** — the ENTRY row (running loader) and `dsh.profile.bundles` (next boot); writing only

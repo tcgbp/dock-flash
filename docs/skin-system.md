@@ -79,16 +79,34 @@ hook reports it as `profilePackages: N installed, M active | installed-but-off: 
 
 **`DSH_PROFILE_DIR` is NOT available to the host half — measured, and it cost a defect.** The harness
 exports `DSH_PROFILE` / `DSH_PROFILE_DIR` into every *model shell call* of a profile-launched session
-and omits both when it booted without a profile: they are **shell facts, not facts of the Electron host
+and omits both when it booted without a profile: they are **shell facts, not facts of the host
 process**. The first version of this route read them and answered "the launch environment names no
 profile directory" from the running Desktop app — the feature was inert while looking implemented.
+(`dsh-shell-env` builds both variables FROM `profileContext`, which is why a *model shell* knows the
+profile while the host process environment does not carry it at all.)
 
-So the profile is FOUND rather than declared. `readProfilePackages()` tries, in order: the environment,
-`$DSH_HOME/profiles/<name>` (or `~/.dsh/profiles/<name>`), `--profile` / `--profile-dir` from
-`process.argv`, every directory under `~/.dsh/profiles`, and `cwd` — then picks the manifest whose
-`dependencies` name **this plugin**, because a profile lists the plugins installed in it and that needs
-no environment fact at all. It also returns `tried`, so a failure names every candidate it examined
-instead of leaving the next reader to guess.
+**The profile is DECLARED by the launcher — and guessing it from `readdirSync` order cost the second
+defect.** Every profile boot provides the service `profileContext` before any plugin mounts:
+`runProfile()` builds `{ name, dir, patchPath, installAnchor, startedBundles, cwd, home, … }` and
+`hostCtx.provide("profileContext", …)`; a host plugin reads it with `ctx.get('profileContext')`. So
+`readProfilePackages()` now tries, in order: `profileContext().dir`,
+`dirname(profileContext().patchPath)`, this boot's own `ctx.baseUrl`, and only then the guesses
+(the environment, `$DSH_HOME/profiles/<name>`, `--profile` / `--profile-dir` from `process.argv`,
+every directory under `~/.dsh/profiles`, `cwd`) — picking the manifest whose `dependencies` name
+**this plugin**, because a profile lists the plugins installed in it. It also returns `tried`, so a
+failure names every candidate it examined instead of leaving the next reader to guess.
+
+**MEASURED, and this was the whole reported defect: finding a profile that lists dock-flash is not
+enough when TWO of them do.** `~/.dsh/profiles` held `desktop` and `web`, both with dock-flash
+installed, and `readdirSync` returns `desktop` first. A `dsh web` process — the RUNNING profile being
+`web` — therefore answered `dir: …\profiles\desktop` on `/plugins/dock-flash/profile-packages`, and
+every skin toggle wrote `profiles\desktop\cordis.patch.yml` while the running loader watched
+`profiles\web\cordis.patch.yml`. Each write honestly reported `application: "applied"` and the page
+reloaded; no skin ever came up, and `__dockFlashSkinTrace()` showed `inEffect: []` on every render
+while `stored` named the skin. On DSH Desktop the same bug is invisible — the reserved `desktop`
+profile is both the running profile and the first `readdirSync` hit — which is exactly why the report
+read "在桌面版是生效的呀". The launcher's own answer removes the ambiguity, so the `readdirSync`
+branch is now the LAST resort instead of the deciding one.
 
 ### The entry id does not have to come from `listPlugins()`
 
@@ -415,6 +433,31 @@ The two halves are not interchangeable:
 which lives in the package's own `cordis.patch.yml`, so both guesses (`dsh-dream-skin`,
 `dsh-dream-skin/client`) failed. The working lever is `POST /plugins/dock-flash/set-plugin-entry`,
 whose host half reads that same file through `entryIdFor()`.
+
+### The row must NOT carry `name:` — DSH skips a name mismatch
+
+`applyEntryPatches()` — the ONE algorithm that composes the profile patch, the live loader included —
+indexes the base rows by `id` and, for a non-insert row, skips it when the row's `name` differs from
+the target entry's own name:
+
+```
+patch: name mismatch for "dream-skin" (expected "dsh-dream-skin", got "dream-skin"), skipping
+```
+
+An earlier version of the host writer echoed the ENTRY ID into `name:`, so every row it appended was a
+name mismatch: the file changed, DSH ignored the change, and the route still reported `applied`.
+MEASURED by composing both shapes through DSH's own `composeEntries()` over the dream-skin bundle
+layer (`- insert: [ - id: dream-skin / name: 'dsh-dream-skin' ]`):
+
+| row written | composed entry | warning |
+|---|---|---|
+| `- id: dream-skin` + `name: dream-skin` | `{id: dream-skin, name: dsh-dream-skin}` — untouched | `patch: name mismatch … skipping` |
+| `- id: dsh-dream-skin` (the package name) | — | `patch: entry "dsh-dream-skin" not found` |
+| `- id: dream-skin` + `disabled:` | `{…, disabled: false}` | none |
+
+So `name` is optional here and the id is not: DSH's own writer (`writePluginEnabled`) appends exactly
+`{ id, disabled }` and never writes a `name:`. The same trap applies to `dsh-claude-style`
+(`- insert: [{id: ui-skin-claude-style, name: 'dsh-claude-style'}]`).
 
 ### An empty candidate list is not "nothing to do" — it is the cold-load first press
 
