@@ -19,8 +19,8 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 
 | Group | Switch | Type | Description | Standalone |
 | --- | --- | --- | --- | --- |
-| 🎨 Appearance | Theme | select | Light / Dark / System — switches DSH global theme (includes wxj-black-hole conflict retry) | ✅ |
-| 🎨 Appearance | Skin | select | Dynamically discovers installed skin plugins and switches between them (requires dsh-market). The list follows the market's own theme classification, so a package the market would refuse to activate is not offered — its own toggle lives in the market's plugin list | ✅ |
+| 🎨 Appearance | Theme | select | Lists what the **active skin can actually paint**: with a skin installed, the palettes it registers (Dream: Abyss / Aurora / …); with none installed, Light / Dark. Light and Dark are withheld under a skin because the skin paints over the base colour scheme, and Follow-system is withheld because a palette declares a fixed colour scheme — neither could do anything. The wxj-black-hole conflict retry is unchanged | ✅ |
+| 🎨 Appearance | Skin | select | Dynamically discovers installed skin plugins and switches between them, through DSH's **own plugin manager** — dsh-market is neither needed nor consulted. Every switch writes BOTH layers: the loader ENTRY row (what the running page acts on) and `dsh.profile.bundles` (what the next boot composes), because writing only one of them is how a skin came back after a reload, or could never be switched on again | ✅ |
 | 🎨 Appearance | Turn Rail | toggle | Moves DSH's built-in turn navigator from the right gutter to the left. Hidden unless DSH's own rail is on screen and no other timeline plugin owns it | ✅ |
 | 🎨 Appearance | Fullscreen | toggle | Browser Fullscreen API — enter/exit fullscreen | ✅ |
 | 🎨 Appearance | Log Download | toggle | Show/hide the session log download button | ✅ |
