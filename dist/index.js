@@ -360,6 +360,36 @@ export function apply(ctx, config) {
         }
     }
     /**
+     * One log line for a patch edit that actually CHANGED the document: which file,
+     * what changed, and when. This is the host's `[dock-flash]` console, which is
+     * where a DSH plugin's host half can report at all — there is no log surface in
+     * the panel for it (the panel's `log` switches are client-side).
+     *
+     * A no-op call is deliberately NOT logged: an entry that reports "I wrote this"
+     * when the document is byte-identical turns a change history into a click
+     * history, and the two are read for different questions.
+     *
+     * The stamp is local time with its UTC offset (`…+08:00`), because the reader is
+     * a person looking at a clock, and the ISO form is what makes a pasted line
+     * unambiguous. Nothing here may carry a newline: a path — or a diff summary —
+     * with an embedded line break would split one record into two.
+     */
+    function logPatchWrite(file, id, disabled, summary) {
+        const at = new Date();
+        const pad = (n, w = 2) => String(n).padStart(w, '0');
+        const local = at.getFullYear() + '-' + pad(at.getMonth() + 1) + '-' + pad(at.getDate()) +
+            ' ' + pad(at.getHours()) + ':' + pad(at.getMinutes()) + ':' + pad(at.getSeconds());
+        const offsetMin = -at.getTimezoneOffset();
+        const sign = offsetMin < 0 ? '-' : '+';
+        const abs = Math.abs(offsetMin);
+        const zone = sign + pad(Math.floor(abs / 60)) + ':' + pad(abs % 60);
+        const oneLine = (v) => v.replace(/[\r\n]+/g, ' ');
+        console.log('[dock-flash] patch ' + at.toISOString() + ' (' + local + ' ' + zone + ') ' +
+            (disabled ? 'disable' : 'enable') + ' entry=' + id + ' file=' + oneLine(file));
+        for (const line of summary)
+            console.log('[dock-flash] patch   ' + oneLine(line));
+    }
+    /**
      * The LOADER ENTRY ID for a package — which is what a patch row must key on, and it is
      * NOT the package name. MEASURED, and it cost the whole feature: the profile's patch
      * carried `- id: dream-skin / disabled: false` (written by DSH's OWN plugin page) beside
@@ -459,32 +489,55 @@ export function apply(ctx, config) {
             // profile before this was understood. `name` is optional here; the id is not.
             const next = body.concat(['- id: ' + id, '  disabled: ' + wanted, '']).join(eol);
             const wrote = await writePatchDocument(file, dir, next);
-            return wrote.error ? { changed: false, error: wrote.error } : { changed: true };
+            if (wrote.error)
+                return { changed: false, error: wrote.error };
+            logPatchWrite(file, id, disabled, [
+                '  reason: no row for this entry — appended one',
+                '  added: "- id: ' + id + '" / "disabled: ' + wanted + '"',
+            ]);
+            return { changed: true };
         }
         const k = starts.indexOf(found);
         const end = k + 1 < starts.length ? starts[k + 1] : lines.length;
         let at = -1;
         let indent = '  ';
+        let before = null;
         for (let i = found + 1; i < end; i++) {
-            const m = /^(\s+)disabled:\s*/.exec(lines[i]);
+            const m = /^(\s+)disabled:\s*(.*)$/.exec(lines[i]);
             if (m) {
                 at = i;
                 indent = m[1];
+                before = m[2].trim();
                 break;
             }
         }
+        // The change records WHICH row was edited and WHAT changed, not only the wanted
+        // value: a log that says "disabled: true" cannot tell an appended row from a
+        // flipped one, and that is the first thing the reader of this log asks.
+        let summary;
         if (at >= 0) {
             if (lines[at] === indent + 'disabled: ' + wanted)
                 return { changed: false };
+            summary = [
+                '  reason: existing row updated',
+                '  line ' + (at + 1) + ': "disabled: ' + before + '" -> "disabled: ' + wanted + '"',
+            ];
             lines[at] = indent + 'disabled: ' + wanted;
         }
         else {
             if (!disabled)
                 return { changed: false };
+            summary = [
+                '  reason: row had no disabled field — inserted one',
+                '  line ' + (found + 2) + ': added "disabled: ' + wanted + '"',
+            ];
             lines.splice(found + 1, 0, '  disabled: ' + wanted);
         }
         const wrote = await writePatchDocument(file, dir, lines.join(eol));
-        return wrote.error ? { changed: false, error: wrote.error } : { changed: true };
+        if (wrote.error)
+            return { changed: false, error: wrote.error };
+        logPatchWrite(file, id, disabled, summary);
+        return { changed: true };
     }
     /** The launch-environment snapshot DSH resolved the boot-time policy from. */
     function launchEnvironment() {
