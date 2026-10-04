@@ -166,6 +166,7 @@ export const Config = Schema.object({
     ctxThresholdError: Schema.number().default(DEFAULT_CTX_THRESHOLD_ERROR).volatile(),
     ctxPollBase: Schema.number().default(DEFAULT_CTX_POLL_BASE).volatile(),
     ctxPollMin: Schema.number().default(DEFAULT_CTX_POLL_MIN).volatile(),
+    modelContextWindows: Schema.dict(Schema.number()).default({}).volatile(),
     hostAlertQueueCap: Schema.number().default(DEFAULT_HOST_ALERT_QUEUE_CAP).volatile(),
     hostAlertMaxAge: Schema.number().default(DEFAULT_HOST_ALERT_MAX_AGE).volatile(),
 });
