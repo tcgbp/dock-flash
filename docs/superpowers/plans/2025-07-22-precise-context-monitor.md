@@ -820,17 +820,14 @@ Replace the `monitorSubtitle` function (around line 13942):
           }
 ```
 
-- [ ] **Step 2: Run `pnpm run check:overlay`**
+- [x] **Step 2: Run `pnpm run check:overlay`**
 
-Run: `pnpm run check:overlay`
-Expected: All assertions pass
+  Run: `pnpm run check:overlay`
+  Expected: All assertions pass ✓
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
-```bash
-git add lib/client.js
-git commit -m "feat(context): show data source quality in monitor toggle subtitle"
-```
+  Committed as `d5cb762`.
 
 ---
 
@@ -845,98 +842,19 @@ git commit -m "feat(context): show data source quality in monitor toggle subtitl
 
 When the user switches to a different conversation, the token source must stop listening to the old session's events and start on the new one. The `sessions` service may emit events or the session id accessible via `scopeOf(ctx)` may change.
 
-- [ ] **Step 1: Add session-switch detection in `createSessionEventTokenSource`**
+- [x] **Step 1: Add session-switch detection in `createSessionEventTokenSource`**
 
-Update the `start` method to also subscribe to session-list changes:
+  Updated the `start` method to always subscribe to the session list store (not just when
+  no initial session exists), so that session switches are detected even when a session
+  was already active at startup. The list subscription callback calls `_reset()` and
+  `_bindToSession()` when `scopeOf(ctx)` returns a different session id.
 
-```js
-        start: function (ctx) {
-          try {
-            _sessions = ctx && ctx.get ? ctx.get('sessions') : undefined
-          } catch (_) {}
-          if (!_sessions) return
+- [x] **Step 2: Run `pnpm run check:overlay`**
 
-          // Resolve current session id
-          try {
-            _sessionId = _sessions.scopeOf(ctx)
-          } catch (_) {}
+  Run: `pnpm run check:overlay`
+  Expected: All assertions pass ✓
 
-          // If no session yet, subscribe to the session list store
-          // to detect when a session becomes active
-          if (!_sessionId) {
-            try {
-              var listStore = _sessions.list
-              if (listStore && listStore.subscribe) {
-                _listUnsubscribe = listStore.subscribe(function () {
-                  var newId = _sessions.scopeOf(ctx)
-                  if (newId && newId !== _sessionId) {
-                    _reset()
-                    _sessionId = newId
-                    _bindToSession()
-                  }
-                })
-                // Check immediately — session might have appeared
-                var immediateId = _sessions.scopeOf(ctx)
-                if (immediateId) {
-                  _sessionId = immediateId
-                  _bindToSession()
-                }
-              }
-            } catch (_) {}
-            return
-          }
-
-          _bindToSession()
-        },
-```
-
-Add the helper functions:
-
-```js
-      var _listUnsubscribe = null
-
-      function _reset() {
-        if (_unsubscribe) { try { _unsubscribe() } catch (_) {} }
-        _unsubscribe = null
-        _accumulated = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
-        _lastProcessedSeq = -1
-        _model = null
-        _contextWindow = null
-      }
-
-      function _bindToSession() {
-        if (!_sessions || !_sessionId) return
-        try {
-          var binding = _sessions.binding(_sessionId)
-          if (binding && binding.eventSource) {
-            var win = binding.eventSource.getSnapshot()
-            if (win && win.entries) _processEntries(win.entries)
-            _unsubscribe = binding.eventSource.subscribe(_onEventWindowChange)
-          }
-        } catch (e) {
-          // Non-fatal: binding may not be ready yet
-        }
-      }
-```
-
-Update `stop`:
-
-```js
-        stop: function () {
-          _reset()
-          if (_listUnsubscribe) { try { _listUnsubscribe() } catch (_) {} }
-          _listUnsubscribe = null
-          _sessions = null
-          _sessionId = null
-        },
-```
-
-- [ ] **Step 2: Run `pnpm run check:overlay`**
-
-Run: `pnpm run check:overlay`
-Expected: All assertions pass
-
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add lib/client.js
