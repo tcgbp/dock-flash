@@ -519,6 +519,20 @@ const mod = await loadProxyModule()
 
 When adding a host-side dependency, import it statically and declare it in `package.json`. When the module is DSH's rather than yours, see the dsh-http-proxy notes in the System proxy section — resolution alone is not enough there.
 
+### 12. Session Event Token Source Must Subscribe to Session List Unconditionally
+
+`SessionEventTokenSource` subscribes to `sessions.binding(sessionId).eventSource` for the current session. When the user switches conversations, `scopeOf(ctx)` returns a new session id — the old subscription and accumulated totals are stale. The session-list subscription that detects switches must start **unconditionally** in `start()`, not only when no initial session exists, or switches from an already-active session are invisible.
+
+```js
+// ✅ Correct — session list subscription always active
+_sessions.list.subscribe(() => { /* check scopeOf(ctx) for changes */ })
+
+// ❌ Wrong — only subscribes when no session exists at startup
+if (!_sessionId) {
+  _sessions.list.subscribe(() => { /* never fires for existing sessions */ })
+}
+```
+
 ---
 
 ## Skin System Architecture

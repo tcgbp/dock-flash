@@ -874,6 +874,8 @@ git commit -m "fix(context): reset token source on session switch"
 
 - [ ] **Step 1: Rebuild and reinstall**
 
+  `pnpm run build` completed ✓. Rest requires a running DSH instance.
+
 ```bash
 pnpm run build
 dsh plugin --profile web add ./dock-flash
@@ -939,7 +941,7 @@ If any step fails, file a follow-up issue with exact reproduction steps and cons
 - Consumes: All implemented features from Tasks 1-8
 - Produces: Updated documentation
 
-- [ ] **Step 1: Add architecture notes section**
+- [x] **Step 1: Add architecture notes section**
 
 In `docs/architecture-notes.md`, add a section "Context Monitor: Precise vs Heuristic" documenting:
 - The two data paths (session events → precise; DOM count → heuristic)
@@ -947,7 +949,7 @@ In `docs/architecture-notes.md`, add a section "Context Monitor: Precise vs Heur
 - The model → context window resolution chain (user config → known table → fuzzy match → fallback)
 - Why `ctxTokensPerMsg` is kept (heuristic fallback for models/providers that don't report usage)
 
-- [ ] **Step 2: Update CHANGELOG.md**
+- [x] **Step 2: Update CHANGELOG.md**
 
 Add entry describing the feature. Follow the existing format:
 
@@ -955,10 +957,9 @@ Add entry describing the feature. Follow the existing format:
 | 1.x.x | **Context monitoring now reads precise token usage from DSH's session event stream.** The `SessionEventTokenSource` subscribes to `assistant/message` events via the `sessions` service and accumulates `usage.inputTokens` for the current session, eliminating the DOM-node-count heuristic whenever the provider reports token accounting. A model-aware context window lookup (user-configurable overrides + built-in table covering DeepSeek, OpenAI, and Anthropic models) replaces the hardcoded 128K default. The existing heuristic (node count × `ctxTokensPerMsg`) remains as automatic fallback when session events are unavailable or the model does not report usage. The context monitor config popup now shows current model, window size, data source quality (精确/估算), and input token count. A "Model Window Map" editor lets users add custom model → window size mappings. The monitor toggle subtitle shows "精确 · model-name" or "估算中" to make the data source visible at a glance. |
 ```
 
-- [ ] **Step 3: Review AGENTS.md for new critical rules**
+- [x] **Step 3: Review AGENTS.md for new critical rules**
 
-If the implementation revealed a non-obvious constraint that cost a defect, add it as a Critical Rule. Candidate:
-- "Session event token accumulation must reset on session switch — `scopeOf(ctx)` changes when the user switches conversations, and stale data from the old session leaks into the new one."
+Added Critical Rule 12: "Session Event Token Source Must Subscribe to Session List Unconditionally" — the session-list subscription must start unconditionally in `start()`, not only when no initial session exists, or switches from an already-active session are invisible (the exact defect that Task 8 fixed).
 
 - [ ] **Step 4: Commit**
 
