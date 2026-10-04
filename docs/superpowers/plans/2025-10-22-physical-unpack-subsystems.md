@@ -1,5 +1,12 @@
 # dock-flash 四子系统物理拆包 Implementation Plan
 
+> **状态更新（2026-10-04）：** `dsh-flash-net-mon` 已迁出本仓库，现为兄弟仓库
+> `../dsh-flash-net-mon`（带历史，`git subtree split -P dsh-flash-net-mon`）。本文档中
+> 「Create: `dsh-flash-net-mon/...`」一类路径指**当时**的落地位置，不再是本仓库的结构。
+> `dsh-flash-mem-mon` / `dsh-flash-ctx-mon` 两个包尚未创建。两个包与本仓库的关系由
+> `peerDependencies` 的 `dock-flash` 范围表达，运行期只经 `ctx.get('quickControl')` /
+> `ctx.get('dockFlashAlerts')` 交互。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 `dock-flash` 单仓内的「快捷控制面板(A)/系统代理(B)/网络审计(C)/系统告警(D)」四套子系统,从单一 `dock-flash` 插件物理拆为四个可独立启停、独立分发的插件包,同时保持 A(面板)框架与 D(告警)框架在同一 `apply()` 生命周期内共享。
