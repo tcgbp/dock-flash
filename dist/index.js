@@ -1269,11 +1269,24 @@ export function apply(ctx, config) {
         // A probe that answers quickly regardless of proxy state is exactly what a
         // latency alarm wants: it isolates the local host reachability signal from
         // whether a proxy is configured, so the two subsystems share no route.
+        // Also returns Node.js process.memoryUsage() so the client's memory config
+        // popup can display both browser-side and host-side memory metrics.
         wsCtx.effect(() => wsCtx.webServer.register({
             kind: 'exact',
             path: '/plugins/dock-flash/health',
             handler: async (_req, res) => {
-                sendJson(res, 200, { ok: true, ts: Date.now() });
+                const mem = process.memoryUsage();
+                sendJson(res, 200, {
+                    ok: true,
+                    ts: Date.now(),
+                    memory: {
+                        rss: mem.rss,
+                        heapTotal: mem.heapTotal,
+                        heapUsed: mem.heapUsed,
+                        external: mem.external,
+                        arrayBuffers: mem.arrayBuffers,
+                    },
+                });
             },
         }), 'dock-flash: GET /plugins/dock-flash/health');
         // E · Profile inventory — the profile's own manifest, which on DSH Desktop
