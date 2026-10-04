@@ -473,13 +473,9 @@ package name. **A new phase that reads a raw string must canonicalize before `se
 — the plugin-manager path did not, which is how the 0.15.3 duplicate came back. The worked case and its
 dump: [docs/skin-system.md](docs/skin-system.md).
 
-> **The assertions that pinned the market are RED, on purpose.** `check:overlay`'s skin sections still
-> test behaviour the plugin-manager rewrite REPLACED rather than removed: classifying a theme by the
-> market's registry (16), releasing the optimistic selection when an activation is REFUSED and echoing
-> the market's own wording (17), handing over to `/use-skin` (20), and the trace naming a
-> `pluginManager` route with its entry detail (22). Ten assertions fail, for those causes and no other.
-> That is a **known, accepted red** while the skin switcher refactor is finished — do not "fix" it by
-> restoring the market, and do not treat a green `check:overlay` as a precondition for unrelated work.
+> **`check:overlay` is green — 189 assertions, 0 FAIL.** The ten market-era assertions this note
+> used to excuse as a "known, accepted red" are realigned, so a red assertion is a REAL regression
+> now, never a baseline. Do not restore the market to explain one away; read the assertion.
 
 ### 9. Never Use CSS `zoom` on `<html>` Element
 
@@ -844,20 +840,17 @@ mismatch, and the `_skinBodyAttrs` cases — are in **[docs/architecture-notes.m
 | `@deepseek-ai/dsh-http-proxy` | **not declared** | Re-installs the undici global dispatcher; answers `proxyRouteFor` | Ships nested inside the DSH install and is deliberately *not* a dependency of this plugin. Loaded through `loadProxyModule()`, which resolves DSH's own copy — see the System proxy section |
 
 > **Peer ranges must carry an explicit prerelease branch — one per tuple whose prereleases must
-> resolve.** node-semver admits a prerelease only when some comparator sits on the *same*
-> `major.minor.patch` tuple and itself carries a prerelease tag, so a range that merely looks broad
-> silently excludes the harness's prerelease builds, and a branch written for one tuple never covers
-> another. The tables' `||` forms are that shape. awesome-dsh-plugin's contributing guide requires it;
-> without it users on a prerelease harness hit `ERESOLVE`. **Check any change here with a probe matrix
-> asserting BOTH directions** — the prerelease is accepted, AND no version the old range accepted
-> became rejected. The measurements, and the attempt that silently dropped `4.0.1-0`:
+> resolve**, or a range that merely looks broad silently excludes the harness's prerelease builds and
+> users hit `ERESOLVE`; a branch written for one tuple never covers another. awesome-dsh-plugin's
+> contributing guide requires it. **Any change here needs a probe matrix asserting BOTH directions.**
+> The semver mechanics and the attempt that dropped `4.0.1-0`:
 > [docs/architecture-notes.md](docs/architecture-notes.md).
 
 ---
 
 ## Version History Pattern
 
-- Update version in **both** `package.json` (line 3) and the single `const CLIENT_VERSION` near the top of `lib/client.js`'s factory — the startup log and `__dockFlashOverlay()` both report it. One constant rather than a literal in the log line, because **a build that cannot name itself cannot be told apart from the previous one**: several rounds of overlay fixes were all labelled `v1.3.0`, so a reload that silently served a stale bundle was indistinguishable from a fix that had not worked. `pnpm run check:docs` asserts the two agree.
+- Update version in **both** `package.json` (line 3) and the single `const CLIENT_VERSION` near the top of `lib/client.js`'s factory — the startup log and `__dockFlashOverlay()` both report it. One constant rather than a literal in the log line, because **a build that cannot name itself cannot be told apart from the previous one**. `pnpm run check:docs` asserts the two agree.
 - Both READMEs must stay in sync — same structure, same content, different language
 - No changelog in the READMEs — `CHANGELOG.md` and git log are the history records
 
@@ -889,6 +882,12 @@ cannot be recalled. The version is this package's own; what declares dock-base c
 
 A change confined to files outside `files` in `package.json` — `AGENTS.md`, `CHANGELOG.md`,
 `docs/` — is not a release, needs no bump, and commits as `docs:`.
+
+### Commit as you go
+
+**Commit each finished change on its own — never batch a verified change with the next one.** An
+uncommitted change is one stray `git checkout` away from gone, and that has already cost this repo a
+full re-derivation of the skin fix. Commits, not releases: the two gates above still stand.
 
 ### Where the history lives
 
