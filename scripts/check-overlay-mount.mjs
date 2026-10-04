@@ -2184,6 +2184,20 @@ console.log('\n=== 20b. 外观 offers only the palettes the active skin can pain
       check('...and the value falls back to the PAINTED palette when the preference says system',
         themeSwitch.getValue() === 'rose', String(themeSwitch.getValue()))
 
+      // (2b) The same blank-row hazard from the OTHER direction, and the one that is
+      // not exotic at all: a stored base scheme the skin has since painted over.
+      // `dark` is no longer an offered option while a skin publishes palettes, so the
+      // value has to come from the painted palette here too — otherwise the row shows
+      // nothing the moment a skin is switched on over a Light/Dark preference.
+      provided.theme = {
+        getTheme: () => ({
+          preference: 'dark', active: { id: 'abyss' },
+          themes: [...baseThemes, palette('abyss'), palette('rose')],
+        }),
+      }
+      check('...and a stored base scheme the skin painted over resolves to the painted palette',
+        themeSwitch.getValue() === 'abyss', String(themeSwitch.getValue()))
+
       // (3) With no skin installed the base pair IS the working choice, so filtering
       // it away would leave the row empty. The fallback is what keeps it usable.
       provided.theme = {
@@ -2193,6 +2207,8 @@ console.log('\n=== 20b. 外观 offers only the palettes the active skin can pain
         JSON.stringify(values()) === JSON.stringify(['light', 'dark']), JSON.stringify(values()))
       check('...and nothing is appended there either',
         !values().includes('system'), JSON.stringify(values()))
+      check('...where the stored base scheme IS offered, so it is returned as-is',
+        themeSwitch.getValue() === 'dark', String(themeSwitch.getValue()))
     } finally {
       if (savedTheme === undefined) delete provided.theme
       else provided.theme = savedTheme
