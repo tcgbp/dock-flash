@@ -1363,6 +1363,66 @@ version the old range accepted became rejected. A one-directional test passes on
 > The upstream requirement is awesome-dsh-plugin's contributing guide. Without this shape, users on a
 > prerelease harness hit `ERESOLVE` at install time — a failure that names the resolver, not the range.
 
+### The skin switch: five call sites, five measured defects
+
+`AGENTS.md` states the rule — "A CSS skin is a WHOLE PLUGIN, and the switch has THREE call sites plus
+TWO halves — all five must agree" — and points here for the measurement. Each of the five sites was
+wrong in its own way, which is why the rule is stated as agreement rather than as a list of edits:
+
+| Call site | The defect |
+|---|---|
+| `_activateThemeViaPluginManager()`'s row path | returned **before** `byBundlePath()`, so a skin with an addressable row had its entry flipped and stayed bundled for ever. Dream escaped only because its `!row` path ends there |
+| the same loop's "the others" half | treated its own target as "already done" (`row.enabled === enabled`) and hard-coded `false` for every other skin — so 默认 worked and selecting the skin back never re-added it |
+| the same row path's return value | resolved `false` for a switch the host had answered `applied`. `false` is the flag `_applySkin()` reloads on (`pending.some(Boolean)`), so a press wrote both rosters and never reloaded |
+| `byBundle()` | resolved `undefined`, which reads as "nothing changed" |
+| `byBundlePath()`'s guard | inverted for ON: `enabled: false` means NOT in the roster, which is a real write |
+
+`_isMarketLiveTheme()` gates nothing here — nothing ever assigns `_marketThemes`, so it is always
+`false`. See [skin-system.md](skin-system.md).
+
+### 默认 stopped in the `!targetRow` fallback and never reached the switch-off branch
+
+MEASURED defect: `setValue('default')` called `_activateThemeViaPluginManager('default')`, and every
+branch there is about ONE package (`_skinEntryRow(rows, _skinBundleName(name))`, "enable the target,
+disable the others"). **No row exists for `default`**, so the call fell to the `!targetRow` fallback,
+which calls `_applySkin(v)` and **stopped there**. The branch in `_applySkin()` that switches EVERY
+skin off was never reached on that route — which is why 默认 switched a handle-less skin off (its path
+is `_switchSkinBundle()`, reached through the fallback) and left a CSS skin bundled and repainting.
+`_activateThemeViaPluginManager()` now short-circuits `'default'` to `_applySkin('default')`.
+
+### "From 默认 I can switch to Dream once, then nothing until I reload the page"
+
+The activation side once dropped the loader-write promise: `_switchSkinBundle(target, true)` was called
+with no `pending`, so `_applySkin()` never learned that a write had happened. The plugin was enabled in
+the loader, nothing was printed anywhere, nothing changed on screen, and it appeared only after a
+manual refresh. That case is what the rule "Collect EVERY promise that represents a loader write — a
+write with no reload is a silent half-switch" exists for.
+
+### A CSS skin painted on every boot while the stored skin was not a CSS skin
+
+MEASURED: `claude-style-skin` stayed loaded and painting on every boot. Both CSS branches of
+`enforceBootSkin()` are gated on `targetIsCss`, so a handle-less target (Dream) fell through to "do
+nothing" — the report that made it visible was "Claude 不会被停用,它的样式会污染别的皮肤". The `else`
+branch now runs `_switchSkinBundle(s, false)` over `activeCss.filter((s) => s.id !== storedSkin)`,
+deliberately NOT `_applySkin(storedSkin, true)`.
+
+### The boot ladder: why one pass is not enough
+
+MEASURED with `dsh-client-liang-intensity-skin` (its tag absent at the moment of the check) and with
+`dsh-claude-style`, whose 889 KB client half can still be executing seconds later. A single pass then
+sees no active CSS skin, 默认 has nothing to remove, and the skin stays painted for the whole session —
+every write it made was correct, which is what made it look like a switch that did nothing. Hence the
+ladder (0 / 1.2 / 3 / 6 / 10 s plus a `MutationObserver`) rather than one check at boot, and hence the
+rule "a skin that survives even the ladder means a longer ladder — never a bigger first delay".
+
+### The market-classification rule is gone; the name heuristic is what is left
+
+`_skinAllowed()` is a pure name heuristic (`_skinHint.test(id) && !_skinExclude.test(id)`), and
+`_registerSkinSwitch()` is called unconditionally — not from a market callback. The market's registry
+classification (`category: theme`) and the `/use-skin` one-way door were the mechanism the older
+wording described; both are gone. See "Market → Plugin Manager migration (v1.5.x)" above and
+[skin-system.md](skin-system.md).
+
 ---
 
 ## Common pitfalls, in full

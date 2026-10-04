@@ -586,10 +586,9 @@ case could be turned OFF but never back ON. Details: [docs/skin-system.md](docs/
 - **Collect EVERY promise that represents a loader write — a write with no reload is a silent half-switch.**
   Switching a handle-less skin ON is the same kind of write as switching it off, and both only change what the
   NEXT page load boots, so `_applySkin()` pushes `_switchSkinBundle()` into `pending` in BOTH directions and
-  reloads when any of them reports a real change. The activation side once dropped that promise
-  (`_switchSkinBundle(target, true)` with no `pending`): the plugin was enabled in the loader, nothing was
-  printed anywhere, nothing changed on screen, and it appeared only after a manual refresh — "from 默认 I can
-  switch to Dream once, then nothing until I reload the page". The state is read first, so an
+  reloads when any of them reports a real change. The activation side once dropped that promise, which is
+  how "from 默认 I can switch to Dream once, then nothing until I reload the page" shipped; the full case
+  history is in [docs/architecture-notes.md](docs/architecture-notes.md). The state is read first, so an
   already-satisfied switch resolves `false` and reloads nothing; that guard is what makes collecting the
   promise safe even though `_applySkin()` also runs at boot. When a press still does nothing,
   `window.__dockFlashSkinTrace()` (a 40-entry ring) is what tells the two causes apart — it names the route
@@ -606,36 +605,33 @@ case could be turned OFF but never back ON. Details: [docs/skin-system.md](docs/
   both plugins re-inject themselves. `_getActiveSkinId()` returns the marked id, so the dropdown names what
   actually renders; and `_applySkin('default')` knows that press wrote nothing (`changed` is all-false,
   the row already read `disabled`) and **reloads anyway** — in that state the reload IS the switch.
-- **默认 is not a package name, and the switch to it must go through `_applySkin()`.** MEASURED
-  defect: `setValue('default')` called `_activateThemeViaPluginManager('default')`, and every branch
-  there is about ONE package (`_skinEntryRow(rows, _skinBundleName(name))`, "enable the target, disable
-  the others") — no row exists for `default`, so it fell to the `!targetRow` fallback, which calls
-  `_applySkin(v)` and **stopped there**. The branch in `_applySkin()` that switches EVERY skin off was
-  never reached on that route, which is why 默认 switched a handle-less skin off (its path is
-  `_switchSkinBundle()`, reached through the fallback) and left a CSS skin bundled and repainting.
-  `_activateThemeViaPluginManager()` now short-circuits `'default'` to `_applySkin('default')`.
+- **默认 is not a package name, and the switch to it must go through `_applySkin()`.**
+  `_activateThemeViaPluginManager()` short-circuits `'default'` to `_applySkin('default')`, which is
+  the only route that reaches the branch switching EVERY skin off. Every other branch there is about
+  ONE package (`_skinEntryRow(rows, _skinBundleName(name))`, "enable the target, disable the others")
+  and no row exists for `default`, so that route used to stop in the `!targetRow` fallback: 默认
+  switched a handle-less skin off (its path IS `_switchSkinBundle()`) and left a CSS skin bundled and
+  repainting. The measurement: [docs/architecture-notes.md](docs/architecture-notes.md).
 - **A CSS skin is a WHOLE PLUGIN, and the switch has THREE call sites plus TWO halves — all five
   must agree.** A press runs `_activateThemeViaPluginManager()`, which has its OWN "enable the
   target, disable the others" loop; `_applySkin()`'s two loops (默认 and deactivate-others) and
   `_switchSkinBundle()` are the others. Every one needs both halves: the entry row
   (`setPluginEnabled`, HOST half) and `dsh.profile.bundles` (`_switchSkinBundle()` →
-  `byBundlePath()`, VISIBLE half). Measured defects, one per site: the row paths returned before
-  `byBundlePath()`, so a skin with an addressable row had its entry flipped and stayed bundled for
-  ever (Dream escaped only because its `!row` path ends there); that loop treated its target as
-  "already done" (`row.enabled === enabled`) and hard-coded `false` for every other skin, so 默认
-  worked and selecting the skin back never re-added it; a row path resolved `false` for an `applied`
-  switch — the flag `_applySkin()` reloads on (`pending.some(Boolean)`) — so a press wrote the
-  rosters and never reloaded; `byBundle()` resolved `undefined`, reading as "nothing changed"; and
-  `byBundlePath()`'s guard was inverted for ON (`enabled: false` means NOT in the roster, a real
-  write). **`_isMarketLiveTheme()` gates nothing here — nothing ever assigns `_marketThemes`, so it
-  is always `false`. See [docs/skin-system.md].**
+  `byBundlePath()`, VISIBLE half). The five measured defects, one per call site — the row path that
+  returned before `byBundlePath()`, the loop that treated its target as "already done" and hard-coded
+  `false` for every other skin, the row path that resolved `false` for an `applied` switch (so a press
+  wrote the rosters and never reloaded, since `_applySkin()` reloads on `pending.some(Boolean)`),
+  `byBundle()`'s `undefined`, and `byBundlePath()`'s guard inverted for ON:
+  [docs/architecture-notes.md](docs/architecture-notes.md). **`_isMarketLiveTheme()` gates nothing
+  here — nothing ever assigns `_marketThemes`, so it is always `false`. See [docs/skin-system.md].**
 - **The entry id is NOT derivable, and an EMPTY candidate list is not "nothing to do".**
   `_entryIdCandidates()` only GUESSES, and every wrong guess answers `unknown-plugin` (MEASURED:
   `dsh-dream-skin`'s real id is `dream-skin`); `POST /plugins/dock-flash/set-plugin-entry` is the
   authority, because the HOST reads the package's own `cordis.patch.yml`. **Resolve the profile from
   `profileContext`, never `readdirSync` order** (two profiles listing dock-flash sent every write to
   the other one), and write the row with NO `name:` — DSH skips a name mismatch, so the id alone
-  addresses the entry. The list is ALSO empty  before `/plugins/dock-flash/profile-packages` answers — `enabledNow` then reads `false`, which for
+  addresses the entry. The list is ALSO empty before `/plugins/dock-flash/profile-packages` answers —
+  `enabledNow` then reads `false`, which for
   a DISABLE equals the wanted `false`. That is the first press of 默认 after a cold load ("需要切两次"),
   so that branch must drive the HOST route instead of falling through to `byBundlePath()`. **Write
   BOTH halves** — the ENTRY row (running loader) and `dsh.profile.bundles` (next boot); writing only
@@ -644,18 +640,16 @@ case could be turned OFF but never back ON. Details: [docs/skin-system.md](docs/
 - **A CSS skin that is active while the stored skin is NOT a CSS skin is a stray, and the boot sweep
   must switch it off as a PLUGIN.** Both CSS branches of `enforceBootSkin()` are gated on
   `targetIsCss`, so a handle-less target (Dream) fell through to "do nothing" — MEASURED:
-  `claude-style-skin` stayed loaded and painting on every boot ("Claude 不会被停用,它的样式会污染别的
-  皮肤"). The `else` branch now runs `_switchSkinBundle(s, false)` over
+  `claude-style-skin` stayed loaded and painting on every boot. The `else` branch now runs
+  `_switchSkinBundle(s, false)` over
   `activeCss.filter((s) => s.id !== storedSkin)`, deliberately NOT `_applySkin(storedSkin, true)`.
 - **A skin with a CSS handle is switched off by REMOVING its style tag — so the boot check is a
   LADDER plus an observer, never one pass.** This is the SECOND line of defence, for a profile whose
   stored preference is `default` while the skin is still bundled (an older version's press, or a
-  write that never landed). It reads the DOM, and it runs when this plugin's
-  `apply()` does, which is not necessarily after the skin's own: MEASURED with
-  `dsh-client-liang-intensity-skin` (tag absent at that moment) and with `dsh-claude-style`, whose
-  889 KB client half can still be executing seconds later. The pass then sees no active CSS skin, 默认
-  has nothing to remove, and the skin stays painted for the whole session — every write it made was
-  correct, which is what made it look like a switch that did nothing. `enforceBootSkin()` is therefore
+  write that never landed). It reads the DOM, and it runs when this plugin's `apply()` does, which is
+  not necessarily after the skin's own — a pass that sees no active CSS skin leaves it painted for the
+  whole session although every write it made was correct. The measured cases:
+  [docs/architecture-notes.md](docs/architecture-notes.md). `enforceBootSkin()` is therefore
   a NAMED function run at 0 / 1.2 / 3 / 6 / 10 s **and** on a `MutationObserver` watching
   documentElement + head for the announcements a skin makes (`data-plugin` / `data-skin-chrome` /
   `data-dsh-material`, or a `<style>`/`<link>` landing) — that observer is what turns "within
@@ -671,10 +665,9 @@ case could be turned OFF but never back ON. Details: [docs/skin-system.md](docs/
 - **The switcher no longer needs dsh-market, and the market is not what it reads.** Discovery and
   switching go through DSH's own plugin manager (`_pluginManagerSkinExtras()` over the entry and bundle
   lists; `_activateThemeViaPluginManager()` for activation — its own comment records the replacement of
-  `_activateThemeViaMarket()`), and `_skinAllowed()` is a **pure name heuristic**, as its comment says. So
-  the market-classification rule earlier in this section described a mechanism that is gone; what
-  survives is the name heuristic stated there. **`_registerSkinSwitch()` is called unconditionally**, not
-  from a market callback.
+  `_activateThemeViaMarket()`), and `_skinAllowed()` is a **pure name heuristic**, as its comment says.
+  **`_registerSkinSwitch()` is called unconditionally**, not from a market callback; the
+  market-classification history it replaced: [docs/architecture-notes.md](docs/architecture-notes.md).
 
 > **Preferences and the `remote`/`inject` contract live in one place** —
 > [docs/skin-system.md](docs/skin-system.md): the four-layer preference bridge, why localStorage is a
