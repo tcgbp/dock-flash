@@ -614,6 +614,9 @@ class MemoryTrendCollector {
   private _gcObserver: any = null  // PerformanceObserver | null
   private _gcEvents: Array<{ ts: number; kind: number; duration: number }> = []
   private _gcEventsCap = 2000  // ~5 min at worst-case GC frequency
+  /** Separate cap for major GC events only — they are rare and valuable for diagnostics. */
+  private _gcMajorEvents: Array<{ ts: number; kind: number; duration: number }> = []
+  private _gcMajorEventsCap = 500  // Full GC events are rare; keep up to 500 (~hours)
 
   constructor(cap = 720) {
     this._cap = Math.max(10, cap)
@@ -621,7 +624,9 @@ class MemoryTrendCollector {
 
   start(baseInterval = 30_000, minInterval = 5_000): void {
     this.stop()
-    this._startGcObserver()
+    // Fire-and-forget: GC observer can start asynchronously; the poll loop
+    // below begins immediately regardless, since it does not depend on GC.
+    this._startGcObserver().catch(() => {})
     const poll = () => {
       const mu = process.memoryUsage()
       this._push({
@@ -663,11 +668,26 @@ class MemoryTrendCollector {
     return this._samples.filter(s => s.ts >= since)
   }
 
-  /** Return recent GC events (last ~5 min) for chart rendering. */
+  /** Return recent GC events (last ~5 min) for chart rendering.
+   *  Pass since=0 to return ALL stored events (for full-mode fetches). */
   gcEvents(since?: number): Array<{ ts: number; kind: number; duration: number }> {
-    if (this._gcEvents.length === 0) return []
+    if (this._gcEvents.length === 0 && this._gcMajorEvents.length === 0) return []
     const cutoff = since ?? (Date.now() - 5 * 60 * 1000)
-    return this._gcEvents.filter(e => e.ts >= cutoff)
+    // Merge the general ring buffer with the dedicated major-GC buffer
+    const all = this._gcEvents.concat(this._gcMajorEvents)
+    // Deduplicate by (ts, kind) — major events that also appear in the general buffer
+    const seen = new Set<string>()
+    const result: Array<{ ts: number; kind: number; duration: number }> = []
+    for (const e of all) {
+      if (e.ts < cutoff) continue
+      const key = e.ts + '|' + e.kind + '|' + e.duration
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(e)
+    }
+    // Sort by timestamp for consistent rendering
+    result.sort((a, b) => a.ts - b.ts)
+    return result
   }
 
   summary(since?: number): MemoryTrendSummary {
@@ -751,18 +771,24 @@ class MemoryTrendCollector {
     }
   }
 
-  private _startGcObserver(): void {
+  private async _startGcObserver(): Promise<void> {
     try {
       // Dynamic import — perf_hooks may not be available in all environments.
-      const { PerformanceObserver } = require('perf_hooks') as typeof import('perf_hooks')
+      // MUST use import(), not require(): this half is ESM, so require() throws
+      // ReferenceError into the catch — silently disabling GC monitoring forever.
+      const { PerformanceObserver } = await import('perf_hooks')
       this._gcObserver = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           // GC entry kinds: 1=minor, 2=major, 4=incremental, 8=weak callbacks
-          this._gcEvents.push({
-            ts: Date.now(),
-            kind: (entry as any).kind ?? 0,
-            duration: entry.duration,
-          })
+          const kind = (entry as any).kind ?? 0
+          const event = { ts: Date.now(), kind, duration: entry.duration }
+          this._gcEvents.push(event)
+          // Also store major (Full) GC events in a separate long-lived buffer,
+          // because they are rare and the general ring buffer may evict them.
+          if (kind === 2) {
+            this._gcMajorEvents.push(event)
+            while (this._gcMajorEvents.length > this._gcMajorEventsCap) this._gcMajorEvents.shift()
+          }
         }
         // Cap the ring buffer.
         while (this._gcEvents.length > this._gcEventsCap) this._gcEvents.shift()
@@ -780,6 +806,7 @@ class MemoryTrendCollector {
       this._gcObserver = null
     }
     this._gcEvents = []
+    this._gcMajorEvents = []
   }
 
   private _push(s: MemorySample): void {
@@ -1857,7 +1884,21 @@ export function apply(ctx: Context, config: ProxyConfig) {
         const since = parseInt(u.searchParams.get('since') || '0', 10) || 0
         const mode = u.searchParams.get('mode') || 'summary'
         if (mode === 'full') {
-          sendJson(res, 200, { samples: _memoryTrend.query(since || undefined), gcEvents: _memoryTrend.gcEvents(since || undefined) })
+          // For gcEvents: when no explicit `since` is requested (since=0),
+          // pass 0 so ALL stored events are returned — not just the last 5 min.
+          // gcEvents(0) → cutoff=0 → returns everything.
+          // gcEvents(undefined) → cutoff=now-5min → only recent events.
+          // The sparkline may span hours, so we need the full range.
+          const gcSince = since > 0 ? since : 0
+          // Only return major (Full) GC events to the client — minor GC
+          // is too frequent and clutters the chart.  Minor GC stats are
+          // still available via mode=summary (majorPerMin, gcPausePerMin).
+          const allGcEvents = _memoryTrend.gcEvents(gcSince)
+          const majorGcEvents = allGcEvents.filter(e => e.kind === 2)
+          sendJson(res, 200, {
+            samples: _memoryTrend.query(since || undefined),
+            gcEvents: majorGcEvents,
+          })
         } else {
           sendJson(res, 200, _memoryTrend.summary(since || undefined))
         }
