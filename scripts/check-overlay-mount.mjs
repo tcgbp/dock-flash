@@ -2137,6 +2137,12 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
 // THEME, never of a skin's name, so it stays correct for any skin that registers
 // palettes this way.
 //
+// With NO skin installed NOTHING is filtered, and `跟随系统` stays: there DSH really
+// does resolve light/dark from the OS, so it is a working preference rather than a
+// dead entry. Withholding it in both cases — which this filter's first version did
+// — took that capability away from the default skin, and section (3) below exists
+// to keep that from happening again.
+//
 // No theme service is stubbed anywhere else in this file, so the plugin's own
 // `ctx.get('theme')` answered `undefined` and this row always took its catch
 // branch. That is why the filter needs a stub to be tested at all.
@@ -2169,7 +2175,7 @@ console.log('\n=== 20b. 外观 offers only the palettes the active skin can pain
         JSON.stringify(values()) === JSON.stringify(['abyss', 'rose']), JSON.stringify(values()))
       check('...浅色/深色 are gone, because a skin paints over them',
         !values().includes('light') && !values().includes('dark'), JSON.stringify(values()))
-      check('...and 跟随系统 is no longer appended by this plugin',
+      check('...and 跟随系统 is withheld while a skin is painting',
         !values().includes('system'), JSON.stringify(values()))
 
       // (2) `preference` can legitimately read `system` — Dream's own note records a
@@ -2199,16 +2205,26 @@ console.log('\n=== 20b. 外观 offers only the palettes the active skin can pain
         themeSwitch.getValue() === 'abyss', String(themeSwitch.getValue()))
 
       // (3) With no skin installed the base pair IS the working choice, so filtering
-      // it away would leave the row empty. The fallback is what keeps it usable.
+      // it away would leave the row empty — and `跟随系统` belongs here, because DSH
+      // resolves light/dark from the OS for exactly these schemes.
       provided.theme = {
         getTheme: () => ({ preference: 'dark', active: { id: 'dark' }, themes: baseThemes }),
       }
       check('with no skin installed the base pair is still offered, not an empty row',
-        JSON.stringify(values()) === JSON.stringify(['light', 'dark']), JSON.stringify(values()))
-      check('...and nothing is appended there either',
-        !values().includes('system'), JSON.stringify(values()))
+        JSON.stringify(values()) === JSON.stringify(['light', 'dark', 'system']), JSON.stringify(values()))
+      check('...and 跟随系统 IS offered there, because DSH resolves it for the base schemes',
+        values().includes('system'), JSON.stringify(values()))
       check('...where the stored base scheme IS offered, so it is returned as-is',
         themeSwitch.getValue() === 'dark', String(themeSwitch.getValue()))
+
+      // (3b) The regression this section was rewritten for: a stored `system` preference
+      // on the default skin is a real VALUE, not a blank row, so it must come back as
+      // itself. The first version of the filter deleted the option in both cases.
+      provided.theme = {
+        getTheme: () => ({ preference: 'system', active: { id: 'light' }, themes: baseThemes }),
+      }
+      check('...and a stored 跟随系统 preference survives on the default skin',
+        themeSwitch.getValue() === 'system', String(themeSwitch.getValue()))
     } finally {
       if (savedTheme === undefined) delete provided.theme
       else provided.theme = savedTheme
