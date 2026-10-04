@@ -166,6 +166,9 @@ export interface ProxyConfig {
 
   /** User-configured model → context window overrides (tokens). */
   modelContextWindows: Record<string, number>
+  /** Provenance of each modelContextWindows override — e.g. 'error-extracted:CONTEXT_WINDOW_EXCEEDED'
+   *  when the value was parsed from a context-window-exceeded error. */
+  modelContextWindowSources: Record<string, string>
 
   /** Host alert queue: maximum entries. */
   hostAlertQueueCap: Volatile<number>
@@ -372,6 +375,7 @@ export const Config = Schema.object({
   ctxPollBase: Schema.number().default(DEFAULT_CTX_POLL_BASE).volatile(),
   ctxPollMin: Schema.number().default(DEFAULT_CTX_POLL_MIN).volatile(),
   modelContextWindows: Schema.dict(Schema.number()).default({}).volatile(),
+  modelContextWindowSources: Schema.dict(Schema.string()).default({}).volatile(),
   hostAlertQueueCap: Schema.number().default(DEFAULT_HOST_ALERT_QUEUE_CAP).volatile(),
   hostAlertMaxAge: Schema.number().default(DEFAULT_HOST_ALERT_MAX_AGE).volatile(),
 
