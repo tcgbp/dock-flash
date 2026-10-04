@@ -1373,7 +1373,7 @@ export function apply(ctx, config) {
         // latency alarm wants: it isolates the local host reachability signal from
         // whether a proxy is configured, so the two subsystems share no route.
         // Also returns Node.js process.memoryUsage() so the client's memory config
-        // popup can display both browser-side and host-side memory metrics.
+        // popup can display host-side memory metrics.
         wsCtx.effect(() => wsCtx.webServer.register({
             kind: 'exact',
             path: '/plugins/dock-flash/health',
