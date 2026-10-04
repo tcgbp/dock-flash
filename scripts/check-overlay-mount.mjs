@@ -2126,6 +2126,81 @@ console.log('\n=== 20. 默认 switches a handle-less skin as a PLUGIN, never thr
 }
 
 
+// ── the 外观 dropdown offers only what the ACTIVE skin can paint ────────────
+// The list comes from `getTheme().themes`, which publishes the base colour
+// schemes AND every palette a skin has registered. Under a skin the base pair is
+// a dead option — a skin's `ctx.theme.overrideTokens()` paints over it, so
+// picking 浅色 changes nothing on screen — and `跟随系统` has nothing to resolve
+// to, because a palette declares a FIXED `colorScheme`. Measured live:
+// `light`/`dark` report `tokens: 0` while all eight Dream palettes report
+// `tokens: 33`, which is what tells them apart. The rule is a property of the
+// THEME, never of a skin's name, so it stays correct for any skin that registers
+// palettes this way.
+//
+// No theme service is stubbed anywhere else in this file, so the plugin's own
+// `ctx.get('theme')` answered `undefined` and this row always took its catch
+// branch. That is why the filter needs a stub to be tested at all.
+console.log('\n=== 20b. 外观 offers only the palettes the active skin can paint ===')
+{
+  const themeSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:theme')
+  check('the theme switch is registered', !!themeSwitch, 'not found')
+  if (themeSwitch) {
+    const savedTheme = provided.theme
+    // The base schemes carry no palette of their own; a skin's palette carries one.
+    const baseThemes = [
+      { id: 'light', colorScheme: 'light', tokens: {} },
+      { id: 'dark', colorScheme: 'dark', tokens: {} },
+    ]
+    const palette = (id) => ({
+      id,
+      colorScheme: 'dark',
+      tokens: Object.fromEntries(Array.from({ length: 33 }, (_, i) => ['--p' + i, '#000'])),
+    })
+    const values = () => themeSwitch.options().map((o) => o.value)
+    try {
+      // (1) A skin is publishing palettes: only those are offered.
+      provided.theme = {
+        getTheme: () => ({
+          preference: 'abyss', active: { id: 'abyss' },
+          themes: [...baseThemes, palette('abyss'), palette('rose')],
+        }),
+      }
+      check('with a skin active, only its own palettes are offered',
+        JSON.stringify(values()) === JSON.stringify(['abyss', 'rose']), JSON.stringify(values()))
+      check('...浅色/深色 are gone, because a skin paints over them',
+        !values().includes('light') && !values().includes('dark'), JSON.stringify(values()))
+      check('...and 跟随系统 is no longer appended by this plugin',
+        !values().includes('system'), JSON.stringify(values()))
+
+      // (2) `preference` can legitimately read `system` — Dream's own note records a
+      // DSH-side reset doing it — and with the option gone the select would point at
+      // a row that does not exist. The painted palette is the honest value.
+      provided.theme = {
+        getTheme: () => ({
+          preference: 'system', active: { id: 'rose' },
+          themes: [...baseThemes, palette('abyss'), palette('rose')],
+        }),
+      }
+      check('...and the value falls back to the PAINTED palette when the preference says system',
+        themeSwitch.getValue() === 'rose', String(themeSwitch.getValue()))
+
+      // (3) With no skin installed the base pair IS the working choice, so filtering
+      // it away would leave the row empty. The fallback is what keeps it usable.
+      provided.theme = {
+        getTheme: () => ({ preference: 'dark', active: { id: 'dark' }, themes: baseThemes }),
+      }
+      check('with no skin installed the base pair is still offered, not an empty row',
+        JSON.stringify(values()) === JSON.stringify(['light', 'dark']), JSON.stringify(values()))
+      check('...and nothing is appended there either',
+        !values().includes('system'), JSON.stringify(values()))
+    } finally {
+      if (savedTheme === undefined) delete provided.theme
+      else provided.theme = savedTheme
+    }
+  }
+}
+
+
 // ── a handle-less skin that is VISIBLY on screen ───────────────────────────
 // The reported state: after picking dsh-dream-skin the dropdown showed 默认, so
 // pressing 默认 was impossible — a <select> fires no change event for the value it
