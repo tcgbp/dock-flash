@@ -76,7 +76,7 @@ dock-flash/
 - Consumes: 无（骨架阶段不消费任何外部服务）
 - Produces: 可安装插件 `dsh-flash-proxy`，含 host 入口 `src/index.ts`（经 tsc→dist）、浏览器入口 `lib/client.js`，设置命名空间 `dsh-flash-proxy`
 
-- [ ] **Step 1: 创建 `dsh-flash-proxy/package.json`**
+- [x] **Step 1: 创建 `dsh-flash-proxy/package.json`**
 
 参照 `dsh-flash-net-mon/package.json` 和 dock-flash 的打包约定。`name` 用 `dsh-flash-proxy`。`inject` 为空数组（host 端不需要硬依赖——`launchEnvironment`/`profileContext`/`webServer`/`settings` 全部懒注入）。`dsh.client.inject` 包含 `"dock-flash"` 以保证 QuickControl 注册表先于本插件加载。
 
@@ -142,7 +142,7 @@ dock-flash/
 }
 ```
 
-- [ ] **Step 2: 创建 `dsh-flash-proxy/cordis.patch.yml`**
+- [x] **Step 2: 创建 `dsh-flash-proxy/cordis.patch.yml`**
 
 ```yaml
 # dsh-flash-proxy bundle layer — registers the HOST half into a profile.
@@ -151,7 +151,7 @@ dock-flash/
       name: dsh-flash-proxy
 ```
 
-- [ ] **Step 3: 创建 `dsh-flash-proxy/tsconfig.json`**
+- [x] **Step 3: 创建 `dsh-flash-proxy/tsconfig.json`**
 
 继承 dock-flash 的编译选项：
 
@@ -178,13 +178,13 @@ dock-flash/
 }
 ```
 
-- [ ] **Step 4: 创建 `dsh-flash-proxy/.gitignore`**
+- [x] **Step 4: 创建 `dsh-flash-proxy/.gitignore`**
 
 ```
 node_modules/
 ```
 
-- [ ] **Step 5: 创建 `dsh-flash-proxy/src/index.ts`（骨架）**
+- [x] **Step 5: 创建 `dsh-flash-proxy/src/index.ts`（骨架）**
 
 ```typescript
 // dsh-flash-proxy — HOST half of the system proxy control plugin.
@@ -240,7 +240,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
 }
 ```
 
-- [ ] **Step 6: 创建 `dsh-flash-proxy/lib/client.js`（骨架）**
+- [x] **Step 6: 创建 `dsh-flash-proxy/lib/client.js`（骨架）**
 
 ```js
 // dsh-flash-proxy — CLIENT half of the system proxy control plugin.
@@ -272,7 +272,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
 })(typeof window !== 'undefined' ? window : this)
 ```
 
-- [ ] **Step 7: 安装依赖并验证构建**
+- [x] **Step 7: 安装依赖并验证构建**
 
 ```bash
 cd /d/codes/learn/dsh-plugin/dsh-flash-proxy
@@ -283,7 +283,7 @@ ls dist/index.js
 
 Expected: `dist/index.js` exists and contains the compiled skeleton.
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 cd /d/codes/learn/dsh-plugin/dsh-flash-proxy
@@ -304,7 +304,7 @@ git commit -m "feat: dsh-flash-proxy plugin skeleton (host + client)"
 - Consumes: `ctx.get('launchEnvironment')`（EnvLookup，由 DSH 提供）；`ctx.get('settings')`（dsh-settings，由 DSH 提供）；`ctx.inject(['webServer'])`（dsh-host-webserver，由 DSH 提供）
 - Produces: 设置命名空间 `dsh-flash-proxy`；HTTP 路由 `GET /plugins/dsh-flash-proxy/proxy-status` 和 `POST /plugins/dsh-flash-proxy/test-connection`；`loader/volatile-update` 事件订阅（仅代理路径）；进程级 `NO_PROXY` / undici dispatcher 管理
 
-- [ ] **Step 1: 添加共享工具函数到 `src/index.ts`**
+- [x] **Step 1: 添加共享工具函数到 `src/index.ts`**
 
 从 dock-flash 的 `src/index.ts` 迁移以下工具函数（它们原位于 host 顶层，被 B 和 E/F 皮肤路由共享）：
 
@@ -340,7 +340,7 @@ async function readJsonBody(req: IncomingMessage, limit = 4096): Promise<any> {
 }
 ```
 
-- [ ] **Step 2: 迁移 `resolveNoProxy()` 和 `EnvLookup` 接口**
+- [x] **Step 2: 迁移 `resolveNoProxy()` 和 `EnvLookup` 接口**
 
 从 dock-flash `src/index.ts` lines 385-405, 440-443:
 
@@ -365,7 +365,7 @@ function resolveNoProxy(mode: string, custom: string): string | undefined {
 }
 ```
 
-- [ ] **Step 3: 迁移 `loadProxyModule()` 和 `ProxyModule` 接口**
+- [x] **Step 3: 迁移 `loadProxyModule()` 和 `ProxyModule` 接口**
 
 从 dock-flash `src/index.ts` lines 431-523。关键要点：必须通过 `createRequire(entry).resolve(specifier)` 解析 DSH 自己的 `dsh-http-proxy` 副本，不能 `import` 一个非依赖的包。注释中的陷阱说明一并迁移。
 
@@ -418,7 +418,7 @@ function loadProxyModule(): Promise<ProxyModule | null> {
 }
 ```
 
-- [ ] **Step 4: 迁移 `processEnvLookup()`、`launchEnvironment()`、`readLaunchEnv()`、`proxyEnvSummary()`**
+- [x] **Step 4: 迁移 `processEnvLookup()`、`launchEnvironment()`、`readLaunchEnv()`、`proxyEnvSummary()`**
 
 从 dock-flash `src/index.ts` lines 526-534, 1052-1076, 1256-1269:
 
@@ -476,7 +476,7 @@ function proxyEnvSummary(ctx: Context): {
 }
 ```
 
-- [ ] **Step 5: 迁移 `resolveMode()`、`applyProxyEnv()`、`proxyRouteForUrl()`、`describeProxyRoute()`、`resolveTestUrl()`、`runConnectionTest()`**
+- [x] **Step 5: 迁移 `resolveMode()`、`applyProxyEnv()`、`proxyRouteForUrl()`、`describeProxyRoute()`、`resolveTestUrl()`、`runConnectionTest()`**
 
 从 dock-flash `src/index.ts` lines 1276-1517。这些函数是代理子系统的核心，逐字迁移，仅做以下调整：
 
@@ -676,7 +676,7 @@ function proxyEnvSummary(ctx: Context): {
   }
 ```
 
-- [ ] **Step 6: 迁移 `apply()` 入口——设置注册、volatile-update 订阅、webServer 路由**
+- [x] **Step 6: 迁移 `apply()` 入口——设置注册、volatile-update 订阅、webServer 路由**
 
 从 dock-flash `src/index.ts` lines 1524-1607, 1612-1666。在 `apply()` 函数体中组装：
 
@@ -796,7 +796,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
 }
 ```
 
-- [ ] **Step 7: 添加设置迁移逻辑**
+- [x] **Step 7: 添加设置迁移逻辑**
 
 在 `apply()` 末尾添加迁移代码——首次启动时从 `dock-flash` 命名空间读取旧值，写入 `dsh-flash-proxy`，然后删除旧键：
 
@@ -848,7 +848,7 @@ export function apply(ctx: Context, config: ProxyConfig) {
   })
 ```
 
-- [ ] **Step 8: 构建并验证**
+- [x] **Step 8: 构建并验证**
 
 ```bash
 cd /d/codes/learn/dsh-plugin/dsh-flash-proxy
@@ -858,7 +858,7 @@ ls -la dist/index.js
 
 Expected: `dist/index.js` exists, no type errors.
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 cd /d/codes/learn/dsh-plugin/dsh-flash-proxy
@@ -877,7 +877,7 @@ git commit -m "feat: migrate host-side proxy policy, routes, and settings"
 - Consumes: `ctx.get('quickControl')`（由 dock-flash 提供，通过 `dock-flash:ready` 事件 + `ctx.get` 双发现模式）；`ctx.remote.settings`（读写 `dsh-flash-proxy` 命名空间）
 - Produces: 5 个 QuickControl 开关：`dsh-flash-proxy:system-proxy`、`dsh-flash-proxy:test-url`、`dsh-flash-proxy:test-connection`、`dsh-flash-proxy:proxy-log`、`dsh-flash-proxy:proxy-env`
 
-- [ ] **Step 1: 添加 i18n 翻译表**
+- [x] **Step 1: 添加 i18n 翻译表**
 
 从 dock-flash `lib/client.js` lines 206-233, 498-529 迁移所有代理相关 i18n 键。在新插件的 `lib/client.js` 中建立独立的翻译表：
 
@@ -969,7 +969,7 @@ var EN = {
 }
 ```
 
-- [ ] **Step 2: 添加 `t()` 翻译函数和 localStorage 读写工具**
+- [x] **Step 2: 添加 `t()` 翻译函数和 localStorage 读写工具**
 
 ```js
 var TABLE = document.documentElement.lang === 'zh' ? ZH : EN
@@ -1024,15 +1024,15 @@ var _setTestUrl = function (v) {
 var _resolveTestUrl = function () { return _getTestUrl() || TEST_URL_PRESETS[0].url }
 ```
 
-- [ ] **Step 3: 迁移 NO_PROXY 验证逻辑**
+- [x] **Step 3: 迁移 NO_PROXY 验证逻辑**
 
 从 dock-flash `lib/client.js` lines 14488-14560。逐字迁移 `_normalizeNoProxyList()` 和 `_noProxyErrorText()`——这是纯函数，不依赖任何 dock-flash 闭包状态。
 
-- [ ] **Step 4: 迁移测试 URL 预设和诊断日志格式化**
+- [x] **Step 4: 迁移测试 URL 预设和诊断日志格式化**
 
 从 dock-flash `lib/client.js` lines 14562-14684。迁移 `TEST_URL_PRESETS`、`_describeTest()`、`_fmtBytes()`、`_oneLine()`、`_logStamp()`、`_setLog()`。这些全部是代理专属的纯函数/常量。
 
-- [ ] **Step 5: 迁移代理状态追踪和 `_fetchProxyStatus()`**
+- [x] **Step 5: 迁移代理状态追踪和 `_fetchProxyStatus()`**
 
 从 dock-flash `lib/client.js` lines 14686-14779。关键修改：
 
@@ -1042,14 +1042,14 @@ var _resolveTestUrl = function () { return _getTestUrl() || TEST_URL_PRESETS[0].
 - `registry.notifyChange('dock-flash:proxy-env')` → `registry.notifyChange('dsh-flash-proxy:proxy-env')`
 - 所有 `_remoteSettings(ctx)` 调用改为读取 `dsh-flash-proxy` 命名空间
 
-- [ ] **Step 6: 迁移启动时主机同步逻辑**
+- [x] **Step 6: 迁移启动时主机同步逻辑**
 
 从 dock-flash `lib/client.js` lines 14781-14842。修改要点：
 
 - 设置命名空间查找从 `'dock-flash'` 改为 `'dsh-flash-proxy'`
 - `registry.notifyChange('dock-flash:*')` → `registry.notifyChange('dsh-flash-proxy:*')`
 
-- [ ] **Step 7: 迁移 5 个开关注册 + settings/updated 事件监听**
+- [x] **Step 7: 迁移 5 个开关注册 + settings/updated 事件监听**
 
 从 dock-flash `lib/client.js` lines 14844-15234。修改要点：
 
@@ -1061,7 +1061,7 @@ var _resolveTestUrl = function () { return _getTestUrl() || TEST_URL_PRESETS[0].
 - `_queuePrefWrite(ctx, ...)` → 新插件自有的写入队列（见 Step 8）
 - `settings/updated` 事件中的 `ns !== 'dock-flash'` → `ns !== 'dsh-flash-proxy'`
 
-- [ ] **Step 8: 实现独立的设置写入队列**
+- [x] **Step 8: 实现独立的设置写入队列**
 
 新插件需要自己的 `_queuePrefWrite` / `savePrefs` 基础设施。从 dock-flash 的 `_queuePrefWrite()` 提取核心逻辑，但写入 `dsh-flash-proxy` 命名空间而非 `dock-flash`：
 
@@ -1098,7 +1098,7 @@ function _queuePrefWrite(ctx, patch, onError, saved) {
 }
 ```
 
-- [ ] **Step 9: 实现双发现模式（INTEGRATION.md 兼容）**
+- [x] **Step 9: 实现双发现模式（INTEGRATION.md 兼容）**
 
 在 `apply()` 中使用双发现模式注册开关到 dock-flash 的 QuickControl 注册表：
 
@@ -1137,7 +1137,7 @@ exports.apply = function (ctx) {
 }
 ```
 
-- [ ] **Step 10: 手动测试验证**
+- [x] **Step 10: 手动测试验证**
 
 ```bash
 # 安装新插件到 profile
@@ -1151,7 +1151,7 @@ dsh plugin --profile web add /d/codes/learn/dsh-plugin/dsh-flash-proxy
 # 5. 检查设置命名空间是否为 dsh-flash-proxy
 ```
 
-- [ ] **Step 11: 提交**
+- [x] **Step 11: 提交**
 
 ```bash
 cd /d/codes/learn/dsh-plugin/dsh-flash-proxy
@@ -1173,7 +1173,7 @@ git commit -m "feat: migrate client-side proxy switches with i18n and QuickContr
 - Consumes: 无（移除阶段只做减法）
 - Produces: dock-flash 不再包含代理功能；`dock-flash` 设置命名空间中的代理字段变为遗留兼容层
 
-- [ ] **Step 1: 移除 `src/index.ts` 中的代理设置字段**
+- [x] **Step 1: 移除 `src/index.ts` 中的代理设置字段**
 
 从 `Config` 和 `ProxyConfig` 接口中移除：
 
@@ -1200,7 +1200,7 @@ const LAUNCH_ENVIRONMENT_SERVICE = 'launchEnvironment'
 
 将 `ProxyConfig` 重命名为 `FlashConfig`（不再以 Proxy 为主），只保留面板/皮肤/触发器字段。
 
-- [ ] **Step 2: 移除 `src/index.ts` 中的代理工具函数和策略代码**
+- [x] **Step 2: 移除 `src/index.ts` 中的代理工具函数和策略代码**
 
 移除以下函数/接口：
 - `EnvLookup` 接口
@@ -1221,7 +1221,7 @@ const LAUNCH_ENVIRONMENT_SERVICE = 'launchEnvironment'
 - `sendJson()`（如果被其他路由使用则保留——皮肤路由 E/F 用 `sendJson`，所以保留）
 - `readJsonBody()`（同上——皮肤路由用，保留）
 
-- [ ] **Step 3: 移除 `apply()` 中的代理初始化和事件订阅**
+- [x] **Step 3: 移除 `apply()` 中的代理初始化和事件订阅**
 
 移除：
 - `loader/volatile-update` 中的代理路径订阅
@@ -1234,7 +1234,7 @@ const LAUNCH_ENVIRONMENT_SERVICE = 'launchEnvironment'
 - D 分区（告警路由）
 - E/F 分区（皮肤路由）
 
-- [ ] **Step 4: 移除 `lib/client.js` 中的代理开关注册**
+- [x] **Step 4: 移除 `lib/client.js` 中的代理开关注册**
 
 移除 lines 14450–15234 的所有代理相关代码：
 - localStorage 读写函数（`_getProxyMode`、`_setProxyMode`、`_getCustomNoProxy` 等）
@@ -1246,15 +1246,15 @@ const LAUNCH_ENVIRONMENT_SERVICE = 'launchEnvironment'
 
 ⚠️ **注意**：`_oneLine()` 函数可能被非代理代码使用——grep 检查后再决定是否移除。`_queuePrefWrite()` 被 `savePrefs()` 和代理写入共享——**保留**（K7 解耦由字段集隔离实现，不需要移除共享写入队列）。
 
-- [ ] **Step 5: 移除 `_hostPrefs` 映射中的代理字段**
+- [x] **Step 5: 移除 `_hostPrefs` 映射中的代理字段**
 
 从 `loadHostPreferences()` 的 `_hostPrefs` 映射中移除代理字段（它们本来就不在 `_hostPrefs` 中——B 区字段走 `/proxy-status` 读路径——但注释中可能需要更新）。
 
-- [ ] **Step 6: 清理 i18n 翻译表**
+- [x] **Step 6: 清理 i18n 翻译表**
 
 从 `lib/client.js` 的 ZH/EN 翻译表中移除所有代理相关键（`systemProxy`、`proxyAllProxy` 等 ~35 个键）。
 
-- [ ] **Step 7: 构建验证**
+- [x] **Step 7: 构建验证**
 
 ```bash
 cd /d/codes/learn/dsh-plugin/dock-flash
@@ -1266,7 +1266,7 @@ pnpm run check:docs
 
 Expected: 全部通过。
 
-- [ ] **Step 8: 手动功能回归测试**
+- [ ] **Step 8: 手动功能回归测试**（pending — requires live DSH session）
 
 1. 安装 dock-flash（不含代理代码）到 profile
 2. 打开 GUI，验证 ⚡ 内建标签页中没有代理开关
@@ -1274,7 +1274,7 @@ Expected: 全部通过。
 4. 验证皮肤切换正常
 5. 验证面板排序正常
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 cd /d/codes/learn/dsh-plugin/dock-flash

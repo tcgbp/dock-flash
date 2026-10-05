@@ -2,6 +2,8 @@
 
 > 目标：为把「快捷控制面板 / 系统代理 / 网络审计 / 系统告警」四套子系统解耦为独立插件提供依据。
 > 本文是**现状测绘 + 重构蓝图**，不含代码改动。
+>
+> **2025-08 状态更新**：B（系统代理）已完成物理拆包，独立为 `dsh-flash-proxy` 插件。下方标注已拆分。
 
 ---
 
@@ -10,7 +12,7 @@
 | 编号 | 子系统 | 宿主（`src/index.ts`）职责 | 客户端（`lib/client.js`）职责 |
 |---|---|---|---|
 | **A** | QuickControl 面板 | 注册 `dock-flash` settings 命名空间占位（`Config` / `settings.configure`） | `ctx.provide('quickControl', registry)`、面板 UI、排序/隐藏状态机、皮肤系统、i18n |
-| **B** | 系统代理 | `applyProxyEnv()` / `resolveNoProxy()` / `loadProxyModule()` / `proxyRouteForUrl()`；路由 `/proxy-status`、`/test-connection` | System 组「系统代理」cluster（select/slider/log）、启动时读回宿主值并回写 |
+| **B** | ~~系统代理~~ **已拆分→dsh-flash-proxy** | ~~`applyProxyEnv()` / `resolveNoProxy()` / `loadProxyModule()` / `proxyRouteForUrl()`；路由 `/proxy-status`、`/test-connection`~~ → 迁入 `dsh-flash-proxy` | ~~System 组「系统代理」cluster（select/slider/log）、启动时读回宿主值并回写~~ → 迁入 `dsh-flash-proxy` |
 | **C** | 网络审计（outbound 审计） | `NetworkMonitor` 类、`installRequestTracer()`（包装 `globalThis.fetch`）、`resolvePluginId()`（stack 解析）、`reconfigure()`；路由 `/network-log`、`/network-alerts`、`/network-whitelist`、`/network-plugin-whitelist` | System 组网络审计开关、`network-audit` provider 轮询 `/network-alerts` |
 | **D** | 系统告警 | 宿主侧内存队列 `_alertQueue`；路由 `/push-alert`、`/host-alerts` | `ctx.provide('dockFlashAlerts', alertRegistry)`、memory/context/network 三 provider、Toast/Dropdown 展示、`system-alerts` cluster |
 
@@ -127,7 +129,7 @@
 
 | 耦合点 | 迁移动作 | 涉及文件 |
 |---|---|---|
-| **K1** `volatile-update` | 各插件自监听自己的设置路径，不再共用一个 handler | 拆到 B/C/D 的各自 `apply()` |
+| **K1** `volatile-update` | 各插件自监听自己的设置路径，不再共用一个 handler | 拆到 B/C/D 的各自 `apply()` | **B 已拆分**：`dsh-flash-proxy` 自监听 `proxyMode`/`customNoProxy`/`useProxy` 路径 |
 | **K2** 单一 webServer 块 | 每条路由/每组路由拆到所属插件，各插件独立 `ctx.inject(['webServer'])` | 拆到 B/C/D |
 | **K3** `reconfigure()` | 审计 reconfigure 归 C；告警队列容量 reconfigure 归 D | C/D |
 | **K4** 全局 fetch 包装 | 只留在 C，且改默认关闭（需显式开启审计）；卸载彻底 restore | C |

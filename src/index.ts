@@ -18,8 +18,7 @@
 //
 // This half is ESM (`"type": "module"`, and DSH's own entry is ESM too), so
 // `require` does not exist here. Everything that used to be a lazy `require()`
-// in a try/catch now either imports statically or goes through
-// `loadProxyModule()` — see that function for why the second case is subtle.
+// in a try/catch now imports statically.
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type {} from '@deepseek-ai/dsh-settings'
