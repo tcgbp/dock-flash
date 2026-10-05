@@ -221,49 +221,15 @@ ignored. (The `external` path *does* strip it first; `inject` does not.)
 `cordis.patch.yml` is the bundle layer that inserts the host rows into the profile.
 
 - **HOST** (`src/index.ts` → `dist/index.js`; Node.js via Cordis) owns the `dock-flash` settings
-  namespace, the fine-grained proxy mode + `NO_PROXY`, `testUrl` (never hardcoded), and the HTTP
-  routes (`GET /proxy-status`, `POST /test-connection`).
+  namespace, panel/trigger/alert configuration, and the HTTP routes
+  (`GET /host-alerts`, `POST /push-alert`, `POST /clear-alerts`, `GET /health`, etc.).
 - **CLIENT** (`lib/client.js`; browser via `__ModuleLoader__`) owns the QuickControl registry
   (pub/sub), the React panel UI, the skin system, and i18n (zh/en).
 
-### System proxy
-
-`testUrl` is a **setting**, never a constant in `src/index.ts` (default
-`https://www.google.com/generate_204`; the presets are deliberately generic public endpoints). Three
-properties must survive refactoring: **`redirect: 'manual'` with a hand-rolled hop loop**
-(`MAX_REDIRECTS`) — following redirects conflates "302 to somewhere unreachable" with "connection
-refused"; **failures are returned as data, never thrown** — the route cannot 500; and **the nested
-undici `cause` is unpacked** into `causeName`/`causeMessage`/`causeCode`/`causeErrno`, because
-`fetch()` alone only ever says `TypeError: fetch failed`.
-
-`proxyRouteForUrl()` probes the **configured** test target, not a hardcoded host, and the client
-sends the URL it is displaying in the request body — so the probe targets exactly what the user sees
-and cannot lag an async `settings.update`. Every client-side field passes through `_oneLine()` before
-entering the log: error messages are not single-line in general, and one injected newline destroys
-the one-fact-per-line layout. The log holds the **latest run only** and hides itself entirely until
-the first test.
-
-The proxy controls are one `cluster`; see "Panel ordering" above and the QuickControl API section.
-
-#### Talking to `@deepseek-ai/dsh-http-proxy`
-
-Four rules, or the mode switch changes nothing: load it through the **one cached handle**
-(`loadProxyModule()`, resolving DSH's own copy) and make sure it is **the instance DSH booted with**
-(a second copy answers `DIRECT_ROUTE` forever); pass a **`URL`**, never a string (handed a string it
-does not throw, it silently reports "direct"); **keep and release the returned disposer** — ignoring
-it leaks one `ProxyAgent` and its socket pool per mode change; and resolve the policy from the
-**`launchEnvironment`** service, not `process.env`, overriding only `NO_PROXY`/`no_proxy`. This plugin
-owns the **bypass list**, not the proxy address, and installing replaces the process-global dispatcher
-for the whole DSH process.
-
-`custom` values are **validated on the way in** against the grammar the matcher actually implements;
-a rejection changes neither the mode nor the stored list, and a blank value makes `resolveNoProxy()`
-return `undefined` so `NO_PROXY` is removed rather than published empty (the host enforces that blank
-rule too, since a value edited into `settings.yaml` never passes through the prompt).
-
-> The four defects that made the proxy a silent no-op for the life of the feature, the exact
-> accept/reject grammar, and the reasoning behind each rule above:
-> [docs/architecture-notes.md](docs/architecture-notes.md).
+> **The system proxy subsystem (B) has been extracted** into the `dsh-flash-proxy` plugin.
+> Proxy mode, `NO_PROXY` policy, `testUrl`, connection diagnostics, and the five
+> `dsh-flash-proxy:*` QuickControl switches now live in that separate package.
+> See [docs/refactor-coupling-map.md](docs/refactor-coupling-map.md) for the extraction status.
 
 ### Module Loading
 
@@ -506,18 +472,14 @@ dock-base's `WorkbenchRoot` has NO error boundary. An uncaught render error in a
 ```ts
 // ❌ ReferenceError: require is not defined
 const { Schema } = require('@deepseek-ai/schemastery')
-const { proxyRouteFor } = require('@deepseek-ai/dsh-http-proxy')
 
 // ✅ a declared dependency: import it
 import Schema from '@deepseek-ai/schemastery'   // default export only
-
-// ✅ not a dependency, must resolve DSH's own copy: dynamic import
-const mod = await loadProxyModule()
 ```
 
-**The trap is that a `require` inside `try/catch` fails silently.** That is not hypothetical: it disabled the entire proxy feature for the whole life of the feature, because `installProxyFromEnvironment` was never reached and the failure only ever surfaced as a stray `routeError` string in the client's diagnostics log. Worse, `require('@deepseek-ai/schemastery')` sat in the `ctx.inject(['settings'], …)` callback, so the throw meant **`installSection` never ran and the `dock-flash` settings namespace was never registered at all** — every proxy setting silently reverted to its composition default.
+**The trap is that a `require` inside `try/catch` fails silently.** That is not hypothetical: `require('@deepseek-ai/schemastery')` sat in the `ctx.inject(['settings'], …)` callback, so the throw meant **`installSection` never ran and the `dock-flash` settings namespace was never registered at all** — every setting silently reverted to its composition default.
 
-When adding a host-side dependency, import it statically and declare it in `package.json`. When the module is DSH's rather than yours, see the dsh-http-proxy notes in the System proxy section — resolution alone is not enough there.
+When adding a host-side dependency, import it statically and declare it in `package.json`. When the module is DSH's rather than yours (e.g. `@deepseek-ai/dsh-http-proxy` for the extracted `dsh-flash-proxy` plugin), resolve it through a dynamic-import helper that finds DSH's own copy — see [docs/architecture-notes.md](docs/architecture-notes.md).
 
 ### 12. Session Event Token Source Must Subscribe to Session List Unconditionally
 
@@ -707,7 +669,7 @@ case could be turned OFF but never back ON. Details: [docs/skin-system.md](docs/
 | `select` | `getValue()`, `setValue(any)`, `options` | Dropdown select |
 | `buttongroup` | `getValue()`, `setValue(any)`, `options` | Button group |
 | `action` | `run()` | Action button |
-| `log` | `getLines()` | Read-only multi-line output block. Optional `hideWhenEmpty` (render nothing while there are no lines), `getMeta()` (right-aligned header status), `emptyText()`, `onClear()` + `clearTitle` (renders a ✕ button). See "System proxy" in Architecture |
+| `log` | `getLines()` | Read-only multi-line output block. Optional `hideWhenEmpty` (render nothing while there are no lines), `getMeta()` (right-aligned header status), `emptyText()`, `onClear()` + `clearTitle` (renders a ✕ button) |
 
 ### Optional switch fields
 
@@ -716,7 +678,7 @@ Common to every type: `icon`, `order`, `group`, `label` (string, or `() => strin
 
 `cluster: '<label>'` makes switches sharing a label **one unit** — one card, one ▲▼ pair while
 reordering, a fixed internal order (their `order`). Use it for controls whose meaning depends on
-staying together; the System proxy controls are the case that motivated it. Its members stay
+staying together; co-dependent selects are the case that motivated it. Its members stay
 registered and are only *folded* — never gated out by `visible`, never removed — because a block that
 changes shape is the problem the fold exists to solve. A cluster is never a grid item
 (`isGridToggle()`). **The mechanics live in one place**:
@@ -735,7 +697,7 @@ the **row** level and **only in the normal view**; both editing modes list every
 because one that is not drawn cannot be ordered or hidden. The normal view also drops a group that
 would draw no rows, and `renderSwitch` re-checks unless passed `force` (what the editing modes do).
 **A switch driven by `visible` must notify when its condition changes**, or it flips only on the next
-unrelated render — `_fetchProxyStatus()` does this via `notifyChange`.
+unrelated render — `notifyChange` is the mechanism (e.g. a fetch completing, a timer firing).
 
 Per renderer:
 
@@ -748,7 +710,7 @@ Per renderer:
 | `hideLabel` | `action` | Drop the title column and let the button take the whole row. For an action whose button already carries its wording — Test Connection read "测试连接" twice, once as a title and once on the button. The definition keeps `label` either way: that is what the changelog and the panel name the entry with |
 | `getMeta`, `hideWhenEmpty`, `emptyText`, `onClear`, `clearTitle` | `log` | See the `log` row above. `hideWhenEmpty` renders nothing at all while `getLines()` is empty, instead of an empty box; `emptyText` is the placeholder used when it is *not* set |
 
-> **Don't hide a switch's own value behind `tooltip`.** The test URL was once both a subtitle *and* a tooltip of the same string: the tooltip added a hover target and no information, while the subtitle truncated the URL at exactly the part worth reading. If a value matters, give it `subtitleBlock`. `dock-flash:test-url` went further in 1.0.11 and dropped the line entirely — one step too far: with `custom` selected the select says only "Custom", so the address actually in force was the one thing the row did not show. It is back now (`subtitleBlock` + `subtitle: () => _resolveTestUrl()`), inside the proxy cluster's card.
+> **Don't hide a switch's own value behind `tooltip`.** A URL was once both a subtitle *and* a tooltip of the same string: the tooltip added a hover target and no information, while the subtitle truncated the URL at exactly the part worth reading. If a value matters, give it `subtitleBlock`. The `dsh-flash-proxy:test-url` switch (now in the extracted `dsh-flash-proxy` plugin) once dropped the line entirely — one step too far: with `custom` selected the select says only "Custom", so the address actually in force was the one thing the row did not show. It is back now (`subtitleBlock` + a resolver function), inside the proxy cluster's card.
 
 ### Registration Rules
 
@@ -810,7 +772,7 @@ and passed on a button nobody could click. Full procedure:
 ### Key Observation Points
 
 - **Browser DevTools console**: `[dock-flash]` prefixed logs for client-side events
-- **Host process console**: `[dock-flash]` prefixed logs for proxy settings
+- **Host process console**: `[dock-flash]` prefixed logs for host-side events
 - **localStorage**: Check `dock-flash:active-skin` key for skin persistence
 - **DOM**: Inspect `<style data-plugin>`, `<style data-skin-chrome>`, and `data-dsh-*` attributes for skin state
 
@@ -846,7 +808,6 @@ mismatch, and the `_skinBodyAttrs` cases — are in **[docs/architecture-notes.m
 | `@deepseek-ai/cordis` >=4.0.0-rc.1 <5.0.0-0 \|\| >=4.0.1-0 <5.0.0-0 | peer | Plugin framework | Required |
 | `@deepseek-ai/dsh-settings` | devDep | Settings service types (host half) | |
 | `@deepseek-ai/schemastery` | dep | Schema definition for settings | Required at runtime — the host half **statically imports** it (default export; there is no named `Schema`). It must stay a real dependency: an ESM import of a missing package fails at load, unlike the old silent `require` in a try/catch |
-| `@deepseek-ai/dsh-http-proxy` | **not declared** | Re-installs the undici global dispatcher; answers `proxyRouteFor` | Ships nested inside the DSH install and is deliberately *not* a dependency of this plugin. Loaded through `loadProxyModule()`, which resolves DSH's own copy — see the System proxy section |
 
 > **Peer ranges must carry an explicit prerelease branch — one per tuple whose prereleases must
 > resolve**, or a range that merely looks broad silently excludes the harness's prerelease builds and
