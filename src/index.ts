@@ -6,15 +6,14 @@
 //
 // Host-side responsibilities:
 // - Registers the 'dock-flash' settings namespace so the client can
-//   persist the proxy-mode and test-URL selections via ctx.remote.settings.
-// - Watches the 'proxyMode' setting and re-installs the undici global
-//   dispatcher via @deepseek-ai/dsh-http-proxy so outbound requests respect
-//   the user's NO_PROXY choice.
-// - Exposes HTTP routes for the client to query proxy status and test
-//   the connection (improvements #4, #5, #6).
-// - Owns the *test target* (testUrl) and runs the diagnostic connectivity
-//   probe: redirect chain, response headers, body size/snippet, proxy route
-//   decision, and the underlying socket error code (cause.code).
+//   persist panel preferences (order, active skin, trigger position, etc.)
+//   and alert thresholds via ctx.remote.settings.
+// - Exposes HTTP routes for the client to query host-side alert queue,
+//   profile inventory, the live plugin switch, and a health heartbeat.
+//
+// (The system proxy subsystem has been extracted into the `dsh-flash-proxy`
+// plugin — proxy mode, NO_PROXY policy, testUrl, connection diagnostics,
+// and the five `dsh-flash-proxy:*` QuickControl switches now live there.)
 //
 // This half is ESM (`"type": "module"`, and DSH's own entry is ESM too), so
 // `require` does not exist here. Everything that used to be a lazy `require()`
@@ -45,7 +44,7 @@ export interface FlashConfig {
    *
    * A user preference, not a browser preference: it survives a different
    * browser, a cleared cache and a second machine, because it lives in
-   * settings.yaml next to proxyMode rather than in localStorage. Shape mirrors
+   * settings.yaml rather than in localStorage. Shape mirrors
    * the client's `dock-flash:panel-order` value exactly — `builtin` and `ext`
    * hold group keys, `switches` maps a scope-qualified group key to its unit
    * keys.
@@ -572,8 +571,8 @@ export function apply(ctx: Context, config: FlashConfig) {
   /**
    * Read a launch-environment variable the way the policy resolved it: the
    * launch snapshot first (it merges process / project-env / user-env),
-   * process.env as fallback. The proxy variables are the main caller; the
-   * profile inventory reads DSH_PROFILE_DIR / DSH_HOME through it too.
+   * process.env as fallback. The profile inventory reads DSH_PROFILE_DIR /
+   * DSH_HOME through it too.
    */
   function readLaunchEnv(names: string[]): string | null {
     const snapshot = launchEnvironment()
@@ -768,8 +767,8 @@ export function apply(ctx: Context, config: FlashConfig) {
   // updates the `Volatile<T>` references in `config` and then emits
   // `loader/volatile-update` with the paths that changed. Each subsystem
   // subscribes to ITS OWN paths only, so a change in one never walks another's
-  // code path — this is the host-side decoupling of proxy (B) and
-  // alerts (D): there is no one shared handler that drives both.
+  // code path — proxy (B) has been extracted to `dsh-flash-proxy`, so
+  // only alerts (D) remain here.
 
 
   // D · System alerts — no reconfigure needed. Alert routes read
@@ -876,10 +875,10 @@ export function apply(ctx: Context, config: FlashConfig) {
     }), 'dock-flash: POST /plugins/dock-flash/clear-alerts')
 
     // D-owned connectivity heartbeat — the client's network-alert provider
-    // polls THIS route to gauge latency, not B's /proxy-status (K6 dropped).
+    // polls THIS route to gauge latency (proxy status is in `dsh-flash-proxy`).
     // A probe that answers quickly regardless of proxy state is exactly what a
     // latency alarm wants: it isolates the local host reachability signal from
-    // whether a proxy is configured, so the two subsystems share no route.
+    // proxy configuration, so the two subsystems share no route.
     // Also returns Node.js process.memoryUsage() so the client's memory config
     // popup can display host-side memory metrics.
     wsCtx.effect(() => wsCtx.webServer.register({

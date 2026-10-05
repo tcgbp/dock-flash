@@ -412,8 +412,8 @@ export function apply(ctx, config) {
     /**
      * Read a launch-environment variable the way the policy resolved it: the
      * launch snapshot first (it merges process / project-env / user-env),
-     * process.env as fallback. The proxy variables are the main caller; the
-     * profile inventory reads DSH_PROFILE_DIR / DSH_HOME through it too.
+     * process.env as fallback. The profile inventory reads DSH_PROFILE_DIR /
+     * DSH_HOME through it too.
      */
     function readLaunchEnv(names) {
         const snapshot = launchEnvironment();
@@ -621,8 +621,8 @@ export function apply(ctx, config) {
     // updates the `Volatile<T>` references in `config` and then emits
     // `loader/volatile-update` with the paths that changed. Each subsystem
     // subscribes to ITS OWN paths only, so a change in one never walks another's
-    // code path — this is the host-side decoupling of proxy (B) and
-    // alerts (D): there is no one shared handler that drives both.
+    // code path — proxy (B) has been extracted to `dsh-flash-proxy`, so
+    // only alerts (D) remain here.
     // D · System alerts — no reconfigure needed. Alert routes read
     // config.hostAlertQueueCap / hostAlertMaxAge via .get() at request time,
     // and client-side alert providers read _alertPref() at poll time, so a
@@ -721,10 +721,10 @@ export function apply(ctx, config) {
             },
         }), 'dock-flash: POST /plugins/dock-flash/clear-alerts');
         // D-owned connectivity heartbeat — the client's network-alert provider
-        // polls THIS route to gauge latency, not B's /proxy-status (K6 dropped).
+        // polls THIS route to gauge latency (proxy status is in `dsh-flash-proxy`).
         // A probe that answers quickly regardless of proxy state is exactly what a
         // latency alarm wants: it isolates the local host reachability signal from
-        // whether a proxy is configured, so the two subsystems share no route.
+        // proxy configuration, so the two subsystems share no route.
         // Also returns Node.js process.memoryUsage() so the client's memory config
         // popup can display host-side memory metrics.
         wsCtx.effect(() => wsCtx.webServer.register({

@@ -29,9 +29,6 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 | 📐 Layout | Trigger Button Size | slider | 24–64 px — how big the standalone ⚡ entry point is drawn, glyph and corner radius included. The draggable **Conversation top-right** position allows the full range; the slot positions cap at **48px** so the button still fits the input row, and the row shows the size actually in force. The minimum is the previous fixed size, so the control only ever enlarges it | ✅ |
 | 🖱️ Right-click | *(the draggable ⚡ itself)* | menu | **Reset position** / current offset / version (click to copy a diagnostic) / **layer** and **rest opacity** presets. Not a switch in the panel: the layer and the opacity only apply to the floating button, and the menu deliberately does not repeat `trigger-size`, `trigger-position` or `close-on-blur` | ✅ |
 | ⚙️ System | Language | buttongroup | 中文 / English — switches DSH global UI language | ✅ |
-| ⚙️ System | System Proxy | select | All Proxy / API Bypass / All Bypass / Custom — fine-grained NO_PROXY control. Custom is validated: host / domain suffix / IP / host:port, comma- or space-separated; blank and CIDR are rejected | ✅ |
-| ⚙️ System | Test URL | select | Google 204 / GitHub / DeepSeek API / Custom — the address the connection test probes, with the effective URL printed on its own wrapping line beneath the select (so a custom address is readable). Lives in the proxy cluster, which can be folded | ✅ |
-| ⚙️ System | Diagnostics Log | log | Read-only multi-line report of the **latest** connection test — one fact per line. Appears the instant Test Connection is pressed, starting with the address being tried, and is replaced (never appended) as the run progresses; ✕ clears it, no 30s expiry | ✅ |
 
 > **The Layout group only renders in standalone mode.** In workbench mode `close-on-blur` exists solely as the panel-header toggle, so no built-in switch carries `group: 'layout'` and the category is skipped entirely.
 
@@ -47,57 +44,28 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 - 🛡️ **Error Boundaries** — All panel components are wrapped in `PanelErrorBoundary` to prevent render errors from crashing the entire dock-base WorkbenchRoot
 - 🔌 **Standalone Mode** — Works without dock-base: a ⚡ trigger injected into the configured conversation slot opens a floating popup panel
 - 📝 **Recent Changes** — Auto-records switch operations (30s TTL), displayed in "old value → new value" format
-- 🩺 **Connection Diagnostics** — A read-only multi-line log of the **latest** proxy test (route taken, redirect chain, timings, body size, socket error code), one fact per line. It appears the moment the test starts — first line naming the address being tried — and is **replaced** by the full report when the answer lands, never appended to
-- 🧮 **Reorderable and hideable Panel** — A ⇅ icon in the Workbench and Extensions tab headers opens a reorder mode: ▲▼ move groups and switches, and the result is saved in your DSH profile, so it follows you to another browser or machine. Beside it, a ◉ icon opens a **visibility mode** with a ●/○ box on every row: untick a switch you never use and it disappears from the panel, while staying listed here so you can bring it back. **Both configuration pages list every registered control**, including any a plugin is standing down right now — the turn-navigation switch while DSH's rail is absent, the proxy probe while no proxy is configured — and those rows are dimmed with the reason on hover, so a control that does not apply at the moment can still be ordered or hidden. The two modes are mutually exclusive — entering one hides the other’s button — and each has its own ↺ reset, so restoring your order never un-hides a row and showing everything never reshuffles your order. Switches that declare a `cluster` move as one unit with a fixed internal order and are drawn as one card whose members fold — the System proxy controls are the case that motivated it, since they only apply once a proxy is configured
+- 🩺 **Connection Diagnostics** — *(moved to the `dsh-flash-proxy` plugin)* — NO_PROXY policy, connection test, and diagnostics log
+- 🧮 **Reorderable and hideable Panel** — A ⇅ icon in the Workbench and Extensions tab headers opens a reorder mode: ▲▼ move groups and switches, and the result is saved in your DSH profile, so it follows you to another browser or machine. Beside it, a ◉ icon opens a **visibility mode** with a ●/○ box on every row: untick a switch you never use and it disappears from the panel, while staying listed here so you can bring it back. **Both configuration pages list every registered control**, including any a plugin is standing down right now — and those rows are dimmed with the reason on hover, so a control that does not apply at the moment can still be ordered or hidden. The two modes are mutually exclusive — entering one hides the other’s button — and each has its own ↺ reset, so restoring your order never un-hides a row and showing everything never reshuffles your order. Switches that declare a `cluster` move as one unit with a fixed internal order and are drawn as one card whose members fold
 
 ### Host-side Features
 
 `src/index.ts` (host half) provides:
 
-- Registers the `dock-flash` settings namespace (`proxyMode` string + `customNoProxy` string + `testUrl` string)
-- Listens for proxy mode changes and re-installs the undici global dispatcher via `@deepseek-ai/dsh-http-proxy`, so outbound `fetch()` requests respect the user's NO_PROXY choice
+- Registers the `dock-flash` settings namespace (panel preferences, trigger preferences, alert thresholds)
 - Exposes HTTP routes:
-  - `GET /plugins/dock-flash/proxy-status` — returns current `proxyMode`, `customNoProxy`, `testUrl`, and the actual `NO_PROXY` env value
-  - `POST /plugins/dock-flash/test-connection` — runs the diagnostic connectivity probe; an optional `{ "url": "..." }` body overrides the stored target
+  - `GET /plugins/dock-flash/host-alerts` — drains the server-push alert queue
+  - `POST /plugins/dock-flash/push-alert` — pushes an alert into the queue
+  - `POST /plugins/dock-flash/clear-alerts` — clears the alert queue
+  - `GET /plugins/dock-flash/health` — lightweight heartbeat + Node.js memory stats
+  - `GET /plugins/dock-flash/profile-packages` — profile inventory for skin discovery
+  - `POST /plugins/dock-flash/set-plugin-entry` — live plugin enable/disable via patch edit
 
-#### Connection Diagnostics
-
-`POST /plugins/dock-flash/test-connection` returns a structured report, not a bare pass/fail:
-
-| Field | Meaning |
-| --- | --- |
-| `proxy` | `{ mode, noProxy, httpProxy, proxied, routeError }` — how `dsh-http-proxy` would route this exact URL |
-| `redirects` | the redirect chain, walked one hop at a time (`redirect: 'manual'`), plus `redirectLimitHit` when capped |
-| `status` / `statusText` | final response status — **any** HTTP response counts as `ok`, because it proves the network path works |
-| `headersMs` / `bodyMs` / `elapsedMs` | time to headers, time to body, and total |
-| `bodyBytes` / `bodySnippet` | body size, plus the first 200 bytes of a textual body — which is where a corporate proxy's own "blocked" page shows up |
-| `error` | `{ name, message, code, causeName, causeMessage, causeCode, causeErrno }` — the nested undici `cause` is what carries `ENOTFOUND`, `ECONNREFUSED`, `UND_ERR_CONNECT_TIMEOUT`, `DEPTH_ZERO_SELF_SIGNED_CERT`, … |
-
-The panel renders this into the **Diagnostics Log** block, one fact per line. The block appears as soon as the test starts — its first line names the address being tried — and holds the **latest run only**: each test replaces it rather than appending, because the panel is short and a wall of history buries the run just asked for.
-
-> **The test target is a setting, never a constant.** `testUrl` defaults to `https://www.google.com/generate_204` and is stored in the DSH profile on disk, so an internal endpoint can be configured without appearing in this repository.
-
-#### Proxy Mode Options
-
-| Mode | NO_PROXY | Effect |
-| --- | --- | --- |
-| All Proxy | *(removed)* | All traffic goes through the system proxy |
-| API Bypass | `api.deepseek.com,chat.deepseek.com` | DeepSeek API calls bypass the proxy |
-| All Bypass | `*` | All traffic bypasses the proxy (direct connection) |
-| Custom | *(user-defined)* | User specifies the NO_PROXY value via a prompt |
-
-#### Proxy Scope
-
-> **This setting only affects `fetch()` requests within the DSH Node.js process.**
->
-> - ✅ **Affected**: Node.js built-in `fetch()` (undici), DSH API calls, MCP HTTP transport, pi-ai provider, and any SDK that reaches `globalThis.fetch`
-> - ❌ **Not affected**: Requests via `node:http`/`node:https` modules (e.g. OTLP telemetry), SDKs that build their own transport (e.g. E2B), the operating system's other applications, browsers, or other terminal sessions
-> - The setting works identically on Windows, macOS, and Linux — it modifies `process.env` and the undici global dispatcher, both of which are Node.js abstractions with no OS-specific behavior
+> **System proxy features have moved** to the [`dsh-flash-proxy`](https://github.com/tcgbp/dsh-flash-proxy) plugin — proxy mode, NO_PROXY policy, `testUrl`, connection diagnostics, and the five `dsh-flash-proxy:*` QuickControl switches now live there.
 
 ## Structure
 
 ```
-src/index.ts      HOST half — settings namespace + proxy mode + connection test (tsc → dist/)
+src/index.ts      HOST half — settings namespace + alert routes + profile inventory (tsc → dist/)
 lib/client.js     BROWSER half — quickControl registry + dynamic panel + skin system + i18n
 cordis.patch.yml  bundle layer — inserts host rows into profile
 ```

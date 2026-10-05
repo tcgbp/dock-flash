@@ -27,9 +27,6 @@
 | 📐 布局 | 入口按钮大小 | slider | 24–64 px —— 独立模式 ⚡ 入口按钮画多大，图标与圆角按比例同步。可拖动的「**对话区右上角**」位置可用满整个区间；槽位位置上限 **48px**，以免撑坏输入框那一行，且滑块显示的是**实际生效值**。下限就是此前的固定尺寸，所以这个控件只会把入口调大 | ✅ |
 | 🖱️ 右键 | *（可拖动的 ⚡ 按钮本身）* | 菜单 | **重置位置** / 当前位置 / 版本（点击复制诊断信息）/ **层级** 与 **静止时深浅** 预设。它不是面板里的开关：层级与深浅只作用于这个悬浮按钮，且菜单有意不重复 `trigger-size`、`trigger-position`、`close-on-blur` | ✅ |
 | ⚙️ 系统 | 语言 | buttongroup | 中文 / English，切换 DSH 全局 UI 语言 | ✅ |
-| ⚙️ 系统 | 系统代理 | select | 全部代理 / 仅 API 绕过 / 全部绕过 / 自定义 — 细粒度 NO_PROXY 控制。自定义会校验取值：主机名 / 域名后缀 / IP / 主机:端口，逗号或空格分隔；空值与 CIDR 会被拒绝 | ✅ |
-| ⚙️ 系统 | 测试 URL | select | Google 204 / GitHub / DeepSeek API / 自定义 —— 测试连接所探测的地址，并在下拉框下方单独一行显示当前生效的 URL（自定义地址因此可见）。归属代理簇，可折叠收起 | ✅ |
-| ⚙️ 系统 | 诊断日志 | log | 只读多行日志，显示**最近一次**测试结果 —— 一行一件事。按下「测试连接」的瞬间即出现，首行就是正在尝试的地址，随后被完整报告**替换**（从不追加）；点 ✕ 清空，不受 30 秒 TTL 限制 | ✅ |
 
 > **「布局」分组只在独立模式出现。** 集成模式下 `close-on-blur` 只以面板标题栏按钮的形式存在，因此没有任何内置开关带 `group: 'layout'`，该分类会被整体跳过。
 
@@ -45,57 +42,28 @@
 - 🛡️ **错误边界** — 所有面板组件包裹在 `PanelErrorBoundary` 中，防止渲染错误崩溃整个 dock-base WorkbenchRoot
 - 🔌 **独立运行** — 无需 dock-base 即可运行：⚡ 触发按钮注入到所选会话槽位，点击展开悬浮面板
 - 📝 **最近修改** — 自动记录开关操作（30 秒 TTL），以 "旧值 → 新值" 格式展示
-- 🩺 **连接诊断** — 只读多行日志，显示**最近一次**代理测试（链路走向、重定向链、耗时、响应体大小、socket 错误码），一行一件事。按下按钮的瞬间即出现（首行是正在尝试的地址），答案返回后被完整报告**替换**，从不追加
-- 🧮 **面板排序与隐藏** — 工作台与扩展页签头部的 ⇅ 图标进入排序模式：用 ▲▼ 调整分组与开关的先后，结果保存在 DSH 配置里，换浏览器或换机器都会跟着走。旁边的 ◉ 图标进入**显示/隐藏模式**：每一行都有一个 ●/○ 勾选框，取消勾选就把不用的开关从面板上收起，但它仍列在这里，随时可以放回来。**两个配置页都会列出全部已注册控件**，包括插件当前自行停用的那些 —— DSH 轨道不在时的「时间线靠左」、没配代理时的代理探测 —— 这些行会灰显并在悬停时说明原因，所以一时用不上的控件同样可以排序或隐藏。两个模式互斥 —— 进入一个另一个的入口就不再显示 —— 且各自有独立的 ↺ 重置：恢复顺序不会把隐藏的行放出来，恢复显示也不会打乱你的顺序。声明了 `cluster` 的开关整簇作为一个单位移动、簇内顺序固定，并渲染成一张卡片、成员可折叠 —— 系统代理那组就是动因：它们要配置了代理才起作用
+- 🩺 **连接诊断** — *（已迁至 `dsh-flash-proxy` 插件）* — NO_PROXY 策略、连接测试、诊断日志
+- 🧮 **面板排序与隐藏** — 工作台与扩展页签头部的 ⇅ 图标进入排序模式：用 ▲▼ 调整分组与开关的先后，结果保存在 DSH 配置里，换浏览器或换机器都会跟着走。旁边的 ◉ 图标进入**显示/隐藏模式**：每一行都有一个 ●/○ 勾选框，取消勾选就把不用的开关从面板上收起，但它仍列在这里，随时可以放回来。**两个配置页都会列出全部已注册控件**，包括插件当前自行停用的那些 —— 这些行会灰显并在悬停时说明原因，所以一时用不上的控件同样可以排序或隐藏。两个模式互斥 —— 进入一个另一个的入口就不再显示 —— 且各自有独立的 ↺ 重置：恢复顺序不会把隐藏的行放出来，恢复显示也不会打乱你的顺序。声明了 `cluster` 的开关整簇作为一个单位移动、簇内顺序固定，并渲染成一张卡片、成员可折叠
 
 ### Host 端功能
 
 `src/index.ts`（Host 半）提供：
 
-- 注册 `dock-flash` 设置命名空间（`proxyMode` 字符串 + `customNoProxy` 字符串 + `testUrl` 字符串）
-- 监听代理模式变更，通过 `@deepseek-ai/dsh-http-proxy` 重新安装 undici 全局 dispatcher，使出站 `fetch()` 请求遵循用户设定的 NO_PROXY 规则
+- 注册 `dock-flash` 设置命名空间（面板偏好、触发器偏好、告警阈值）
 - 提供 HTTP 路由：
-  - `GET /plugins/dock-flash/proxy-status` — 返回当前 `proxyMode`、`customNoProxy`、`testUrl` 及实际 `NO_PROXY` 环境变量值
-  - `POST /plugins/dock-flash/test-connection` — 执行诊断式连通性探测；可选用 `{ "url": "..." }` 请求体覆盖已存目标
+  - `GET /plugins/dock-flash/host-alerts` — 排空服务端推送告警队列
+  - `POST /plugins/dock-flash/push-alert` — 向队列推送一条告警
+  - `POST /plugins/dock-flash/clear-alerts` — 清空告警队列
+  - `GET /plugins/dock-flash/health` — 轻量心跳 + Node.js 内存统计
+  - `GET /plugins/dock-flash/profile-packages` — 配置清单，用于皮肤发现
+  - `POST /plugins/dock-flash/set-plugin-entry` — 通过 patch 编辑实时启用/禁用插件
 
-#### 连接诊断
-
-`POST /plugins/dock-flash/test-connection` 返回的是一份结构化诊断报告，而不是简单的成功/失败：
-
-| 字段 | 含义 |
-| --- | --- |
-| `proxy` | `{ mode, noProxy, httpProxy, proxied, routeError }` —— `dsh-http-proxy` 会如何路由这个具体 URL |
-| `redirects` | 重定向链，逐跳手动跟随（`redirect: 'manual'`）记录；超出上限时 `redirectLimitHit` 为真 |
-| `status` / `statusText` | 最终响应状态 —— **只要能拿到 HTTP 响应就算 `ok`**，因为它已经证明网络通路是通的 |
-| `headersMs` / `bodyMs` / `elapsedMs` | 响应头耗时、响应体耗时、总耗时 |
-| `bodyBytes` / `bodySnippet` | 响应体大小，以及文本型响应体前 200 字节 —— 企业代理自己的「已拦截」页面就出现在这里 |
-| `error` | `{ name, message, code, causeName, causeMessage, causeCode, causeErrno }` —— 内层 undici `cause` 才携带 `ENOTFOUND`、`ECONNREFUSED`、`UND_ERR_CONNECT_TIMEOUT`、`DEPTH_ZERO_SELF_SIGNED_CERT` 等真实原因 |
-
-面板把这份报告渲染成 **诊断日志** 区块，一行一件事。测试一开始该区块就出现（首行就是正在尝试的地址），并且**只保留最近一次**：每次测试都整体替换而非追加 —— 面板很短，堆积的历史会埋掉你刚问的那一次。
-
-> **测试目标是一个设置项，绝不是一个常量。** `testUrl` 默认 `https://www.google.com/generate_204`，保存在磁盘上的 DSH 配置里，因此内网地址可以配置而不会出现在本仓库中。
-
-#### 代理模式选项
-
-| 模式 | NO_PROXY | 效果 |
-| --- | --- | --- |
-| 全部代理 | *（移除）* | 所有流量走系统代理 |
-| 仅 API 绕过 | `api.deepseek.com,chat.deepseek.com` | DeepSeek API 请求绕过代理 |
-| 全部绕过 | `*` | 所有流量绕过代理（直连） |
-| 自定义 | *（用户自定义）* | 用户通过输入框指定 NO_PROXY 值 |
-
-#### 代理作用范围
-
-> **此设置仅影响 DSH 进程内的 `fetch()` 请求。**
->
-> - ✅ **受影响**：Node.js 内置 `fetch()`（undici）、DSH API 调用、MCP HTTP 传输层、pi-ai provider 及所有经过 `globalThis.fetch` 的 SDK
-> - ❌ **不受影响**：通过 `node:http`/`node:https` 模块发出的请求（如 OTLP 遥测）、自建传输层的 SDK（如 E2B）、操作系统的其他应用程序、浏览器或其他终端会话
-> - 此设置在 Windows、macOS、Linux 上行为一致 — 修改的是 `process.env` 和 undici 全局 dispatcher，均为 Node.js 抽象层，无操作系统差异
+> **系统代理功能已迁至** [`dsh-flash-proxy`](https://github.com/tcgbp/dsh-flash-proxy) 插件 —— 代理模式、NO_PROXY 策略、`testUrl`、连接诊断及五个 `dsh-flash-proxy:*` QuickControl 开关现已在该插件中。
 
 ## 结构
 
 ```
-src/index.ts      HOST 半 — 设置命名空间 + 代理模式 + 连接测试（tsc → dist/）
+src/index.ts      HOST 半 — 设置命名空间 + 告警路由 + 配置清单（tsc → dist/）
 lib/client.js     BROWSER 半 — quickControl 注册表 + 动态面板 + 皮肤系统 + i18n
 cordis.patch.yml  bundle layer — 将宿主行插入 profile
 ```
