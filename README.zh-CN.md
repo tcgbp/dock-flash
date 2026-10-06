@@ -64,7 +64,7 @@
 > 内存/GC 监控在 `dsh-flash-mem-mon`，网络审计在 `dsh-flash-net-mon`。每个插件拥有自己的设置命名空间，
 > 通过 `dockFlashAlerts` 服务注册告警 provider、通过 `quickControl` 注册开关，因此会带着各自的 ⚙ 配置页
 > 出现在本面板中。dock-flash 只保留共享告警注册表、宿主推送告警队列，以及让这些伴随插件告警显示
-> 来源标签与配置链接的映射表。
+> 来源标签与配置链接的映射表。**它们是独立的安装项 —— 见 [安装](#安装)。**
 
 ## 结构
 
@@ -302,18 +302,45 @@ setTimeout(() => {
 
 ## 安装
 
-需要 DSH Web 环境：
+需要 DSH Web 环境。插件已发布在 npm 上，所以**包名本身就是完整的安装参数**，不需要先克隆仓库：
 
 ```sh
 # 安装本插件
-dsh plugin --profile my-profile add ./dock-flash
+dsh plugin --profile my-profile add dock-flash
 
 # （可选）安装 dock-base 以获得完整的工作台集成
 dsh plugin --profile my-profile add dock-base
 
-# 启动
+# 启动 —— 或在安装任何新插件之后重启
 dsh --profile my-profile
 ```
+
+### 配套插件 —— 这些也要装（2.0.0 及以后）
+
+从 2.0.0 起 dock-flash **自身不再包含任何监控**。上下文、内存、网络监控与系统代理控制各自拆成了
+独立包，而且**从 1.6.x 升级并不会把它们带过来**：没装的话面板里干脆没有那些行，也没有任何提示。
+
+```sh
+dsh plugin --profile my-profile add \
+  dsh-flash-ctx-mon dsh-flash-mem-mon dsh-flash-net-mon dsh-flash-proxy
+```
+
+| 包 | 提供什么 |
+|---|---|
+| `dsh-flash-ctx-mon` | **上下文监控** —— 从 DSH 会话事件读取精确 token 用量，三档递进阈值与模型窗口映射，外加会话技能芯片 |
+| `dsh-flash-mem-mon` | **内存 / GC 监控** —— RSS、增长率与 Major GC 频率 |
+| `dsh-flash-net-mon` | **网络监控与出站审计** —— 连通性心跳，以及可选的 fetch 追踪（逐请求风险评分） |
+| `dsh-flash-proxy` | **系统代理控制** —— 代理模式、`NO_PROXY` 策略、`testUrl` 与连接诊断 |
+
+它们各自通过本面板的服务注册自己的开关、各自持有独立的设置命名空间，所以都以普通行的形式出现
+—— 三个监控在**系统告警**簇里，代理是独立的一簇。它们要求 dock-flash **≥ 1.5**（mem-mon 与
+net-mon 要求 ≥ 1.6，proxy 要求 ≥ 1.0.15），任何 2.x 都满足。
+
+**其它安装方式**（如果不想走 npm）：GitHub Release 的 tarball
+（`… add https://github.com/tcgbp/dock-flash/releases/latest/download/dock-flash.tgz`）、git
+（`… add github:tcgbp/dock-flash`）、或本地目录（`… add ./dock-flash`，用于开发：`lib/client.js`
+的改动能直接刷新生效）。DSH 的 **Plugins** 页面接受同样的包名，只是多一步：安装后按下
+**立即启用**。
 
 **无 dock-base**：dock-flash 以独立模式运行 — ⚡ 触发按钮注入到 `trigger-position` 开关所选中的会话槽位（默认：输入框右侧），大小由 `trigger-size` 决定（默认 24px；槽位位置最大 48px，可拖动的「对话区右上角」位置最大 64px）。点击展开快捷控制浮动面板（外观、布局（触发位置与大小）、系统开关）。共享槽位 `sidebar.footer.action` 有意不提供，因为其他插件也占用它。
 

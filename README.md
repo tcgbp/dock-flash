@@ -67,7 +67,8 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 > `dsh-flash-net-mon`. Each keeps its own settings namespace, registers its alert provider through the
 > `dockFlashAlerts` service and its switch through `quickControl`, so it appears in this panel with its
 > own ⚙ config page. dock-flash keeps the shared alert registry, the host-pushed alert queue, and the
-> label/link mappings that surface those companion alerts.
+> label/link mappings that surface those companion alerts. **They are separate installs — see
+> [Installation](#installation).**
 
 ## Structure
 
@@ -306,18 +307,48 @@ The panel includes built-in Chinese/English localization that auto-follows the D
 
 ## Installation
 
-Requires DSH Web environment:
+Requires a DSH Web environment. The plugin is on npm, so the **package name is the whole
+spec** — no checkout needed:
 
 ```sh
 # Install this plugin
-dsh plugin --profile my-profile add ./dock-flash
+dsh plugin --profile my-profile add dock-flash
 
 # (Optional) Install dock-base for full workbench integration
 dsh plugin --profile my-profile add dock-base
 
-# Start
+# Start — or restart, after installing anything new
 dsh --profile my-profile
 ```
+
+### Companion plugins — install these too (2.0.0 and later)
+
+Since 2.0.0 dock-flash owns **no monitor at all**. The context, memory and network monitors and the
+system-proxy controls each live in their own package now, and **upgrading from 1.6.x does not bring
+them along**: without them the panel simply has no such rows, and nothing says so.
+
+```sh
+dsh plugin --profile my-profile add \
+  dsh-flash-ctx-mon dsh-flash-mem-mon dsh-flash-net-mon dsh-flash-proxy
+```
+
+| Package | What it adds |
+|---|---|
+| `dsh-flash-ctx-mon` | **Context monitor** — precise token usage read from DSH session events, with three rising thresholds and the model-window map, plus the session skills chip |
+| `dsh-flash-mem-mon` | **Memory / GC monitor** — RSS, growth rate and Major GC frequency |
+| `dsh-flash-net-mon` | **Network monitor and outbound audit** — a connectivity heartbeat, plus an opt-in fetch tracer with a per-request risk score |
+| `dsh-flash-proxy` | **System proxy control** — proxy mode, `NO_PROXY` policy, `testUrl` and connection diagnostics |
+
+Each registers its own switch through this panel's services and keeps its own settings namespace, so
+they show up as ordinary rows — the three monitors in the **System Alerts** cluster, proxy as its own
+cluster. They need dock-flash **≥ 1.5** (`≥ 1.6` for mem-mon and net-mon, `≥ 1.0.15` for proxy), which
+any 2.x satisfies.
+
+**Other ways to install**, if npm is not what you want: a GitHub Release tarball
+(`… add https://github.com/tcgbp/dock-flash/releases/latest/download/dock-flash.tgz`), git
+(`… add github:tcgbp/dock-flash`), or a local checkout (`… add ./dock-flash` — for development, where
+`lib/client.js` is live on refresh). The DSH **Plugins** page accepts the same package name and adds
+one step: press **Enable now** after installing.
 
 **Without dock-base**: dock-flash runs in standalone mode — a ⚡ trigger button is injected into the conversation slot picked by the `trigger-position` switch (default: input right), drawn at the size set by `trigger-size` (default 24px, up to 48px in a slot or 64px at the draggable **Conversation top-right** position). Click it to open the quick control popup panel (Appearance, Layout — trigger position and size — and System switches). The shared `sidebar.footer.action` slot is deliberately not offered, because other plugins occupy it too.
 
