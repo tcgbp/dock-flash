@@ -2961,6 +2961,55 @@ console.log('\n=== 25. the tab glyphs: sliders / blocks / doc, and the bolt stay
     'LIGHTNING_ICON uses = ' + (code.match(/icon: LIGHTNING_ICON/g) || []).length)
 }
 
+
+console.log('\n=== 26. a style swap must not lose an edge (React diffs style objects KEY BY KEY) ===')
+{
+  // The reported defect: a tab header that had been OPEN and was then collapsed showed no bottom
+  // border, while a tab that rendered collapsed from a fresh mount was fine. Nothing in the CSS
+  // was wrong and no static render could show it, because the cause is the TRANSITION between two
+  // style objects:
+  //
+  //   open : { border: HAIRLINE, borderBottom: 'none', ... }
+  //   closed: { border: HAIRLINE, ... }                       <-- borderBottom key ABSENT
+  //
+  // React skips a key whose value is unchanged (`border` is byte-identical in both), and writes
+  // `''` for a key present in the old object but absent from the new one. `''` clears the
+  // border-bottom longhands the `border` shorthand had set, and since `border` is never re-applied,
+  // nothing puts the edge back.
+  //
+  // MEASURED in headless Chrome (identical markup, 2x): fresh card `top=1px bottom=1px`; the same
+  // card reached by open -> collapsed `top=1px bottom=0px`, with no `border-bottom` in its inline
+  // style. With the fix, through the same sequence: `top=1px bottom=1px`.
+  //
+  // So the assertion is the INVARIANT, not the symptom: the objects that swap on one element must
+  // declare the same border keys, and the collapsed header must re-assert its own bottom edge.
+  const borderKeys = (name) => {
+    const m = code.match(new RegExp('\\n      ' + name + ': \\{([\\s\\S]*?)\\n      \\},'))
+    if (!m) return null
+    return [...m[1].matchAll(/\n\s+(border[A-Za-z]*):/g)].map((x) => x[1]).sort()
+  }
+  const closed = borderKeys('tabPageHeaderClosed')
+  const closedLast = borderKeys('tabPageHeaderClosedLast')
+  const open = borderKeys('tabPageHeaderOpen')
+
+  check('the tab-header styles that SWAP on one element declare the same border keys',
+    !!closed && !!open && !!closedLast
+      && closed.join() === open.join() && closedLast.join() === open.join(),
+    'closed=[' + closed + '] closedLast=[' + closedLast + '] open=[' + open + ']')
+
+  check('...so the collapsed header re-asserts its own bottom edge instead of losing it',
+    (code.match(/borderBottom: TAB_HAIRLINE,/g) || []).length === 2,
+    'explicit borderBottom declarations = ' + (code.match(/borderBottom: TAB_HAIRLINE,/g) || []).length)
+
+  check('...and all four tab styles take the hairline from the ONE constant',
+    ['tabPageHeaderClosed', 'tabPageHeaderClosedLast', 'tabPageHeaderOpen', 'tabPageBodyJoined']
+      .every((n) => {
+        const m = code.match(new RegExp('\\n      ' + n + ': \\{([\\s\\S]*?)\\n      \\},'))
+        return m && m[1].includes('TAB_HAIRLINE')
+      }),
+    'TAB_HAIRLINE references = ' + (code.match(/TAB_HAIRLINE/g) || []).length)
+}
+
 console.log('\n' + (failures.length === 0 ? '✅ ALL CHECKS PASSED' : '❌ FAILURES: ' + failures.join('; ')))
 // The bundle installs its own intervals (skin refresh, i18n watch), so exit
 // explicitly rather than waiting for the event loop to drain.
