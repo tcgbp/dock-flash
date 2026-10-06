@@ -2610,6 +2610,132 @@ console.log('\n=== 22. activating a handle-less skin IN-PAGE still reloads ===')
     await new Promise((r) => setTimeout(r, 250))
   }
 }
+
+
+console.log('\n=== 23. a describe() that is NOT a promise must not kill the plugin ===')
+{
+  // THE FIELD BUG THIS PINS. `settings.describe()` has TWO implementations under
+  // one name:
+  //   - the WIRE form, where the typert gateway wraps the call and returns a
+  //     Promise (what every other section here stubs);
+  //   - the DIRECT form, where `ctx.remote.settings` is the host controller
+  //     itself. `SettingsController.describe()` in
+  //     `@deepseek-ai/dsh-api-settings-controller` is SYNCHRONOUS and returns
+  //     `{ writable, hasDocument, namespaces }` — and it can THROW instead, from
+  //     its own `provider()` ("settings service is absent: mount
+  //     @deepseek-ai/dsh-settings …").
+  //
+  // So `settings.describe().then(…)` threw
+  // `TypeError: settings.describe(...).then is not a function` — reproduced
+  // verbatim by this section against the unfixed build.
+  //
+  // WHY IT LOOKS LIKE THE PLUGIN DISAPPEARED, and why the assertions below are
+  // about COMPLETION rather than about a throw:
+  //   - dock-flash's own `apply()` wraps its body in try/catch and logs
+  //     "[dock-flash] apply failed:". The throw therefore does NOT fail the
+  //     fiber — it ABORTS THE REMAINDER of apply(), which at that point has not
+  //     yet called `ctx.provide('quickControl', …)`, registered a single switch,
+  //     or mounted the panel. The plugin still reads as loaded, and nothing of
+  //     it is on screen.
+  //   - the companion plugins (ctx-mon / mem-mon / net-mon) use `async apply()`
+  //     with no such catch, so there the same throw is a rejected promise and
+  //     the Cordis fiber goes FAILED: the plugin never activates at all.
+  // Two paths, one symptom. `provided.quickControl` is the cheap way to assert
+  // "apply got past the preference load", and it is the assertion that fails
+  // without the fix.
+
+  const DIRECT_VIEW = {
+    writable: true,
+    hasDocument: true,
+    namespaces: [{
+      ns: 'dock-flash',
+      revision: 7,
+      value: { panelOrder: {}, activeSkin: '', triggerPosition: 'conversation.overlay', triggerOverlayOffset: { dx: 20, dy: 30 }, triggerSize: 48, triggerLayer: 9, overlayOpacity: 0.85 },
+    }],
+  }
+
+  function sandboxWithDescribe (describeFn) {
+    const store = new Map()
+    const body = new El('body')
+    const doc = Object.assign({}, documentStub, {
+      body,
+      querySelectorAll: (s) => [...body.querySelectorAll(s), ...head.querySelectorAll(s)],
+      getElementById: (id) => body.descendants().find((e) => e.id === id) || null,
+      addEventListener() {}, removeEventListener() {},
+      __fire() {},
+    })
+    body.isConnected = true
+    const sb = Object.assign({}, sandbox, {
+      document: doc,
+      localStorage: {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: (k) => store.delete(k),
+        clear: () => store.clear(),
+        get length() { return store.size },
+      },
+    })
+    sb.window = sb
+    sb.globalThis = sb
+    let def = null
+    sb.window.__ModuleLoader__ = { load: (d) => { def = d } }
+    vm.runInNewContext(code, sb, { filename: 'lib/client.js#describeShape' })
+    const plugin = def.factory(requireStub)
+    const provided = {}
+    const ctx = {
+      get: (name) => (name === 'remote' ? undefined : provided[name]),
+      provide: (name, value) => { provided[name] = value },
+      on: () => () => {},
+      emit: () => {},
+      effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+      inject: () => () => {},
+      remote: { settings: { describe: describeFn, update: () => Promise.resolve({ ok: true, value: { revision: 8 } }) } },
+      logger: { info() {}, warn() {}, error() {} },
+    }
+    return { sb, plugin, ctx, provided }
+  }
+
+  // ── (a) the DIRECT form: a synchronous describe() returning the bare view ──
+  {
+    const { sb, plugin, ctx, provided } = sandboxWithDescribe(() => DIRECT_VIEW)
+    plugin.apply(ctx)
+    await new Promise((r) => setTimeout(r, 30))
+
+    check('the sync-describe case still finishes apply() (the service is provided)',
+      !!provided.quickControl, 'quickControl provided=' + !!provided.quickControl)
+
+    const probe = sb.window.__dockFlashPrefs()
+    // Not merely tolerated: the direct view has to be PARSED, or the plugin runs
+    // on defaults while looking like it loaded.
+    check('...and the sync answer is still understood as the namespace list',
+      !!probe && probe.load && probe.load.ok === true,
+      JSON.stringify(probe && probe.load))
+    check('...so a host value carried by the direct form is adopted',
+      !!probe && !!probe.host && probe.host.triggerPosition === 'conversation.overlay',
+      JSON.stringify(probe && probe.host && probe.host.triggerPosition))
+  }
+
+  // ── (b) describe() that THROWS (the controller's `provider()` refusing) ──
+  {
+    const { sb, plugin, ctx, provided } = sandboxWithDescribe(() => {
+      throw new Error('settings service is absent: mount @deepseek-ai/dsh-settings')
+    })
+    plugin.apply(ctx)
+    await new Promise((r) => setTimeout(r, 30))
+
+    check('the throwing-describe case still finishes apply() too',
+      !!provided.quickControl, 'quickControl provided=' + !!provided.quickControl)
+
+    const probe = sb.window.__dockFlashPrefs()
+    // ...and the refusal is REPORTED rather than swallowed: a preference load
+    // that fails without a word is the silent-failure shape this loader exists
+    // to avoid.
+    check('...and the refusal is recorded instead of swallowed',
+      !!probe && probe.load && probe.load.ok === false && /threw/i.test(String(probe.load.reason)),
+      JSON.stringify(probe && probe.load))
+  }
+}
+
 console.log('\n' + (failures.length === 0 ? '✅ ALL CHECKS PASSED' : '❌ FAILURES: ' + failures.join('; ')))
 // The bundle installs its own intervals (skin refresh, i18n watch), so exit
 // explicitly rather than waiting for the event loop to drain.

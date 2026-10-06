@@ -466,7 +466,8 @@ package name. **A new phase that reads a raw string must canonicalize before `se
 — the plugin-manager path did not, which is how the 0.15.3 duplicate came back. The worked case and its
 dump: [docs/skin-system.md](docs/skin-system.md).
 
-> **`check:overlay` is green — 199 assertions, 0 FAIL.** The ten market-era assertions this note
+> **`check:overlay` is green — 0 FAIL.** (The count is deliberately not written down: it drifts on
+> every assertion added, and a stale number reads as authority.) The ten market-era assertions this note
 > used to excuse as a "known, accepted red" are realigned, so a red assertion is a REAL regression
 > now, never a baseline. Do not restore the market to explain one away; read the assertion.
 
@@ -514,6 +515,38 @@ When adding a host-side dependency, import it statically and declare it in `pack
 `sessions.list` **unconditionally** in `start()`, or a switch from an already-active session is
 invisible — now live in the `dsh-flash-ctx-mon` plugin, together with the rest of the context
 monitor. Nothing in this repo consumes session events.
+
+### 13. Never Assume a Remote Method Returns a Promise
+
+`ctx.remote.<ns>.<method>()` is **not** guaranteed to be thenable, and `describe()` is the proof:
+that one name has two implementations. The typert WIRE form returns a Promise; the DIRECT form —
+`SettingsController.describe()` in `@deepseek-ai/dsh-api-settings-controller` — is **synchronous**
+and returns the view object itself. And it can **throw** instead ("settings service is absent: mount
+`@deepseek-ai/dsh-settings …`"). So `settings.describe().then(…)` dies with
+`TypeError: settings.describe(...).then is not a function`, synchronously, AHEAD of any `.catch`
+attached to the chain.
+
+**The damage is not the log line.** A synchronous throw near the top of `apply()` aborts the REST of
+it: `ctx.provide('quickControl', …)`, every switch registration and the panel mount sit downstream of
+the preference load, so the plugin still reads as loaded while nothing of it is on screen. In a
+companion plugin whose `apply` is `async` and unguarded the same throw rejects instead, the Cordis
+fiber goes **FAILED**, and the plugin never activates at all. That is the reported "the plugin was
+registered and then silently disappeared".
+
+Normalize at every call site, and guard the CALL as well as the chain:
+
+```js
+function _describeAsync(settings) {
+  try { return Promise.resolve(settings.describe()) }
+  catch (err) { return Promise.reject(err) }
+}
+```
+
+`Promise.resolve()` alone is not enough — its argument is evaluated first, so a throwing `describe()`
+still escapes. `Promise.resolve(settings.describe())` is nevertheless the right normalization for the
+sync form: the parser already accepts `{ ok, value }` and a bare view, so the direct answer is
+UNDERSTOOD rather than merely tolerated. `check:overlay` section 23 exercises both shapes and asserts
+that `apply()` still reaches `ctx.provide('quickControl', …)`.
 
 ---
 
