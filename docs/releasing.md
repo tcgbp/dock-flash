@@ -178,6 +178,14 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $tok
 
 `204` means the run is queued, and it settles in well under a minute. Verify through the API too, because `git ls-remote` needs the blocked host: compare `commit.tree.sha` from `/repos/tcgbp/dock-flash/commits/master` against the local `git rev-parse master^{tree}`. Matching **tree** hashes prove the two repositories hold identical content; identical *commit* hashes already imply that, so the tree comparison is what settles the question when the hashes differ — after a commit is re-created through the Git Data API, for instance, where the same tree gets a new sha. Keep the token in a shell variable for the single call, as above: never echo it, and never let it reach a log or a file.
 
+**A FAILED run is usually the runner reaching Gitee, not the mirror being broken — and a failed run is not a lost commit: dispatch again.** The failure is not symmetric with the one above. Measured twice in one release: the job spent five minutes in `Cloning into bare repository 'repo.git'...` and then died with
+
+```
+fatal: unable to access 'https://gitee.com/lenin.guo/dock-flash.git/': SSL connection timeout
+```
+
+Runs #170 and #172 failed that way while #169 and #171 succeeded, and the next dispatch after each failure landed the commit — so the CLONE (runner → Gitee) is what times out, not the push (runner → GitHub), and nothing about the repository is wrong. A failed run leaves GitHub exactly as it was, which is why the tree check above is what decides: if it is stale, dispatch again, and remember the hourly schedule is a free retry. Read the log before theorising — `/actions/runs/<id>/jobs` names the failing step, and `/actions/jobs/<id>/logs` carries the line above.
+
 Gitee's built-in **仓库镜像管理** push mirror was tried first and **never delivered a single commit**; it is not the mechanism in use. Do not re-enable it — a second, unverified mirror racing the workflow is how the two repositories drift apart again.
 
 Two details of that workflow must not be "simplified":
