@@ -200,6 +200,103 @@ resolves to `C:\tmp`. Write scratch files inside the repository and delete them 
 
 ---
 
+## Publishing to npm
+
+`dock-flash` is also published to **npm** under its own name, and that is a **second, independent
+channel**: the GitHub Release is what the dsh-market entry's tarball URL points at, while npm is what
+`npm install dock-flash` and any npm-based tooling resolve. Neither one follows the other, so a
+release is not finished until npm is updated — or the skip is a deliberate decision.
+
+Everything in this section sits **behind gate 2**. `npm publish` is as observable and as unrecallable
+as the tag, so it is not a step to run "while I am here".
+
+**npm carries only the versions actually published to it.** `dock-flash` went `1.5.2` → `1.6.1` →
+`2.0.2`; `1.6.2`–`1.6.5`, `2.0.0` and `2.0.1` exist as tags and Releases but never reached npm. That
+is allowed (npm does not require contiguous versions) but it means an npm user jumps straight across
+whatever the missing versions contained — for `2.0.2` that included 2.0.0's extraction of the context
+monitor into `dsh-flash-ctx-mon`.
+
+### Order, and the peer range is a hard gate
+
+**Publish `dock-flash` first, then the companions** (`dsh-flash-ctx-mon`, `dsh-flash-mem-mon`,
+`dsh-flash-net-mon`, `dsh-flash-proxy`), each from its own repository.
+
+npm 7+ resolves `peerDependencies` and **errors** when they conflict; pnpm only warns. So a companion
+whose range excludes the dock-flash being published is a package nobody can install with npm, however
+well it works under `dsh plugin add`. Measured, with the packed tarballs:
+
+```
+npm error code ERESOLVE
+npm error Found: dock-flash@2.0.2
+npm error Could not resolve dependency:
+npm error peer dock-flash@">=1.5.0-0 <2.0.0-0" from dsh-flash-ctx-mon@0.1.3
+```
+
+Before publishing any companion, check that its `dock-flash` range accepts the version going out — and
+spell the range with **one branch per tuple whose prereleases must resolve**
+(`>=1.5.0-0 <2.0.0-0 || >=2.0.0-0 <3.0.0-0`). A single `>=1.5.0-0 <3.0.0-0` looks equivalent and is
+not: semver only lets a prerelease satisfy a comparator set whose matching tuple also carries one, so
+that spelling silently rejects `2.0.0-rc.1`.
+
+### 2FA: `npm publish` now stages instead of publishing
+
+Observed on **npm 11.16, 2026-10**, against an account with 2FA enabled and a granular token carrying
+**Bypass 2FA**: a bypass token no longer publishes directly. `npm publish` **stages** the version and
+defers proof-of-presence; the package appears once the 2FA approval lands. (The July 2026 changelog
+said this would reach publish "targeting January 2027" — it is already the behaviour.) The symptoms,
+in the order they show up:
+
+| What you see | What it means |
+|---|---|
+| `npm publish` exits **0**, and the registry shows nothing yet | staged, not failed |
+| Re-publishing the same version: `E409 Cannot publish over previously staged version "<v>"` | the stage exists — this is the proof |
+| A **new** package briefly has `versions: ["0.0.0-stage"]` and `latest: 0.0.0-stage` | the placeholder the handshake creates (`"Temporary package placeholder for staged publishing"`, `stub: true`) |
+
+Two ways through: pass `--otp=<code>` so proof-of-presence is satisfied immediately (a direct publish,
+no staging), or publish and let it stage, then approve. **`npm stage list` cannot be relied on to find
+the stage id** `npm stage approve <uuid>` needs: with the token in use it answers *"No staged packages
+found"*, and `GET /-/stage` answers `{"items":[],"total":0}`, at the same moment the registry refuses a
+re-publish for a staged version. The web listing is behind Cloudflare for non-browser requests.
+
+### Verify a publish — the packument lies for a while
+
+The abbreviated packument (`registry.npmjs.org/<pkg>`) is **CDN-cached**. Immediately after a publish,
+`dist-tags.latest` and the `versions` list can still show the old state, and a brand-new package can
+show nothing but `0.0.0-stage` while its real version is already being served. Do not conclude the
+publish failed from that — check the version endpoint with a cache-buster:
+
+```sh
+# 200 means this exact version exists. (Write scratch files inside the repo: under
+# Git for Windows /tmp is C:\tmp, and a Windows tool cannot read an MSYS /tmp path.)
+curl -sS -o v.json -w '%{http_code}\n' "https://registry.npmjs.org/dock-flash/2.0.2?t=$(date +%s)"
+```
+
+A `200` proves a version exists; it does not prove the version is the one you built. Download the
+published tarball and assert what the release was about — the version, the `dock-flash` peer range,
+and the specific file or string that changed. And do the one check that actually settles it: install
+the published versions together in an empty directory (`npm install dock-flash@<v> <companions>`),
+which is the ERESOLVE scenario above.
+
+### The sequence
+
+`npm publish --dry-run` is the rehearsal and needs no auth — it prints the file list and the tarball
+size, so a missing `README` or a stray file shows up before anything is public.
+
+```sh
+# Per package, in dependency order (dock-flash first, then each companion from its own repo):
+npm publish --access public            # uses the token in ~/.npmrc
+npm publish --access public --otp=123456   # when the account demands an OTP per write
+
+# Rehearsal instead: add --dry-run, or DRY=1 to a wrapper script.
+```
+
+Run all five from one script rather than five commands: a TOTP code is valid for about 30 seconds, so
+an OTP run has to publish back to back without a prompt in between, and the script should end with the
+verification pass above rather than trusting five exit codes.
+
+---
+
+
 ## Listing on dsh-market
 
 dsh-market reads its catalog from the curated **awesome-dsh-plugin** registry, so being installable
