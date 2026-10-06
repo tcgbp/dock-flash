@@ -66,11 +66,16 @@ git push origin master
 #    the market normally installs.
 pnpm pack && mv dock-flash-<version>.tgz dock-flash.tgz
 
-# 5. Tag and push the tag, then mirror again — the tag needs its own dispatch.
+# 5. Tag and push the tag, then dispatch the mirror ONCE MORE — the tag needs
+#    its own run. Dispatch it on `master`, never on the tag: a workflow_dispatch
+#    ref must already exist on GitHub, and the whole point of this run is that
+#    the tag is not there yet. `-d '{"ref":"v<version>"}'` answers HTTP 422, and
+#    the workflow pushes `refs/tags/*` itself, so `master` carries it.
 #    The ANNOTATED tag's message may be a summary; the RELEASE TITLE may not —
 #    it is the bare version, "v<version>", and nothing else. See below.
 git tag -a v<version> -m "<summary>"
 git push origin v<version>
+#    then dispatch the mirror again, on master
 
 # 6. Create the Release and upload the asset (see the API snippets below).
 
@@ -104,6 +109,13 @@ own.
 - `/repos/<owner>/<repo>/releases/latest` reports the expected tag, and lists the asset.
 - Download the asset back through `api.github.com` and `cmp` it against the local build. Byte
   equality is the only proof the upload was not truncated.
+- **Query the registry with the package's EXACT name — `dock-flash`, no `s`.** The four companions
+  are all `dsh-flash-*`, so `dsh-flash` reads as the obvious short form and is simply a different,
+  non-existent package: it answers `{"error":"Not found"}` for its packument, every version AND its
+  tarball, which looks exactly like a publish that never landed. It cost a false alarm once — an
+  `npm install dsh-flash@<version>` (also a typo) failing 404 had already been read as "the release
+  is broken". Check the packument, not only `/pkg/<version>`: the packument is what every
+  `npm install` resolves through, and a `?cb=` query string does NOT defeat its CDN cache.
 - Do not try to verify by fetching `releases/latest/download/...` from the browser on the maintainer
   machine: `github.com` is intermittently unreachable there while `api.github.com` is not, so a
   connection reset says nothing about whether the asset is good.
