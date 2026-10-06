@@ -245,6 +245,48 @@ toast pins to its left edge and the toast overhangs to the right, rather than th
 
 ---
 
+### The floating panel was placed from one edge, and the ⚡ is not always near an edge
+
+Standalone mode positions the panel relative to the ⚡ by setting a single edge — `bottom` for the two
+`input` positions (panel ABOVE the button, and `input.right` is the **default**), `top` for the two
+header positions, and either for the draggable overlay. The only thing keeping the panel on screen was
+the container's `max-height: 70vh`: **630px on a 900px window**.
+
+That is fine while the button hugs the opposite edge, which is where it usually is. It is not fine when
+the ⚡ is in the middle of the page — the overlay is draggable there, and a short conversation or an
+unusual input layout parks the slot positions there too. Then 70vh is more than either side can hold,
+and a single edge places the panel partly outside the window. MEASURED on a 1440x900 viewport with a
+630px panel:
+
+| Position / button | Old placement | Result |
+|---|---|---|
+| `input` (default), `rect.top` 450 (mid-page) | top **-186px** | **top 186px clipped** |
+| overlay, `rect.top` 450 (mid-page) | top **-186px** | **top 186px clipped** — its fallback only ever tested the BELOW case |
+| `input`, `rect.top` 20 (very top) | top **-616px** | **top 616px clipped** |
+| `input`, `rect.top` 850 (near bottom) | top 214px | fits — unchanged |
+| header, `rect.top` 60 | top 96px | fits — unchanged |
+
+The panel's body already scrolls (the React root is a flex column with `minHeight: 0`, and `panelBody`
+is `overflowY: auto`), so the fix is to CAP the panel to the side it was given rather than let it
+overflow: choose the side that fits, switch sides when the preferred one does not, and when neither
+does, take the larger and cap to it. 5 of the 8 probed placements come out **bit-identical** to the old
+ones; only the three broken cases move, and they move to `top: 8px` with the body scrolling.
+
+Two supporting details:
+
+- **The cap is shared, not restated.** `PANEL_MAX_VH` drives both the container's `max-height` and the
+  arithmetic, so the box can never be taller than the placement believes it is.
+- **The height is 0 when placement first runs.** `openPanel()` calls `positionPanel()` BEFORE
+  `display: flex`, and React 18's `createRoot().render()` is async anyway, so the old overlay branch's
+  `|| 320` estimate was what every open used. A `ResizeObserver` on the panel re-runs placement once it
+  has a real box — which also covers a tab switch changing the content height.
+
+The horizontal clamp was wrong in the same shape: `right: innerWidth - rect.right` keeps only the
+panel's RIGHT edge inside the window, so a button near the LEFT edge drove the left edge negative —
+the opposite of what its own comment claimed. Both axes are now clamped from the measured box.
+
+---
+
 ### The overlay trigger: three reasons the button did not work
 
 The overlay (1.3.0) shipped with a defect that made it invisible in **every** build, and a second one

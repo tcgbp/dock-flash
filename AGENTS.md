@@ -806,6 +806,7 @@ form and each carries its own example, so they are not repeated here — check t
 | Pitfall | Symptom | Fix |
 |---|---|---|
 | `React.createRoot` instead of `require('react-dom/client').createRoot` | Standalone panel renders nothing — no React root | `createRoot` is not on the `react` package; standalone mode must create its own |
+| Standalone panel placed by setting ONE edge, its height left to `max-height: 70vh` | Panel cut off when the ⚡ is mid-page: 70vh exceeds either side's room, so part of it lands outside the window | `positionPanel()` picks a side, then CAPS the panel to the room on that side and lets the body scroll. Never size it from one edge alone, and never trust `max-height` to keep it on screen |
 | `registerActivityBarItem()` without `pluginId` | Listed in Settings but no "Open" button | `pluginEntryItem()` matches `pluginId ?? id`, whose fallback never equals `'dock-flash'`. Add `pluginId: 'dock-flash'` |
 | `L('key')` (a function) for `registerPlugin` title/description | Blank name and description on the plugin card | `createPluginCard` renders those as React children and never calls `resolveSettingText()`. `registerPlugin` needs **static strings** |
 | `"<pkg>/client"` in `dsh.client.inject` | Load-order hint silently ignored; a third-party switch never appears | `arriveGraphRow()` does not strip `/client` for inject lookups. Use base names — `"dock-base"`, `"dock-flash"` |
