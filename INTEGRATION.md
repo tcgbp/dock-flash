@@ -6,7 +6,7 @@
 
 ## Overview
 
-dock-flash exposes a `quickControl` Cordis service — a pub/sub registry that any plugin can use to register switches (toggles, sliders, selects, action buttons, button groups). Registered switches appear in the dock-flash **🧩 Extensions** tab, grouped by source plugin.
+dock-flash exposes a `quickControl` Cordis service — a pub/sub registry that any plugin can use to register switches (toggles, sliders, selects, action buttons, button groups). Registered switches appear in the dock-flash **Extensions** tab, grouped by source plugin.
 
 **Key principle**: Your plugin must work whether or not dock-flash is installed. Never declare a hard dependency on `quickControl`.
 
@@ -109,8 +109,8 @@ This hint does NOT create a hard dependency. When dock-flash is absent, the entr
 
 - Format: `plugin-name:switch-name` (e.g., `dock-git:show-stash`)
 - The prefix before `:` determines grouping in the Extensions tab
-- Built-in dock-flash switches use `dock-flash:*` and appear in the ⚡ Workbench tab
-- Your switches use `your-plugin:*` and appear in the 🧩 Extensions tab
+- Built-in dock-flash switches use `dock-flash:*` and appear in the Workbench tab
+- Your switches use `your-plugin:*` and appear in the Extensions tab
 
 ---
 

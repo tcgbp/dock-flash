@@ -2927,6 +2927,40 @@ console.log('\n=== 24. the missing-companion hint: four states, and never a fals
   }
 }
 
+
+console.log('\n=== 25. the tab glyphs: sliders / blocks / doc, and the bolt stays the PRODUCT mark ===')
+{
+  // A SOURCE pin, deliberately, and it is weaker than the behavioural sections above — say so
+  // rather than dress it up. The panel's tab bar is drawn by React, and this harness's
+  // `renderTree()` only INVOKES components: it never materializes `h('svg', …)` into an `El`
+  // node, so there is no rendered tab bar to walk. `registry.getSwitches()` is how the other
+  // sections assert panel CONTENT; which glyph a tab carries is not registry data.
+  //
+  // So this asserts the two facts that a regression would break, straight from the source the
+  // sandbox is about to evaluate:
+  //   1. the Workbench tab points at `sliders` (not at a second lightning bolt);
+  //   2. `_ICON_PATHS` no longer carries a `bolt` at all — the duplicate is gone, so no future
+  //      tab or switch can quietly re-adopt it and re-create the collision;
+  //   3. the ⚡ remains the PRODUCT mark, still shared by exactly the four surfaces that wear it.
+  check('the Workbench tab is bound to the sliders glyph',
+    /\{\s*id: 'workbench',\s*icon: 'sliders'/.test(code),
+    (code.match(/\{\s*id: 'workbench'[^}]*\}/) || [''])[0])
+
+  check('...and the duplicate `bolt` is gone from the icon map',
+    !/^\s*bolt:\s*\[/m.test(code),
+    'bolt entries in _ICON_PATHS = ' + (code.match(/^\s*bolt:\s*\[/gm) || []).length)
+
+  check('...while the sliders path itself is present',
+    /^\s*sliders:\s*\[/m.test(code) && code.includes("'M2.5 4.2h11'"),
+    'sliders entry=' + /^\s*sliders:\s*\[/m.test(code)
+      + ' firstTrack=' + code.includes("'M2.5 4.2h11'"))
+
+  check('the ⚡ is still the product mark, on exactly its four surfaces',
+    /path: 'M13 2 3 14h9l-1 8 10-12h-9l1-8z'/.test(code)
+      && (code.match(/icon: LIGHTNING_ICON/g) || []).length === 4,
+    'LIGHTNING_ICON uses = ' + (code.match(/icon: LIGHTNING_ICON/g) || []).length)
+}
+
 console.log('\n' + (failures.length === 0 ? '✅ ALL CHECKS PASSED' : '❌ FAILURES: ' + failures.join('; ')))
 // The bundle installs its own intervals (skin refresh, i18n watch), so exit
 // explicitly rather than waiting for the event loop to drain.

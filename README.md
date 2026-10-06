@@ -251,11 +251,13 @@ setTimeout(() => {
 
 The panel uses a collapsible tab layout:
 
-- **⚡ Workbench** — Built-in switches (ids starting with `dock-flash:`), grouped by `group` field into Appearance / Layout / System subgroups. In workbench mode the Layout subgroup is empty and is not rendered, because dock-base's own settings already own every dock layout property.
-- **🧩 Extensions** — Third-party switches (ids not starting with `dock-flash:`), automatically grouped by id colon prefix (plugin name)
-- **📝 Recent Changes** — Switch change records from the last 30 seconds
+- **Workbench** *(sliders icon)* — Built-in switches (ids starting with `dock-flash:`), grouped by `group` field into Appearance / Layout / System subgroups. In workbench mode the Layout subgroup is empty and is not rendered, because dock-base's own settings already own every dock layout property.
+- **Extensions** *(blocks icon)* — Third-party switches (ids not starting with `dock-flash:`), automatically grouped by id colon prefix (plugin name)
+- **Recent Changes** *(document icon)* — Switch change records from the last 30 seconds
 
 Rule: `id.startsWith('dock-flash:')` is built-in, otherwise third-party. The `group` field on third-party switches is currently ignored; they are all placed in the Extensions tab grouped by source plugin.
+
+The three tab glyphs are `sliders` / `blocks` / `doc` from the panel's own `_ICON_PATHS`. **The ⚡ lightning bolt is not a tab icon — it is the product mark** (`LIGHTNING_ICON`), shared by the sidebar panel header, the activity bar, the Settings card and the floating window.
 
 Within the same group, switches are sorted by `order` ascending.
 

@@ -711,7 +711,7 @@ Per renderer:
 ### Registration Rules
 
 - **id format**: `plugin:switch-name` (e.g. `dock-flash:theme`, `dock-git:show-stash`)
-- **id prefix determines grouping**: `dock-flash:*` → built-in (⚡ Workbench tab), others → 🧩 Extensions tab
+- **id prefix determines grouping**: `dock-flash:*` → the **Workbench** tab (`sliders`), others → the **Extensions** tab (`blocks`); the third page is the change log (`doc`). Tab glyphs come from `_ICON_PATHS` — **the ⚡ is the PRODUCT mark** (`LIGHTNING_ICON`: sidebar panel header, activity bar, Settings card, floating window) and is deliberately not a tab icon
 - **order**: Built-in items use 10–60; third-party should start from 100
 - **group field**: Only meaningful for built-in switches (`appearance`, `layout`, `system`); ignored for third-party
 

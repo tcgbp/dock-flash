@@ -6,7 +6,7 @@
 
 ## 概述
 
-dock-flash 通过 `quickControl` Cordis 服务暴露了一个发布/订阅注册表——任何插件都可以用它来注册开关（切换、滑块、下拉选择、动作按钮、按钮组）。注册的开关会出现在 dock-flash 的 **🧩 扩展** 标签页中，按来源插件分组。
+dock-flash 通过 `quickControl` Cordis 服务暴露了一个发布/订阅注册表——任何插件都可以用它来注册开关（切换、滑块、下拉选择、动作按钮、按钮组）。注册的开关会出现在 dock-flash 的**扩展**标签页中，按来源插件分组。
 
 **核心原则**：你的插件无论 dock-flash 是否安装都必须能正常工作。永远不要对 `quickControl` 声明硬依赖。
 
@@ -109,8 +109,8 @@ exports.apply = function (ctx) {
 
 - 格式：`plugin-name:switch-name`（例如 `dock-git:show-stash`）
 - `:` 前的前缀决定了在扩展标签页中的分组
-- dock-flash 内置开关使用 `dock-flash:*` 前缀，出现在 ⚡ 工作台 标签页
-- 你的开关使用 `your-plugin:*` 前缀，出现在 🧩 扩展 标签页
+- dock-flash 内置开关使用 `dock-flash:*` 前缀，出现在 工作台 标签页
+- 你的开关使用 `your-plugin:*` 前缀，出现在 扩展 标签页
 
 ---
 
