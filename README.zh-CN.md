@@ -49,7 +49,7 @@
 
 `src/index.ts`（Host 半）提供：
 
-- 注册 `dock-flash` 设置命名空间（面板偏好、触发器偏好、告警阈值）
+- 注册 `dock-flash` 设置命名空间（面板偏好、触发器偏好、宿主告警队列设置）
 - 提供 HTTP 路由：
   - `GET /plugins/dock-flash/host-alerts` — 排空服务端推送告警队列
   - `POST /plugins/dock-flash/push-alert` — 向队列推送一条告警
@@ -59,6 +59,12 @@
   - `POST /plugins/dock-flash/set-plugin-entry` — 通过 patch 编辑实时启用/禁用插件
 
 > **系统代理功能已迁至** [`dsh-flash-proxy`](https://github.com/tcgbp/dsh-flash-proxy) 插件 —— 代理模式、NO_PROXY 策略、`testUrl`、连接诊断及五个 `dsh-flash-proxy:*` QuickControl 开关现已在该插件中。
+
+> **各监控项均为伴随插件。** dock-flash 自身不再包含任何监控：上下文监控在 `dsh-flash-ctx-mon`，
+> 内存/GC 监控在 `dsh-flash-mem-mon`，网络审计在 `dsh-flash-net-mon`。每个插件拥有自己的设置命名空间，
+> 通过 `dockFlashAlerts` 服务注册告警 provider、通过 `quickControl` 注册开关，因此会带着各自的 ⚙ 配置页
+> 出现在本面板中。dock-flash 只保留共享告警注册表、宿主推送告警队列，以及让这些伴随插件告警显示
+> 来源标签与配置链接的映射表。
 
 ## 结构
 

@@ -1425,6 +1425,13 @@ wording described; both are gone. See "Market → Plugin Manager migration (v1.5
 
 ### Context Monitor: Precise Only
 
+> **Status: extracted.** This section describes the context monitor, which now lives in the
+> `dsh-flash-ctx-mon` plugin (`SessionEventTokenSource`, `createSessionContextProvider`, the
+> `dsh-flash-ctx-mon` settings namespace and its own config popup). It is kept here because the
+> reasoning below is what the extraction carried over; none of this code is in dock-flash any
+> more. dock-flash retains only the companion integration lists (`_COMPANION_PREFIXES`,
+> `_PROVIDER_SWITCH_MAP`, `_PROVIDER_LABELS`) that keep the monitor's alerts labelled and linked.
+
 dock-flash's context monitor reads token usage from DSH's session event stream:
 
 **Precise** — reads `usage.inputTokens` from DSH's session event stream via the `sessions`

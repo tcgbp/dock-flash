@@ -226,6 +226,18 @@ ignored. (The `external` path *does* strip it first; `inject` does not.)
 - **CLIENT** (`lib/client.js`; browser via `__ModuleLoader__`) owns the QuickControl registry
   (pub/sub), the React panel UI, the skin system, and i18n (zh/en).
 
+> **All three monitors have been extracted** into companion plugins — the panel itself owns no
+> monitor. `dsh-flash-ctx-mon` carries the context monitor (`SessionEventTokenSource`,
+> `createSessionContextProvider`, the context thresholds and the model-window map),
+> `dsh-flash-mem-mon` the memory/GC monitor, `dsh-flash-net-mon` the network audit. Each holds
+> its own `settings` namespace, registers its provider through `ctx.get('dockFlashAlerts')` and
+> its switch through `ctx.get('quickControl')`. dock-flash keeps only the shared registries, the
+> host-pushed queue provider, and the companion integration lists (`_COMPANION_PREFIXES`,
+> `_PROVIDER_SWITCH_MAP`, `_PROVIDER_LABELS`, the cluster-expand and alerts-dependent id lists) —
+> **a new monitor means an entry in each of those, or its alerts lose their source label and their
+> config link.** The session-list-subscription rule that used to be Critical Rule 12 (subscribe
+> unconditionally, or a conversation switch is invisible) moved with `SessionEventTokenSource`.
+>
 > **The system proxy subsystem (B) has been extracted** into the `dsh-flash-proxy` plugin.
 > Proxy mode, `NO_PROXY` policy, `testUrl`, connection diagnostics, and the five
 > `dsh-flash-proxy:*` QuickControl switches now live in that separate package.
@@ -481,19 +493,12 @@ import Schema from '@deepseek-ai/schemastery'   // default export only
 
 When adding a host-side dependency, import it statically and declare it in `package.json`. When the module is DSH's rather than yours (e.g. `@deepseek-ai/dsh-http-proxy` for the extracted `dsh-flash-proxy` plugin), resolve it through a dynamic-import helper that finds DSH's own copy — see [docs/architecture-notes.md](docs/architecture-notes.md).
 
-### 12. Session Event Token Source Must Subscribe to Session List Unconditionally
+### 12. (extracted) Session Event Token Source
 
-`SessionEventTokenSource` subscribes to `sessions.binding(sessionId).eventSource` for the current session. When the user switches conversations, `scopeOf(ctx)` returns a new session id — the old subscription and accumulated totals are stale. The session-list subscription that detects switches must start **unconditionally** in `start()`, not only when no initial session exists, or switches from an already-active session are invisible.
-
-```js
-// ✅ Correct — session list subscription always active
-_sessions.list.subscribe(() => { /* check scopeOf(ctx) for changes */ })
-
-// ❌ Wrong — only subscribes when no session exists at startup
-if (!_sessionId) {
-  _sessions.list.subscribe(() => { /* never fires for existing sessions */ })
-}
-```
+`SessionEventTokenSource` and the session-list-subscription rule it carried — subscribe to
+`sessions.list` **unconditionally** in `start()`, or a switch from an already-active session is
+invisible — now live in the `dsh-flash-ctx-mon` plugin, together with the rest of the context
+monitor. Nothing in this repo consumes session events.
 
 ---
 

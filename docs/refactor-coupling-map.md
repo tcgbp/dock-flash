@@ -4,6 +4,13 @@
 > 本文是**现状测绘 + 重构蓝图**，不含代码改动。
 >
 > **2025-08 状态更新**：B（系统代理）已完成物理拆包，独立为 `dsh-flash-proxy` 插件。下方标注已拆分。
+>
+> **2026-10 状态更新**：C/D 的监控部分也已完成物理拆包 —— 上下文监控 → `dsh-flash-ctx-mon`，
+> 内存/GC 监控 → `dsh-flash-mem-mon`，网络审计 → `dsh-flash-net-mon`。dock-flash 只保留
+> QuickControl 面板（A）、`dockFlashAlerts` 共享注册表、宿主推送队列 provider，以及把这些
+> 伴随插件的告警接回面板的集成表（`_COMPANION_PREFIXES` / `_PROVIDER_SWITCH_MAP` /
+> `_PROVIDER_LABELS` / cluster 展开与 alerts 依赖 id 清单）。上下文阈值与
+> `modelContextWindows` 已移出 `dock-flash` 设置命名空间。
 
 ---
 

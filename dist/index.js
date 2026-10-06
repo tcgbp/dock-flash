@@ -37,17 +37,8 @@ const DEFAULT_TRIGGER_LAYER = 1150;
 /** Matches the client's DEFAULT_OVERLAY_OPACITY — what 0.55 always was. */
 const DEFAULT_OVERLAY_OPACITY = 0.55;
 // ── Alert threshold defaults ──────────────────────────────────────────────
-// Memory thresholds and GC thresholds have been extracted to dsh-flash-mem-mon.
-/** Context window approximation (tokens). Used as default when the model
- *  is not in the built-in or user-configured window table. */
-const DEFAULT_CTX_APPROX_WINDOW = 128000;
-/** Context alert thresholds (% of estimated window). */
-const DEFAULT_CTX_THRESHOLD_INFO = 70;
-const DEFAULT_CTX_THRESHOLD_WARNING = 85;
-const DEFAULT_CTX_THRESHOLD_ERROR = 95;
-/** Context polling: base interval and minimum (ms). */
-const DEFAULT_CTX_POLL_BASE = 20000;
-const DEFAULT_CTX_POLL_MIN = 2000;
+// Per-monitor thresholds (memory/GC and context) have been extracted to their
+// companion plugins — dsh-flash-mem-mon and dsh-flash-ctx-mon.
 /** Host alert queue capacity (max entries). */
 const DEFAULT_HOST_ALERT_QUEUE_CAP = 50;
 /** Host alert maximum retention time (hours). */
@@ -109,16 +100,9 @@ export const Config = Schema.object({
     triggerLayer: Schema.number().default(DEFAULT_TRIGGER_LAYER).volatile(),
     overlayOpacity: Schema.number().default(DEFAULT_OVERLAY_OPACITY).volatile(),
     // ── D · System alerts (merged with A per §7 decision) ────────────────
-    // Memory/GC thresholds extracted to dsh-flash-mem-mon.
-    // Context thresholds remain here until ctx-mon extraction.
-    ctxApproxWindow: Schema.number().default(DEFAULT_CTX_APPROX_WINDOW).volatile(),
-    ctxThresholdInfo: Schema.number().default(DEFAULT_CTX_THRESHOLD_INFO).volatile(),
-    ctxThresholdWarning: Schema.number().default(DEFAULT_CTX_THRESHOLD_WARNING).volatile(),
-    ctxThresholdError: Schema.number().default(DEFAULT_CTX_THRESHOLD_ERROR).volatile(),
-    ctxPollBase: Schema.number().default(DEFAULT_CTX_POLL_BASE).volatile(),
-    ctxPollMin: Schema.number().default(DEFAULT_CTX_POLL_MIN).volatile(),
-    modelContextWindows: Schema.dict(Schema.number()).default({}).volatile(),
-    modelContextWindowSources: Schema.dict(Schema.string()).default({}).volatile(),
+    // Per-monitor thresholds extracted to companion plugins
+    // (dsh-flash-ctx-mon / dsh-flash-mem-mon); only the host alert queue
+    // settings remain in this namespace.
     hostAlertQueueCap: Schema.number().default(DEFAULT_HOST_ALERT_QUEUE_CAP).volatile(),
     hostAlertMaxAge: Schema.number().default(DEFAULT_HOST_ALERT_MAX_AGE).volatile(),
 });

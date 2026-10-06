@@ -51,7 +51,7 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
 
 `src/index.ts` (host half) provides:
 
-- Registers the `dock-flash` settings namespace (panel preferences, trigger preferences, alert thresholds)
+- Registers the `dock-flash` settings namespace (panel preferences, trigger preferences, host alert queue settings)
 - Exposes HTTP routes:
   - `GET /plugins/dock-flash/host-alerts` — drains the server-push alert queue
   - `POST /plugins/dock-flash/push-alert` — pushes an alert into the queue
@@ -61,6 +61,13 @@ Built-in switches are grouped into Appearance / Layout / System (compact two-col
   - `POST /plugins/dock-flash/set-plugin-entry` — live plugin enable/disable via patch edit
 
 > **System proxy features have moved** to the [`dsh-flash-proxy`](https://github.com/tcgbp/dsh-flash-proxy) plugin — proxy mode, NO_PROXY policy, `testUrl`, connection diagnostics, and the five `dsh-flash-proxy:*` QuickControl switches now live there.
+
+> **The monitors are companion plugins.** dock-flash owns no monitor of its own: the context monitor
+> lives in `dsh-flash-ctx-mon`, the memory/GC monitor in `dsh-flash-mem-mon`, and the network audit in
+> `dsh-flash-net-mon`. Each keeps its own settings namespace, registers its alert provider through the
+> `dockFlashAlerts` service and its switch through `quickControl`, so it appears in this panel with its
+> own ⚙ config page. dock-flash keeps the shared alert registry, the host-pushed alert queue, and the
+> label/link mappings that surface those companion alerts.
 
 ## Structure
 
