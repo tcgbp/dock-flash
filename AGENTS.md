@@ -291,6 +291,13 @@ which is above the host's overlays; the low preset 9 sits far *under* them. **Th
 the DOM because `adoptHostLayer()` runs after the async host reply** — see "The overlay trigger"
 above for why a host-owned numeric needs both a subscribe and an immediate call.
 
+**The three body-level alert surfaces derive from that same `triggerLayer`, one step above the
+panel/button/menu trio** — `layerOfAlertDropdown()` / `layerOfToast()` / `layerOfAlertDetail()`,
+written only by `applyTriggerLayer()` and floored at 1100, the band DSH's own Toast occupies to clear
+the 1000 image-lightbox backdrop. A literal here is what let the shipped **2000 preset put the panel
+over the toast** and over the dropdown anchored to the trigger. Never give these a fixed z-index;
+extend the same derivation instead.
+
 > Why a static element loses to every positioned sibling:
 > [docs/architecture-notes.md](docs/architecture-notes.md).
 

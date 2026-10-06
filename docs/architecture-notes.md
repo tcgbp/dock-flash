@@ -191,7 +191,31 @@ In workbench mode dock-base renders the panel inside `.dsh-wb-root`, which is `p
 
 Do not raise it "to be safe": anything ≥ 70 would put the docked panel above dock-base's floating windows, and anything past the root's own 49 is meaningless at body level anyway. It also creates a stacking context, so if this panel ever gains a portalled child it will need its own escape hatch.
 
-The standalone panel is unaffected — it is appended to `document.body` at z-index 99998, outside the root entirely, which is exactly why this bug only ever appeared in workbench mode.
+The standalone panel is unaffected — it is appended to `document.body`, outside the root entirely, which is exactly why this bug only ever appeared in workbench mode. Its level is the user's `triggerLayer` (default 1150, preset 9 to duck under everything).
+
+### The alert surfaces were one band short of the panel
+
+The toast, the alert dropdown and the alert detail modal are body-level siblings of the standalone
+panel, and each carried a **literal** z-index (1200, 1200, 2200) while the panel's level is the
+user-settable `triggerLayer` — the one setting whose whole point is that the user moves it.
+
+Measured against the shipped presets, with the movable stack at `panel < button < menu` =
+`t, t+1, t+2`:
+
+| `triggerLayer` | stack top | toast (fixed 1200) | visible? |
+|---|---|---|---|
+| 9 (duck under everything) | 11 | 1200 | yes |
+| 1150 (default) | 1152 | 1200 | yes |
+| **2000 (clear with headroom)** | **2002** | **1200** | **no — the panel covers it** |
+
+So the preset sold as "clear with headroom" was the one that hid the notifications, and the dropdown
+anchored to the trigger went under the button that opened it. The fix derives all three from
+`triggerLayer` (`max(t + 3, 1100)`), which satisfies `base > t + 2` for **every** `t ≥ 1` — there is
+no branch to get wrong, and a user typing 99999 in the settings namespace is covered too. The floor
+came from the host: DSH's own `Toast.module.css` puts its banner at 1100 with the comment "Above the
+1000 the image lightbox backdrop uses: a failure reported while a preview is open must stay
+readable". A notification nobody can see is worse than a panel that is covered, so the derivation is
+floored there rather than following the 9 preset under all host chrome.
 
 ---
 
