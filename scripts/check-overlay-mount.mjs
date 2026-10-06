@@ -2798,6 +2798,7 @@ console.log('\n=== 24. the missing-companion hint: four states, and never a fals
     vm.runInNewContext(code, sb, { filename: 'lib/client.js#companions' })
     const plugin = def.factory(requireStub)
     const provided = {}
+    const updates = []
     const ctx = {
       get: (name) => (name === 'remote' ? undefined : provided[name]),
       provide: (name, value) => { provided[name] = value },
@@ -2808,12 +2809,16 @@ console.log('\n=== 24. the missing-companion hint: four states, and never a fals
       remote: {
         settings: {
           describe: () => Promise.resolve(NAMESPACE),
-          update: () => Promise.resolve({ ok: true, value: { revision: 4 } }),
+          // Recorded rather than stubbed away: the dismissal write is only observable here.
+          update: (...args) => {
+            updates.push(args)
+            return Promise.resolve({ ok: true, value: { revision: 4 } })
+          },
         },
       },
       logger: { info() {}, warn() {}, error() {} },
     }
-    return { sb, plugin, ctx, provided }
+    return { sb, plugin, ctx, provided, updates }
   }
 
   const okProfile = (dir, installed) => () => Promise.resolve({
@@ -2822,13 +2827,13 @@ console.log('\n=== 24. the missing-companion hint: four states, and never a fals
   })
 
   async function setup (profileFetch, lang) {
-    const { plugin, ctx, provided } = sandboxWithProfile(profileFetch, lang)
+    const { plugin, ctx, provided, updates } = sandboxWithProfile(profileFetch, lang)
     plugin.apply(ctx)
     await new Promise((r) => setTimeout(r, 40))
     const reg = provided.quickControl
     const sw = reg && reg.getSwitches().find((s) => s.id === 'dock-flash:companions-missing')
     const copy = reg && reg.getSwitches().find((s) => s.id === 'dock-flash:companions-copy')
-    return { reg, sw, copy, lines: sw ? (sw.getLines() || []).join('\n') : null, meta: sw ? sw.getMeta() : null }
+    return { reg, sw, copy, updates, lines: sw ? (sw.getLines() || []).join('\n') : null, meta: sw ? sw.getMeta() : null }
   }
 
   const WEB = 'C:/Users/x/.dsh/profiles/web'
@@ -2924,6 +2929,48 @@ console.log('\n=== 24. the missing-companion hint: four states, and never a fals
     check('...while the command line stays locale-independent',
       !!t.lines && t.lines.includes('dsh plugin --profile web add dsh-flash-ctx-mon'),
       t.lines && t.lines.split('\n').filter((l) => l.startsWith('dsh plugin'))[0])
+  }
+
+  // ── (g) dismissing the hint: it must HIDE the rows, not invent a second state ──────────
+  // The block nags until the companions are installed, and a user who has decided not to install
+  // them is entitled to make it stop. The tempting implementation — a `dismissed` preference —
+  // would give one row two sources of truth: the visibility mode would draw it TICKED while the
+  // normal view refused to draw it, and the way back would be a second, unfindable undo. So the
+  // dismissal is asserted to go through the SAME hidden-set writer that mode uses, which is what
+  // makes "bring it back" the mechanism the user already has. Nothing is unregistered or removed:
+  // the rows keep existing, they are only not drawn.
+  {
+    const t = await setup(okProfile(WEB, []))
+    const sw = t.sw
+    check('the hint block offers a dismiss affordance', typeof sw.onClear === 'function',
+      'onClear=' + typeof sw.onClear)
+    check('...whose tooltip names the way back',
+      !!sw.clearTitle && String(sw.clearTitle()).includes('visibility mode'),
+      String(sw.clearTitle && sw.clearTitle()))
+
+    const ids = t.reg.getSwitches().map((s) => s.id)
+    const before = t.reg.getSwitches().length
+    t.updates.length = 0
+    sw.onClear()
+    await new Promise((r) => setTimeout(r, 20))
+
+    const written = t.updates.map((args) => args[1])
+      .filter((p) => p && p.panelOrder && p.panelOrder.hidden).pop()
+    const hidden = (written && written.panelOrder.hidden['builtin:system']) || []
+    check("dismissing writes the HIDDEN set (the visibility mode's own store), namespaced to the group",
+      hidden.includes('dock-flash:companions-missing') && hidden.includes('dock-flash:companions-copy'),
+      JSON.stringify(hidden))
+    check('...and it writes ONLY the hidden set — no new preference, nothing removed',
+      t.updates.every((args) => args[0] === 'dock-flash' && args.length === 3)
+        && !t.updates.some((args) => args[1] && Object.keys(args[1]).some((k) => k !== 'panelOrder')),
+      JSON.stringify(t.updates.map((a) => Object.keys(a[1] || {}))))
+    check('...and BOTH switches are still registered afterwards (hidden, not deleted)',
+      t.reg.getSwitches().length === before
+        && ids.includes('dock-flash:companions-missing') && ids.includes('dock-flash:companions-copy'),
+      'registered before=' + before + ' after=' + t.reg.getSwitches().length)
+    check('...so it stays restorable from the visibility page, and reachable by the reorder mode too',
+      typeof t.reg.getSwitches().find((s) => s.id === 'dock-flash:companions-copy').visible === 'function',
+      'the copy action still carries its own visible()')
   }
 }
 
