@@ -2758,7 +2758,7 @@ console.log('\n=== 24. the missing-companion hint: four states, and never a fals
     value: { namespaces: [{ ns: 'dock-flash', revision: 3, value: { panelOrder: {}, activeSkin: '', triggerPosition: 'conversation.overlay' } }] },
   }
 
-  function sandboxWithProfile (profileFetch) {
+  function sandboxWithProfile (profileFetch, lang) {
     const store = new Map()
     const body = new El('body')
     // The baseline sandbox is deliberately `zh-CN` (the maintainer's locale). This section
@@ -2780,8 +2780,8 @@ console.log('\n=== 24. the missing-companion hint: four states, and never a fals
       document: doc,
       // `detectLocaleTag()` reads `document.documentElement.lang` first, but the harness's `El`
       // has no `lang` getter — so it falls through to `navigator.language`, which the baseline
-      // sandbox pins to `zh-CN`. Pinning it here is what makes the strings below English.
-      navigator: { userAgent: 'harness', language: 'en', languages: ['en'] },
+      // sandbox pins to `zh-CN`. Pinning it here is what makes the strings below predictable.
+      navigator: { userAgent: 'harness', language: lang || 'en', languages: [lang || 'en'] },
       localStorage: {
         getItem: (k) => (store.has(k) ? store.get(k) : null),
         setItem: (k, v) => store.set(k, String(v)),
@@ -2821,8 +2821,8 @@ console.log('\n=== 24. the missing-companion hint: four states, and never a fals
     json: () => Promise.resolve({ dir, installed, active: [] }),
   })
 
-  async function setup (profileFetch) {
-    const { plugin, ctx, provided } = sandboxWithProfile(profileFetch)
+  async function setup (profileFetch, lang) {
+    const { plugin, ctx, provided } = sandboxWithProfile(profileFetch, lang)
     plugin.apply(ctx)
     await new Promise((r) => setTimeout(r, 40))
     const reg = provided.quickControl
@@ -2908,6 +2908,22 @@ console.log('\n=== 24. the missing-companion hint: four states, and never a fals
     check('...and it points at the in-app Plugins page instead',
       !!t.lines && t.lines.includes('managed exclusively by DSH Desktop'), t.lines)
     check('...so the copy action is hidden as well', !!t.copy && t.copy.visible() === false)
+  }
+
+  // ── (f) the Chinese strings, because that is the locale this project's own UI runs in ──
+  // The harness baseline is `zh-CN`, so this is the rendering the maintainer actually sees;
+  // without it a typo in the zh table would ship unasserted.
+  {
+    const t = await setup(okProfile(WEB, ['dsh-flash-proxy']), 'zh')
+    check('the Chinese rendering carries the same three states',
+      !!t.lines && t.lines.includes('未安装') && t.lines.includes('已安装，但未运行'),
+      t.lines)
+    check('...and its meta is Chinese too', t.meta === '未运行 4 项', JSON.stringify(t.meta))
+    check('...and the idle hint explains the distinction',
+      !!t.lines && t.lines.includes('已安装，但未运行」表示它的开关没有出现'), t.lines)
+    check('...while the command line stays locale-independent',
+      !!t.lines && t.lines.includes('dsh plugin --profile web add dsh-flash-ctx-mon'),
+      t.lines && t.lines.split('\n').filter((l) => l.startsWith('dsh plugin'))[0])
   }
 }
 
