@@ -19,10 +19,20 @@
 # Release moves the URL by itself, so the entry needs no edit and no pull request per release.
 # Pinning it to a tag would trade that for a manual follow-up every time.
 #
+# The tarball is the FALLBACK, not what users normally receive. Measured 2026-10: dsh-market's
+# installTargetFor() resolves an entry's npm name FIRST (entry.npm), then this Release tarball, then
+# `github:<owner>/<repo>` — and that machine's market log shows dock-flash@1.6.1 installed from the
+# registry. The registry resolves the npm mapping from the PUBLISHED package's own `repository` field,
+# which is why package.json must name github.com/tcgbp/dock-flash: a missing mapping leaves this
+# tarball in use, and a WRONG `repository` maps the package to somebody else's entry — and since it is
+# published metadata, fixing it later costs a release.
+#
 # Submission state, checked 2026-09-20: the GitHub repo carries the required `dsh-plugin` topic and
 # /releases/latest serves v1.2.0 with dock-flash.tgz attached, so the entry below is ready as-is. The
 # one prerequisite that is not ours to satisfy is the registry's repo-age gate — the GitHub mirror was
 # created 2026-09-19, so a PR may be rejected as too new until that window has passed.
+# Later check, 2026-10: the entry IS in the registry (data/plugins/tcgbp__dock-flash.yml, HTTP 200), so
+# the gate has passed and nothing needs submitting. Update this file if the entry ever changes.
 url: https://github.com/tcgbp/dock-flash
 name: tcgbp/dock-flash
 category: ui

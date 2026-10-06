@@ -61,7 +61,9 @@ git push origin master
 
 # 4. Build the release artifact. `pnpm pack` writes dock-flash-<version>.tgz; the
 #    GitHub Release asset must be named dock-flash.tgz, because the dsh-market
-#    registry entry's tarball URL is releases/latest/download/dock-flash.tgz.
+#    registry entry's tarball URL is releases/latest/download/dock-flash.tgz —
+#    the FALLBACK target for an entry whose npm mapping is absent, not the one
+#    the market normally installs.
 pnpm pack && mv dock-flash-<version>.tgz dock-flash.tgz
 
 # 5. Tag and push the tag, then mirror again — the tag needs its own dispatch.
@@ -71,6 +73,13 @@ git tag -a v<version> -m "<summary>"
 git push origin v<version>
 
 # 6. Create the Release and upload the asset (see the API snippets below).
+
+# 7. Publish to npm — also behind gate 2, and easy to get wrong in BOTH
+#    directions: npm 11.16 stages a bypass-2FA publish instead of publishing it,
+#    and its packument is CDN-cached. This is not "one more push".
+npm publish --access public          # or --otp=<code> to publish directly
+#    Then VERIFY per version and by installing, never by the exit code — see
+#    "Publishing to npm" below.
 ```
 
 **The Release title is the version and nothing else — `v<version>`.** Not a summary, not the commit
@@ -297,23 +306,97 @@ verification pass above rather than trusting five exit codes.
 ---
 
 
+## How a user installs a plugin
+
+Worth writing down because it decides what "being published" even means, and because two of its rules
+are easy to get backwards.
+
+**`dsh plugin --profile <p> <args…>` forwards its arguments verbatim to pnpm**, run with the profile
+directory as `cwd` (`@deepseek-ai/dsh-plugin-manager`'s `operations.js`). `add` is not a DSH
+subcommand, and there is no `enable`. So every form pnpm accepts works:
+
+| Form | Example |
+|---|---|
+| npm name | `dsh plugin --profile web add dock-flash dsh-flash-ctx-mon` — **pnpm takes several at once** |
+| name + range | `dock-flash@^2` |
+| local path / `file:` / `link:` | `./dock-flash` (relative is anchored to the *invoking* cwd) |
+| git | `github:tcgbp/dock-flash`, `git+https://gitee.com/lenin.guo/dock-flash.git` |
+| tarball URL or path | `https://github.com/tcgbp/dock-flash/releases/latest/download/dock-flash.tgz` |
+
+**Nothing is built, and nothing needs approving.** `dist/` is committed and **none of the five packages
+declares `prepare`, `prepublish`, `prepack` or `publish`**, so an npm, tarball or `github:` install
+lands the committed `dist/` as-is and pnpm asks for no `allowBuilds` entry. This is the payoff of
+tracking `dist/` (see `AGENTS.md`'s Build & Install). **Adding a `prepare` script later would break the
+`github:` form**: pnpm would refuse with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` until the user answered
+`allowBuilds`.
+
+**A stale `dock-flash` peer range is invisible here, and only bites npm.** The profile sets
+`autoInstallPeers: false`, pnpm merely *warns* about peer conflicts, and DSH's own pre-flight only
+inspects peers named `@deepseek-ai/dsh*`. So `dsh plugin add` installed a companion whose range
+excluded the installed dock-flash — while `npm install` refused it outright with `ERESOLVE`. Fix the
+range for npm's sake, not because this path reports it.
+
+**`add` enables the plugin by itself.** It writes the package name into `dsh.profile.bundles` in the
+profile's `package.json` (all five declare `dsh.bundle.patch`), and no `cordis.patch.yml` row is needed
+for that. The **UI** path differs: its install passes `enabled: false`, so the row is added but not
+selected, and the dialog's **立即启用 / Enable now** button is a second, separate step.
+
+**Publish "restart DSH", not "it appears immediately".** The host watches the profile manifest and HMR
+reloads when the ordered `dsh.profile.bundles` list changes, but that path has not been confirmed by
+running an install.
+
+**The `desktop` profile is reserved, and a normal `dsh` refuses it** — `--profile desktop` errors with
+*"profile "desktop" is managed exclusively by the Electron application"*. DSH Desktop users must use
+the in-app **Plugins** page (or the Desktop's own `dsh.cmd`, which passes `manageDesktopProfile`). The
+Plugins page also takes an npm name directly, classifies it as `{registry, path, git, tarball}`, and has
+a registry picker. **No catalog ships with DSH** — searching the whole bundle for `dsh-market` gives
+zero hits; discovery is the community market.
+
+**The one command to put in front of users:**
+
+```sh
+dsh plugin --profile <profile> add dock-flash dsh-flash-ctx-mon dsh-flash-mem-mon dsh-flash-net-mon dsh-flash-proxy
+```
+
+---
+
 ## Listing on dsh-market
 
-dsh-market reads its catalog from the curated **awesome-dsh-plugin** registry, so being installable
-from a Release is not the same as being listed. The entry to submit is already written and validated:
+dsh-market reads its catalog from the curated **awesome-dsh-plugin** registry, so being installable is
+not the same as being listed. **Listing is per package** — a companion is invisible until it has its own
+entry, however discoverable `dock-flash` is. *(Checked 2026-10: `data/plugins/tcgbp__dock-flash.yml`
+exists in the registry; the four companions return 404.)*
+
+**What the market actually installs is the npm name, not the Release tarball.** `dshmarket`'s
+`installTargetFor()` resolves an entry in this order:
+
+1. `entry.npm`, when the catalog carries one — **this wins**;
+2. the entry's own GitHub Release `.tgz` (name-squatting guard: it must be the entry's own `owner/repo`);
+3. `github:<owner>/<repo>`.
+
+So npm is what decides which artifact users get, and the tarball URL below is the *fallback* for an
+entry with no npm mapping. This corrects an earlier claim in this file. Measured on the maintainer
+machine: the market's install log records `dock-flash@1.6.1`, i.e. the registry spec, while the entry
+also carried the tarball URL.
+
+**That is also why `repository` must be right in `package.json`.** The registry resolves an entry's npm
+mapping by matching the **published** package's own `repository` field against the listed repository —
+so a missing one leaves the mapping absent (listing still works), and a *wrong* one maps the package to
+somebody else's entry. The published metadata is what counts, which means fixing it later costs a
+release.
+
+`dock-flash`'s entry is written and validated here:
 
 **[docs/tcgbp__dock-flash.yml](tcgbp__dock-flash.yml)**
 
-Copy it to `data/plugins/tcgbp__dock-flash.yml` in a fork of
-`https://github.com/awesome-dsh-plugin/awesome-dsh-plugin` and open a PR. The file's own comments
-record the rules the registry's validator enforces — the filename must equal `slugFor(url)`, only
-`url`/`name`/`category`/`description`/`tarball` are allowed, and `tarball` must be an https GitHub
-Release URL ending in `.tgz`.
-
-**Two things about it are deliberately not fixed here:** the `tarball` line is the version-free
-`releases/latest/download/` URL, so **no entry edit is needed per release**; and the repo must carry
-the `dsh-plugin` topic, which it does. The registry also applies a **repo-age gate** — check the
-GitHub mirror's `created_at` before submitting, because a PR from a repository younger than that
-window is rejected on age rather than on content.
+The file's own comments record the rules the registry's validator enforces — the filename must equal
+`slugFor(url)`, only `url`/`name`/`category`/`description`/`tarball` are allowed, and `tarball` must be
+an https GitHub Release URL ending in `.tgz`. It is deliberately the version-free
+`releases/latest/download/` URL, so **no entry edit is needed per release**. To submit a new entry, copy
+the file to `data/plugins/<slug>.yml` in a fork of
+`https://github.com/awesome-dsh-plugin/awesome-dsh-plugin` and open a PR; the repo must also carry the
+`dsh-plugin` topic. The registry applies a **repo-age gate**, so check the GitHub mirror's `created_at`
+before submitting — a PR from a repository younger than that window is rejected on age, not on content,
+and the gate re-runs itself every 6 hours.
 
 

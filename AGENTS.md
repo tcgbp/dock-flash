@@ -82,13 +82,16 @@ and the API route that still works while `github.com` is unreachable — is in
 - **`github.com` being unreachable is not the mirror being broken.** Measured in one sitting: eight
   consecutive `git push` attempts to `github.com:443` failed while `api.github.com` answered HTTP 200
   in 0.55 s. Reach for the API, not `git`.
-- **npm is a SECOND channel, and nothing keeps it in step.** The GitHub Release is what the dsh-market
-  entry points at; npm is what `npm install dock-flash` resolves. `npm publish` is as observable and as
+- **npm is a SECOND channel, and nothing keeps it in step.** dsh-market installs an entry's **npm
+  name** when it has one (the Release tarball is only the fallback), so npm is usually the channel a
+  user actually receives — and the registry resolves that mapping from the **published** package's own
+  `repository`, so a missing or wrong one costs a release to fix. `npm publish` is as observable and as
   unrecallable as the tag — it sits behind gate 2, never "while I am here". npm 11.16 **stages** a
   bypass-2FA publish instead of publishing it, and its packument is CDN-cached, so both "it failed" and
-  "it worked" are easy to misread: the staging symptoms, and the way to verify a publish actually
-  landed, are in [docs/releasing.md](docs/releasing.md). A companion's `dock-flash` peer range is a
-  hard npm gate, not documentation — a stale one makes `npm install` fail with `ERESOLVE`.
+  "it worked" are easy to misread: the staging symptoms, the accepted `add` specs, and the way to verify
+  a publish actually landed are in [docs/releasing.md](docs/releasing.md). A companion's `dock-flash`
+  peer range is a hard **npm** gate, not documentation — a stale one makes `npm install` fail with
+  `ERESOLVE`, while `dsh plugin add` only warns.
 
 
 ---
