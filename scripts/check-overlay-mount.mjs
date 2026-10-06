@@ -2736,6 +2736,181 @@ console.log('\n=== 23. a describe() that is NOT a promise must not kill the plug
   }
 }
 
+
+console.log('\n=== 24. the missing-companion hint: four states, and never a false "not installed" ===')
+{
+  // Since 2.0.0 the monitors and the proxy control live in their own packages, and an upgrade
+  // does not bring them along. The panel now names what is absent — but the point of these
+  // assertions is the STATE MACHINE, not the wording: "no switch registered" has three very
+  // different causes, and one of them must never be reported as "install it".
+  //
+  //   registered                          -> say nothing
+  //   not registered, package IS installed -> "installed, not running"  (switched off, or it
+  //                                          failed during apply() — how the 2.0.2 crash looked)
+  //   not registered, package is NOT there -> "not installed" + the command
+  //   profile list UNREADABLE              -> "state unknown", and NO "not installed"
+  //
+  // The last row is the one that matters: telling someone to install a package they already
+  // have is worse than saying nothing, and it is what a naive `getSwitches()` check does.
+
+  const NAMESPACE = {
+    ok: true,
+    value: { namespaces: [{ ns: 'dock-flash', revision: 3, value: { panelOrder: {}, activeSkin: '', triggerPosition: 'conversation.overlay' } }] },
+  }
+
+  function sandboxWithProfile (profileFetch) {
+    const store = new Map()
+    const body = new El('body')
+    // The baseline sandbox is deliberately `zh-CN` (the maintainer's locale). This section
+    // asserts the WORDS a user reads, so it pins its own `en` documentElement instead of
+    // depending on the ambient locale — and it must not mutate the shared one, which the
+    // sections before it read.
+    const docEl = new El('html')
+    docEl.setAttribute('lang', 'en')
+    const doc = Object.assign({}, documentStub, {
+      documentElement: docEl,
+      body,
+      querySelectorAll: (s) => [...body.querySelectorAll(s), ...head.querySelectorAll(s)],
+      getElementById: (id) => body.descendants().find((e) => e.id === id) || null,
+      addEventListener() {}, removeEventListener() {},
+      __fire() {},
+    })
+    body.isConnected = true
+    const sb = Object.assign({}, sandbox, {
+      document: doc,
+      // `detectLocaleTag()` reads `document.documentElement.lang` first, but the harness's `El`
+      // has no `lang` getter — so it falls through to `navigator.language`, which the baseline
+      // sandbox pins to `zh-CN`. Pinning it here is what makes the strings below English.
+      navigator: { userAgent: 'harness', language: 'en', languages: ['en'] },
+      localStorage: {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: (k) => store.delete(k),
+        clear: () => store.clear(),
+        get length() { return store.size },
+      },
+    })
+    sb.window = sb
+    sb.globalThis = sb
+    sb.fetch = profileFetch
+    let def = null
+    sb.window.__ModuleLoader__ = { load: (d) => { def = d } }
+    vm.runInNewContext(code, sb, { filename: 'lib/client.js#companions' })
+    const plugin = def.factory(requireStub)
+    const provided = {}
+    const ctx = {
+      get: (name) => (name === 'remote' ? undefined : provided[name]),
+      provide: (name, value) => { provided[name] = value },
+      on: () => () => {},
+      emit: () => {},
+      effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+      inject: () => () => {},
+      remote: {
+        settings: {
+          describe: () => Promise.resolve(NAMESPACE),
+          update: () => Promise.resolve({ ok: true, value: { revision: 4 } }),
+        },
+      },
+      logger: { info() {}, warn() {}, error() {} },
+    }
+    return { sb, plugin, ctx, provided }
+  }
+
+  const okProfile = (dir, installed) => () => Promise.resolve({
+    ok: true,
+    json: () => Promise.resolve({ dir, installed, active: [] }),
+  })
+
+  async function setup (profileFetch) {
+    const { plugin, ctx, provided } = sandboxWithProfile(profileFetch)
+    plugin.apply(ctx)
+    await new Promise((r) => setTimeout(r, 40))
+    const reg = provided.quickControl
+    const sw = reg && reg.getSwitches().find((s) => s.id === 'dock-flash:companions-missing')
+    const copy = reg && reg.getSwitches().find((s) => s.id === 'dock-flash:companions-copy')
+    return { reg, sw, copy, lines: sw ? (sw.getLines() || []).join('\n') : null, meta: sw ? sw.getMeta() : null }
+  }
+
+  const WEB = 'C:/Users/x/.dsh/profiles/web'
+  const ALL = ['dsh-flash-ctx-mon', 'dsh-flash-mem-mon', 'dsh-flash-net-mon', 'dsh-flash-proxy']
+
+  // ── (a) nothing installed: every row says not installed, and the command is complete ──
+  {
+    const t = await setup(okProfile(WEB, []))
+    check('the log switch is registered',
+      !!t.sw, 'switch=' + !!t.sw)
+    check('nothing installed -> all four are named as NOT installed',
+      !!t.lines && ALL.every((p) => t.lines.includes(p) && t.lines.includes('not installed')),
+      t.lines)
+    check('...and the meta counts all four as not running',
+      t.meta === '4 not running', JSON.stringify(t.meta))
+    check('...and the command is the real one, with the profile NAME from the route',
+      !!t.lines && t.lines.includes('dsh plugin --profile web add ' + ALL.join(' ')),
+      t.lines && t.lines.split('\n').filter((l) => l.startsWith('dsh plugin'))[0])
+    check('the copy action is offered', !!t.copy && t.copy.visible() === true,
+      t.copy && String(t.copy.visible()))
+  }
+
+  // ── (b) the profile list makes the difference between "not installed" and "not running" ──
+  {
+    const t = await setup(okProfile(WEB, ['dsh-flash-proxy']))
+    check('an installed-but-silent companion says "installed, not running", not "not installed"',
+      !!t.lines && t.lines.includes('dsh-flash-proxy  System proxy control — installed, not running'),
+      t.lines)
+    check('...and it is NOT in the install command (you already have it)',
+      !!t.lines && !t.lines.split('\n').filter((l) => l.startsWith('dsh plugin'))[0].includes('dsh-flash-proxy'),
+      t.lines && t.lines.split('\n').filter((l) => l.startsWith('dsh plugin'))[0])
+    check('...while the other three still are',
+      !!t.lines && ['dsh-flash-ctx-mon', 'dsh-flash-mem-mon', 'dsh-flash-net-mon']
+        .every((p) => t.lines.split('\n').filter((l) => l.startsWith('dsh plugin'))[0].includes(p)),
+      t.lines)
+    check('the meta counts the idle one too', t.meta === '4 not running', JSON.stringify(t.meta))
+  }
+
+  // ── (c) a REGISTERED companion is not reported at all ──────────────────────────────────
+  {
+    const t = await setup(okProfile(WEB, []))
+    // Stand in for the companion's own apply(): it registers a switch with its prefix.
+    t.reg.registerSwitch({ id: 'dsh-flash-ctx-mon:monitor-context', label: 'x', type: 'toggle',
+      group: 'system', order: 59, getValue: () => true, setValue: () => {} })
+    const lines = t.sw.getLines().join('\n')
+    check('a registered companion disappears from the list',
+      !lines.includes('dsh-flash-ctx-mon'), lines)
+    check('...and is not counted', t.sw.getMeta() === '3 not running', t.sw.getMeta())
+    check('...and its name is out of the command',
+      !lines.split('\n').filter((l) => l.startsWith('dsh plugin'))[0].includes('dsh-flash-ctx-mon'), lines)
+  }
+
+  // ── (d) AN UNREADABLE profile list must not become "not installed" ─────────────────────
+  {
+    const t = await setup(() => Promise.reject(new Error('no host route')))
+    check('an unreadable profile list reports every companion as UNKNOWN',
+      !!t.lines && ALL.every((p) => t.lines.includes(p))
+        // Count ROW lines, not the word: the hint below them mentions "state unknown" too.
+        && t.lines.split('\n').filter((l) => l.endsWith('state unknown')).length === 4,
+      t.lines)
+    check('...and the words "not installed" appear NOWHERE  <-- the assertion that matters',
+      !!t.lines && !t.lines.includes('not installed'), t.lines)
+    check('...and no install command is printed, because nothing is known to be missing',
+      !!t.lines && !t.lines.includes('dsh plugin --profile'), t.lines)
+    check('...so the copy action is hidden too', !!t.copy && t.copy.visible() === false,
+      t.copy && String(t.copy.visible()))
+    check('...while the unknown hint explains why', !!t.lines && t.lines.includes('state unknown" means'))
+  }
+
+  // ── (e) the reserved desktop profile gets the Plugins-page wording, never a command ────
+  {
+    const t = await setup(okProfile('C:/Users/x/.dsh/profiles/desktop', []))
+    check('the desktop profile is still reported as missing things',
+      !!t.lines && ALL.every((p) => t.lines.includes(p)), t.lines)
+    check('...but no `dsh plugin --profile desktop` command is printed',
+      !!t.lines && !t.lines.includes('dsh plugin --profile'), t.lines)
+    check('...and it points at the in-app Plugins page instead',
+      !!t.lines && t.lines.includes('managed exclusively by DSH Desktop'), t.lines)
+    check('...so the copy action is hidden as well', !!t.copy && t.copy.visible() === false)
+  }
+}
+
 console.log('\n' + (failures.length === 0 ? '✅ ALL CHECKS PASSED' : '❌ FAILURES: ' + failures.join('; ')))
 // The bundle installs its own intervals (skin refresh, i18n watch), so exit
 // explicitly rather than waiting for the event loop to drain.
