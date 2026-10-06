@@ -64,11 +64,20 @@ Seven invariants:
   `box-sizing: border-box` inside that row, so a click anywhere along the card's bottom edge toggles
   it — the glyph stays centred, so the drawn control is unchanged and only the target grew.
   `border-box` is load-bearing: under the default content box the button's own padding is added on
-  top of `100%` and the strip overflows the card.
-  Reordering forces it open and omits the fold button, because the body is click-through there and a
-  dead control is worse than a long block. Membership never changes shape — that is the point of a
-  fold over a `visible` gate: the panel's structure and the saved order survive a proxy being
-  configured or removed.
+  top of `100%` and the strip overflows the card. Because the strip is otherwise invisible, its
+  **static and hover states carry different colours** — a muted `label-secondary` glyph that turns
+  `label-primary` on an `interactive-bg-hover` tint, which is what shows the user where the widened
+  target is — and `onMouseLeave` restores `S.clusterFoldBtn`'s own values instead of repeating them,
+  so the two states cannot drift from the style.
+  **The control is omitted whenever the body would be empty**, the same "a dead control is worse than
+  a long block" rule as reordering. The case that motivates it is the cluster's master switch going
+  **OFF**: every other member of `system-alerts` is gated on `_getAlertsOn()` (`alert-toast`, both
+  host-alert sliders, and each companion monitor toggle), so `rest` and the child clusters filter
+  away to nothing while the head itself stays — leaving a `▼` over an empty body. This does **not**
+  contradict "membership never changes shape": members stay registered, in place and in the saved
+  order; only the control for an empty body is not drawn, and it returns with the master switch.
+  Reordering forces the cluster open and likewise omits the fold button, because the body is
+  click-through there.
 - **The INLINE form is the one cluster with no fold.** Every member declaring `clusterInline: true`
   (and every member a `select`) draws the cluster as a **title row with the members' dropdowns
   right-aligned on the row BELOW it** — and **no fold row**, because there is nothing to fold. The
