@@ -298,6 +298,14 @@ the 1000 image-lightbox backdrop. A literal here is what let the shipped **2000 
 over the toast** and over the dropdown anchored to the trigger. Never give these a fixed z-index;
 extend the same derivation instead.
 
+**The toast is anchored to the CONVERSATION's top-right, not the window's.** It is placed from
+`conversationViewport()`'s content corner — inside the scrollbar gutter, giving way to a right-side
+turn rail, exactly like the overlay trigger — and repositioned by a `ResizeObserver` on that viewport,
+because opening the right sidebar or moving the sash changes the conversation's box without firing a
+window `resize`. With no conversation on screen it falls back to the window corner: the overlay
+BUTTON hides there, but a notification that is never shown is a lost alert. Do not "simplify" this
+back to `right: 12px`.
+
 > Why a static element loses to every positioned sibling:
 > [docs/architecture-notes.md](docs/architecture-notes.md).
 

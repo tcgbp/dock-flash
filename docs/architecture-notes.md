@@ -217,6 +217,32 @@ came from the host: DSH's own `Toast.module.css` puts its banner at 1100 with th
 readable". A notification nobody can see is worse than a panel that is covered, so the derivation is
 floored there rather than following the 9 preset under all host chrome.
 
+### The toast was pinned to the window, one screen away from the conversation
+
+`S.toastContainer` carried `top: 12px; right: 12px`, which is a position against the **window**, not
+against the conversation it reports on. On any non-maximised or sidebar-heavy layout that put a new
+alert in the far corner of the screen — past the right sidebar, past the conversation's own edge, over
+the scrollbar gutter — while the conversation it described sat somewhere else entirely.
+
+It is now placed from `conversationViewport()`, the same structural anchor the overlay trigger uses
+(`div[class*="_scrollBody"]` whose `overflow-y` is auto/scroll, largest non-zero box on screen):
+
+- `left = contentRight - width - 12` — inward from the **content box**, so the toast clears the
+  reserved scrollbar gutter, which `right: 12px` against the window did not.
+- Gives way to a RIGHT-side turn rail via `turnRailProbe()`, since the rail occupies the same corner.
+- Clamped into `[rect.left, contentRight - width]`, so a narrow conversation cannot push it off.
+
+**A `ResizeObserver` on that viewport is what keeps it there**, not a window `resize` listener: opening
+the right sidebar and moving the sash both change the conversation's box without firing a window
+resize. The observer is re-pointed whenever the anchor element changes (`adoptToastAnchor()`), because
+a new session builds a new scroller and the old element disconnects rather than resizes.
+
+Two deliberate asymmetries with the overlay BUTTON: the toast **falls back to the window corner** when
+no conversation is on screen (the button hides there — a control with nowhere to go is noise, a
+notification that is never shown is a lost alert), and it is **anchored per toast**, not once, since
+the conversation may be rebuilt between two alerts. Known limit: a conversation narrower than the
+toast pins to its left edge and the toast overhangs to the right, rather than the box being narrowed.
+
 ---
 
 ### The overlay trigger: three reasons the button did not work
