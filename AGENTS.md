@@ -466,7 +466,7 @@ package name. **A new phase that reads a raw string must canonicalize before `se
 — the plugin-manager path did not, which is how the 0.15.3 duplicate came back. The worked case and its
 dump: [docs/skin-system.md](docs/skin-system.md).
 
-> **`check:overlay` is green — 189 assertions, 0 FAIL.** The ten market-era assertions this note
+> **`check:overlay` is green — 199 assertions, 0 FAIL.** The ten market-era assertions this note
 > used to excuse as a "known, accepted red" are realigned, so a red assertion is a REAL regression
 > now, never a baseline. Do not restore the market to explain one away; read the assertion.
 
@@ -519,162 +519,95 @@ monitor. Nothing in this repo consumes session events.
 
 ## Skin System Architecture
 
-**Seven entry paths, one predicate per filter.** A skin reaches the dropdown through phase 0 (managed),
-1a (`style[data-plugin]`), 1b (`style[data-skin-chrome]`), 2 (body attributes), 4 (`__DSH_BOOT__` /
-`graphRows`), 5 (**a live mark from `_skinLiveMarks`**) or 6 (**installed but switched off, from the
-profile's own manifest — host route `/plugins/dock-flash/profile-packages`**). `_skinAllowed` states
-BOTH filters (`_skinHint` AND `_skinExclude`) and is called from all seven — see **Critical Rule 8**,
-which also carries the two rules that keep the market from being offered as a skin.
-
-**Phases 5 and 6 are the last-resort sources, and each exists because the usual ones can be blind.**
-Phase 5: a mark in the document IS proof of installation, so a handle-less skin that is still
-rendering can be listed at all. Phase 6: **DSH Desktop lets no client plugin enumerate installed
-plugins** (its plugin manager refuses the reserved desktop profile, so `listPlugins()` /
-`listBundles()` answer nothing) and a switched-off handle-less skin has no mark either — so the
-profile's own `package.json`, read by the HOST half, is the only proof left. Without them such a
-case could be turned OFF but never back ON. Details: [docs/skin-system.md](docs/skin-system.md).
+**Seven entry paths, one predicate per filter.** A skin reaches the dropdown through phase 0
+(managed), 1a (`style[data-plugin]`), 1b (`style[data-skin-chrome]`), 2 (body attributes), 4
+(`__DSH_BOOT__` / `graphRows`), 5 (a live mark from `_skinLiveMarks`) or 6 (installed but switched
+off, from the profile's own manifest — host route `/plugins/dock-flash/profile-packages`).
+**`_skinAllowed(id)` states BOTH filters (`_skinHint` AND `_skinExclude`) and is called from all
+seven** — see **Critical Rule 8**. Phases 5 and 6 exist because the usual sources can be blind: for a
+handle-less skin that is still rendering, a mark in the document IS proof of installation; and on DSH
+Desktop the plugin manager refuses the reserved profile while a switched-off handle-less skin has no
+mark either, so the profile's `package.json`, read by the HOST, is the only proof left.
 
 > **`__DSH_BOOT__.entries` is not a complete install list**, and **a REJECTED `listPlugins()` is not
-> an empty one** — the second was cached for the session as "no plugins", making every skin read
-> `NO ADDRESSABLE ROW` until a reload. The cache now keys on a read that CONCLUDED (`ok`), and
-> `_refreshPluginEntries()` notifies only when rows arrived, which is what stops "do not cache a
-> failure" from becoming a render → fetch → notify loop.
+> an empty one** — the cache keys on a read that CONCLUDED (`ok`), and `_refreshPluginEntries()`
+> notifies only when rows arrived, which is what stops "do not cache a failure" from becoming a
+> render → fetch → notify loop.
 
-- **Excluded, never listed**: bloom-theme, black-hole, theme-manager, `dsh-skin-market` (the market
-  itself — supplies the list and is not a skin) and any `timeline` plugin, which looks exactly like a
-  CSS skin to the DOM scan while not being one. `_skinExclude` also protects THEM: deactivation
+The rules, one line each. Phase tables, case histories and measurements are in
+**[docs/skin-system.md](docs/skin-system.md)**:
+
+- **Excluded, never listed**: bloom-theme, black-hole, theme-manager, `dsh-skin-market` (supplies the
+  list and is not a skin) and any `timeline` plugin. `_skinExclude` protects THEM too — deactivation
   REMOVES a style element (Critical Rule 2), which would strip their own stylesheet.
-- **Managed skins** (Mineradio) cannot be toggled by touching style tags — they own a canvas/WebGL
-  lifecycle — so `_toggleManagedSkin()` writes the plugin's private key and drives the cross-tab
-  `storage` event (Critical Rule 3). The table is **curated**, because the DSH plugin contract offers
-  no way to discover a plugin's private enable key, its "active" attribute or its loader id. **Such a
-  skin's installation must be proven by the boot manifest, the module graph, or the plugin's own style
-  tag — NEVER by `enabledKey` in localStorage**, which dock-flash writes itself; and that key must not
-  be written for a skin that is not installed. `_managedInstallReason()` is the ONE predicate for that,
-  called by the scan AND by the flag sync.
-- **Switch a handle-less skin off as a WHOLE PLUGIN, through DSH's own plugin manager.** Some skins
-  (`dsh-dream-skin`, `dsh-theme-macintosh`) inject `<style>` tags carrying no `data-plugin` /
-  `data-skin-chrome`, drive themselves from their own `<html>` attributes and re-insert themselves from
-  a `MutationObserver`, so there is no selector, no tag and no activation attribute to act on; DSH ships
-  no remove-by-owner API either (`removeOwnedStyles()` keys on `data-plugin` too).
-  `_skinNotControllable()` is the ONE predicate for that shape, and its consequence is
-  `_switchSkinBundle()` → `ctx.remote.pluginManager`. **Two switches exist there and they are NOT
-  interchangeable: use the ENTRY one.** `setPluginEnabled(entryId, enabled)` acts on the RUNNING loader
-  and writes or clears that entry's `disabled:` row — live AND symmetric, which is what 默认 needs.
-  `setBundleEnabled(package, enabled)` only edits `dsh.profile.bundles`, so it is only the fallback for a
-  package with no addressable row. **The entry id need not come from `listPlugins()`: when that yields no
-  row, take it from the BOOT MANIFEST** — that is what makes the LIVE entry switch reachable on DSH
-  Desktop, where the manager refuses the reserved profile while DSH's own Plugins page toggles the same
-  plugin live. `setPluginEnabled()` answers `application: "applied" | "restart-required"`, DSH's own words
-  for "live" vs "needs a restart". The bundle fallback is composed at the running host's OWN boot, so a
-  page reload cannot apply it (MEASURED) — that path is the one that must say so.
-  **A remote resolves only for a client plugin that DECLARES it — twice over, and the second half is the
-  one that bites.** `dsh.client.inject` must name `@deepseek-ai/dsh-api-remotes` (load order — the package
-  that owns `ctx.remote.$mount()`), AND the plugin object's own `inject` must name the NAMESPACE SERVICE
-  `"remote.pluginManager"`: every namespace is a service of its own (`remoteServiceKey(ns)` is
-  `remote.${ns}`) and Cordis' guard proxy refuses an undeclared one, exactly as it does for
-  `"remote.settings"`. The official `dsh-client-ui-plugin-manager` declares all three. Either entry
-  missing makes every 默认 press a silent no-op that writes nothing — which is how it shipped, twice:
-  first with no package entry, then again with the package entry but only `"remote"`/`"remote.settings"`.
-  The state is
-  read first in every case, so an already-satisfied press writes nothing and cannot reload in a loop.
-  **A UI control never edits the install layers: it must use a switch that has an inverse.**
-- **Collect EVERY promise that represents a loader write — a write with no reload is a silent half-switch.**
-  Switching a handle-less skin ON is the same kind of write as switching it off, and both only change what the
-  NEXT page load boots, so `_applySkin()` pushes `_switchSkinBundle()` into `pending` in BOTH directions and
-  reloads when any of them reports a real change. The activation side once dropped that promise, which is
-  how "from 默认 I can switch to Dream once, then nothing until I reload the page" shipped; the full case
-  history is in [docs/architecture-notes.md](docs/architecture-notes.md). The state is read first, so an
-  already-satisfied switch resolves `false` and reloads nothing; that guard is what makes collecting the
-  promise safe even though `_applySkin()` also runs at boot. When a press still does nothing,
-  `window.__dockFlashSkinTrace()` (a 40-entry ring) is what tells the two causes apart — it names the route
-  that ran (`press.path`), whether the plugin manager actually wrote (`bundle.wrote`) and whether a reload
-  was scheduled (`reload`). **The ring lives in `sessionStorage` for that reason**: the switches it records
-  are the ones that reload the page, so a memory-only trace is wiped by the very event it exists to explain.
-- **A handle-less skin that is still RENDERING has to be reported, or 默认 becomes unreachable.** Every
-  record — the plugin manager's rows included — is bookkeeping: a theme can read `disabled` there and
-  still be painted in the page (a mounted instance, or styles left behind by an earlier load) while the
-  stored preference says `default`. The `<select>` then SHOWS `default`, and a select fires no event for the
-  value it already shows — so the user has no control left to press. `_skinLiveMarks` + `_skinInEffect()`
-  read the plugins' own marks (`html[data-dsh-material]`, `style#dsh-dream-skin-nav-icon`,
-  `style[data-mc-root]`, `html[data-mc-dock-on]` …) and are **DETECTION ONLY — never removal**, because
-  both plugins re-inject themselves. `_getActiveSkinId()` returns the marked id, so the dropdown names what
-  actually renders; and `_applySkin('default')` knows that press wrote nothing (`changed` is all-false,
-  the row already read `disabled`) and **reloads anyway** — in that state the reload IS the switch.
-- **默认 is not a package name, and the switch to it must go through `_applySkin()`.**
-  `_activateThemeViaPluginManager()` short-circuits `'default'` to `_applySkin('default')`, which is
-  the only route that reaches the branch switching EVERY skin off. Every other branch there is about
-  ONE package (`_skinEntryRow(rows, _skinBundleName(name))`, "enable the target, disable the others")
-  and no row exists for `default`, so that route used to stop in the `!targetRow` fallback: 默认
-  switched a handle-less skin off (its path IS `_switchSkinBundle()`) and left a CSS skin bundled and
-  repainting. The measurement: [docs/architecture-notes.md](docs/architecture-notes.md).
-- **A CSS skin is a WHOLE PLUGIN, and the switch has THREE call sites plus TWO halves — all five
-  must agree.** A press runs `_activateThemeViaPluginManager()`, which has its OWN "enable the
-  target, disable the others" loop; `_applySkin()`'s two loops (默认 and deactivate-others) and
-  `_switchSkinBundle()` are the others. Every one needs both halves: the entry row
-  (`setPluginEnabled`, HOST half) and `dsh.profile.bundles` (`_switchSkinBundle()` →
-  `byBundlePath()`, VISIBLE half). The five measured defects, one per call site — the row path that
-  returned before `byBundlePath()`, the loop that treated its target as "already done" and hard-coded
-  `false` for every other skin, the row path that resolved `false` for an `applied` switch (so a press
-  wrote the rosters and never reloaded, since `_applySkin()` reloads on `pending.some(Boolean)`),
-  `byBundle()`'s `undefined`, and `byBundlePath()`'s guard inverted for ON:
-  [docs/architecture-notes.md](docs/architecture-notes.md). **`_isMarketLiveTheme()` gates nothing
-  here — nothing ever assigns `_marketThemes`, so it is always `false`. See [docs/skin-system.md].**
-- **The entry id is NOT derivable, and an EMPTY candidate list is not "nothing to do".**
-  `_entryIdCandidates()` only GUESSES, and every wrong guess answers `unknown-plugin` (MEASURED:
-  `dsh-dream-skin`'s real id is `dream-skin`); `POST /plugins/dock-flash/set-plugin-entry` is the
-  authority, because the HOST reads the package's own `cordis.patch.yml`. **Resolve the profile from
-  `profileContext`, never `readdirSync` order** (two profiles listing dock-flash sent every write to
-  the other one), and write the row with NO `name:` — DSH skips a name mismatch, so the id alone
-  addresses the entry. The list is ALSO empty before `/plugins/dock-flash/profile-packages` answers —
-  `enabledNow` then reads `false`, which for
-  a DISABLE equals the wanted `false`. That is the first press of 默认 after a cold load ("需要切两次"),
-  so that branch must drive the HOST route instead of falling through to `byBundlePath()`. **Write
-  BOTH halves** — the ENTRY row (running loader) and `dsh.profile.bundles` (next boot); writing only
-  the entry left `dsh-dream-skin` installed but out of the roster, so it could not come back.
-  Measurements: [docs/skin-system.md](docs/skin-system.md).
-- **A CSS skin that is active while the stored skin is NOT a CSS skin is a stray, and the boot sweep
-  must switch it off as a PLUGIN.** Both CSS branches of `enforceBootSkin()` are gated on
-  `targetIsCss`, so a handle-less target (Dream) fell through to "do nothing" — MEASURED:
-  `claude-style-skin` stayed loaded and painting on every boot. The `else` branch now runs
-  `_switchSkinBundle(s, false)` over
-  `activeCss.filter((s) => s.id !== storedSkin)`, deliberately NOT `_applySkin(storedSkin, true)`.
-- **A skin with a CSS handle is switched off by REMOVING its style tag — so the boot check is a
-  LADDER plus an observer, never one pass.** This is the SECOND line of defence, for a profile whose
-  stored preference is `default` while the skin is still bundled (an older version's press, or a
-  write that never landed). It reads the DOM, and it runs when this plugin's `apply()` does, which is
-  not necessarily after the skin's own — a pass that sees no active CSS skin leaves it painted for the
-  whole session although every write it made was correct. The measured cases:
-  [docs/architecture-notes.md](docs/architecture-notes.md). `enforceBootSkin()` is therefore
-  a NAMED function run at 0 / 1.2 / 3 / 6 / 10 s **and** on a `MutationObserver` watching
-  documentElement + head for the announcements a skin makes (`data-plugin` / `data-skin-chrome` /
-  `data-dsh-material`, or a `<style>`/`<link>` landing) — that observer is what turns "within
-  1.2 s" into "at once", and its RECORD TEST is what keeps it affordable, because one enforcement is a
-  full five-query scan. **Every pass must be idempotent** (an already-clean page falls through every
-  branch), the observer disconnects at 12 s, and each pass re-reads `_hostPrefs.activeSkin` so a
-  selection made in between wins. A skin that survives even the ladder means a longer ladder — never a
-  bigger first delay.
-- **`options()` and `_applySkin()` must read ONE list.** The dropdown merges the DOM/boot scan with the
-  skins the scan cannot see, while `_applySkin()` once iterated the SCAN ALONE — so a skin reachable
-  only through the merge could be selected but not acted on: not activated, and not switched off by
-  默认. `_knownSkins()` is that one list, for both callers.
-- **The switcher no longer needs dsh-market, and the market is not what it reads.** Discovery and
-  switching go through DSH's own plugin manager (`_pluginManagerSkinExtras()` over the entry and bundle
-  lists; `_activateThemeViaPluginManager()` for activation — its own comment records the replacement of
-  `_activateThemeViaMarket()`), and `_skinAllowed()` is a **pure name heuristic**, as its comment says.
-  **`_registerSkinSwitch()` is called unconditionally**, not from a market callback; the
-  market-classification history it replaced: [docs/architecture-notes.md](docs/architecture-notes.md).
+- **One skin yields ONE id, and that id is the PACKAGE name.** Canonicalization lives in phases 1a/1b,
+  the two that read a RAW DOM string, and a decorative suffix (`-style`/`-chrome`/`-css`) is stripped
+  only when a known source CONFIRMS the stripped name. A new phase that reads a raw string must
+  canonicalize before `seen.has()`/`seen.add()` — the plugin-manager path did not, which is how the
+  0.15.3 duplicate came back.
+- **Managed skins** (Mineradio) own a canvas/WebGL lifecycle, so `_toggleManagedSkin()` writes the
+  plugin's private key and drives the cross-tab `storage` event (Critical Rule 3). Installation is
+  proven by the boot manifest, the module graph or the plugin's own style tag — **never by
+  `enabledKey` in localStorage**, which dock-flash writes itself — and `_managedInstallReason()` is
+  the ONE predicate for that, called by the scan AND the flag sync.
+- **A handle-less skin is switched as a WHOLE PLUGIN** through `ctx.remote.pluginManager`;
+  `_skinNotControllable()` is the ONE predicate for that shape. **Use the ENTRY switch, never the
+  bundle one**: `setPluginEnabled(entryId, enabled)` is live AND symmetric, while `setBundleEnabled`
+  only edits `dsh.profile.bundles` and is the fallback for a package with no addressable row — and
+  that write is composed at the running host's own boot, so a reload cannot apply it. The entry id
+  need not come from `listPlugins()`: take it from the BOOT MANIFEST when that yields no row.
+  `application: "applied" | "restart-required"` is DSH's own live-vs-restart answer.
+- **A remote resolves only for a plugin that DECLARES it — twice over.**
+  `dsh.client.inject` must name `@deepseek-ai/dsh-api-remotes` AND the plugin's own `inject` must name
+  the NAMESPACE SERVICE `"remote.pluginManager"` (`remoteServiceKey(ns)` is `remote.${ns}`). Either
+  one missing makes every 默认 press a silent no-op that writes nothing. The state is read FIRST, so
+  an already-satisfied press writes nothing and cannot reload in a loop.
+- **Collect EVERY promise that represents a loader write, in BOTH directions.** `_applySkin()` pushes
+  `_switchSkinBundle()` into `pending` for activation as well as deactivation, and reloads when any
+  reports a real change: a write with no reload is a silent half-switch. When a press still does
+  nothing, `window.__dockFlashSkinTrace()` — a 40-entry ring in `sessionStorage`, because the switches
+  it records are the ones that reload — names the route, whether the manager wrote, and whether a
+  reload was scheduled.
+- **A handle-less skin that is still RENDERING must be reported**, or 默认 becomes unreachable: the
+  rows say `disabled` while the theme is painted, and a `<select>` fires no event for the value it
+  already shows. `_skinLiveMarks` + `_skinInEffect()` are **DETECTION ONLY — never removal**, and
+  `_applySkin('default')` **reloads anyway** when its press wrote nothing, because in that state the
+  reload IS the switch.
+- **默认 is not a package name**: `_activateThemeViaPluginManager()` short-circuits it to
+  `_applySkin('default')`, the only route that switches EVERY skin off.
+- **A CSS skin is a WHOLE PLUGIN, and the switch has THREE call sites plus TWO halves — all five must
+  agree**: the entry row (`setPluginEnabled`) AND `dsh.profile.bundles` (`byBundlePath()`). Nothing
+  else is a switch — a UI control never edits the install layers. `_isMarketLiveTheme()` gates
+  nothing: nothing assigns `_marketThemes`, so it is always `false`.
+- **The entry id is NOT derivable** — `_entryIdCandidates()` only guesses, and `dsh-dream-skin`'s real
+  id is `dream-skin`. `POST /plugins/dock-flash/set-plugin-entry` is the authority because the HOST
+  reads the package's own `cordis.patch.yml`. **Resolve the profile from `profileContext`, never
+  `readdirSync` order**, and write the row with **no `name:`** — DSH skips a name mismatch, so the id
+  alone addresses the entry. An EMPTY candidate list is not "nothing to do": before
+  `/profile-packages` answers `enabledNow` reads `false`, which for a disable equals the wanted value
+  — that is the cold-load "需要切两次" first press, and that branch must drive the HOST route instead
+  of falling through to `byBundlePath()`.
+- **A CSS skin active under a non-CSS stored skin is a STRAY**, and the boot sweep switches it off as
+  a PLUGIN (`_switchSkinBundle(s, false)` over the other active CSS skins) — deliberately NOT
+  `_applySkin(storedSkin, true)`, which both CSS branches gate away.
+- **The boot check is a LADDER plus an observer, never one pass.** `enforceBootSkin()` is a NAMED
+  function at 0 / 1.2 / 3 / 6 / 10 s AND on a `MutationObserver` over documentElement + head, with a
+  RECORD TEST because one enforcement is a full five-query scan. Every pass must be idempotent, the
+  observer disconnects at 12 s, each pass re-reads `_hostPrefs.activeSkin`, and a skin that survives
+  means a LONGER LADDER — never a bigger first delay.
+- **`options()` and `_applySkin()` read ONE list** (`_knownSkins()`): a skin reachable only through
+  the merge could otherwise be selected but not acted on — not activated, and not switched off by 默认.
+- **The switcher no longer needs dsh-market.** Discovery and activation go through DSH's own plugin
+  manager, `_skinAllowed()` is a PURE name heuristic, and `_registerSkinSwitch()` is called
+  unconditionally rather than from a market callback.
 
 > **Preferences and the `remote`/`inject` contract live in one place** —
 > [docs/skin-system.md](docs/skin-system.md): the four-layer preference bridge, why localStorage is a
 > cache and never the authority, the `describe()` nesting, the three-argument `settings.update`, the
 > schemastery traps, and the migration rules. Read it before adding a preference. The one line that must
-> stay in mind while editing: **a new preference means `SettingsSchema` + the `loadHostPreferences()`
+> stay in mind while editing: **a new preference means `SettingsSchema` + `loadHostPreferences()`'s
 > mapping + a read from `_hostPrefs` + a write through `savePrefs()` — the mapping list IS the contract**
 > (`triggerOverlayOffset` shipped declared-and-read but unmapped, so the host value was silently ignored).
-
-> The phase/category tables, the managed-skin configuration, the `/use-skin` one-way-door history, and
-> the diagnostics hooks: [docs/skin-system.md](docs/skin-system.md).
 
 ---
 

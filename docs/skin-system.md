@@ -554,3 +554,65 @@ at all next time:
 The negative control is the reported behaviour itself: with this branch absent the stray survives
 every boot; with it present `claude-style-skin` is switched off as a plugin (entry row + roster) and
 Dream is left untouched — verified by a sandbox harness that plants exactly the DOM above.
+
+---
+
+## Moved out of `AGENTS.md` — the boot ladder, the managed-skin proof, and the five call sites
+
+Three details that used to live in `AGENTS.md` as part of the skin rules. The RULE stays there in one
+line; the specifics that make it actionable live here.
+
+### The boot ladder, in full
+
+`enforceBootSkin()` is the SECOND line of defence: for a profile whose stored preference is `default`
+while a CSS skin is still bundled (an older version's press, or a write that never landed). It reads
+the DOM, and it runs when this plugin's `apply()` does — which is **not necessarily after the skin's
+own**, so a single pass that sees no active CSS skin leaves it painted for the whole session even
+though every write dock-flash made was correct. Hence a ladder:
+
+- a NAMED function run at **0 / 1.2 / 3 / 6 / 10 s**, AND
+- a `MutationObserver` on documentElement + head for the announcements a skin makes
+  (`data-plugin` / `data-skin-chrome` / `data-dsh-material`, or a `<style>`/`<link>` landing). That
+  observer is what turns "within 1.2 s" into "at once", and its **RECORD TEST** is what keeps it
+  affordable: one enforcement is a full five-query scan, so it only runs when an announcement it cares
+  about actually arrived.
+
+Three invariants hold it together:
+
+- **Every pass must be idempotent** — an already-clean page falls through every branch, and
+  `_switchSkinBundle()` keeps its own already-satisfied guard.
+- **The observer disconnects at 12 s.** It is a boot aid, not a permanent watcher.
+- **Each pass re-reads `_hostPrefs.activeSkin`**, so a selection the user made in between wins over
+  the value the pass started from.
+
+A skin that survives even the ladder means a **LONGER LADDER** — never a bigger first delay.
+
+### The managed-skin installation proof
+
+`_managedInstallReason()` is the ONE predicate that answers "is this managed skin actually installed",
+and it is called by the scan AND by the flag sync so the two can never disagree.
+
+It must answer from the **boot manifest, the module graph, or the plugin's own style tag** — NEVER
+from `enabledKey` in localStorage, because dock-flash writes that key itself and a self-written key is
+not evidence of anything. The same rule forbids writing that key for a skin that is not installed.
+The managed table (Mineradio) is **curated**: the DSH plugin contract offers no way to discover a
+plugin's private enable key, its "active" attribute or its loader id, so it cannot be derived.
+
+### The five call sites, and `byBundle()`'s `undefined`
+
+The "three call sites plus two halves" rule, spelled out. A press runs
+`_activateThemeViaPluginManager()`, which has its OWN "enable the target, disable the others" loop;
+`_applySkin()`'s two loops (默认 and deactivate-others) and `_switchSkinBundle()` are the others. Every
+one of the five needs BOTH halves — the entry row (`setPluginEnabled`, HOST half) and
+`dsh.profile.bundles` (`_switchSkinBundle()` → `byBundlePath()`, VISIBLE half).
+
+The measured defects, one per call site, and the reason the rule is stated as "all five":
+
+- the row path that returned **before** `byBundlePath()`;
+- the loop that treated its target as "already done" and hard-coded `false` for every other skin;
+- the row path that resolved `false` for an `applied` switch, so a press wrote the rosters and never
+  reloaded (`_applySkin()` reloads on `pending.some(Boolean)`);
+- `byBundle()` returning **`undefined`** — a plain miss, which read as "not enabled" in one direction
+  and as "nothing to do" in the other;
+- `byBundlePath()`'s guard **inverted for ON**.
+
