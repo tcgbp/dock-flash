@@ -263,27 +263,47 @@ and a single edge places the panel partly outside the window. MEASURED on a 1440
 | `input` (default), `rect.top` 450 (mid-page) | top **-186px** | **top 186px clipped** |
 | overlay, `rect.top` 450 (mid-page) | top **-186px** | **top 186px clipped** — its fallback only ever tested the BELOW case |
 | `input`, `rect.top` 20 (very top) | top **-616px** | **top 616px clipped** |
+| `input`, `left` 1380, near the right edge | right edge at **1520px** | **80px past the window** — `left: max(8, rect.left)` had no upper clamp |
 | `input`, `rect.top` 850 (near bottom) | top 214px | fits — unchanged |
 | header, `rect.top` 60 | top 96px | fits — unchanged |
 
-The panel's body already scrolls (the React root is a flex column with `minHeight: 0`, and `panelBody`
-is `overflowY: auto`), so the fix is to CAP the panel to the side it was given rather than let it
-overflow: choose the side that fits, switch sides when the preferred one does not, and when neither
-does, take the larger and cap to it. 5 of the 8 probed placements come out **bit-identical** to the old
-ones; only the three broken cases move, and they move to `top: 8px` with the body scrolling.
+**The fix is to TURN THE CORNER, not to resize the panel.** An earlier attempt capped the panel to the
+room it had and let its body scroll; that was rejected, and rightly — a panel that changes height
+depending on where its button is parked is a different panel every time, and the shrinking is what
+produces the scrollbar the user then has to fight. The panel keeps its own height (`max-height: 70vh`)
+and placement never touches it. The order of preference is now:
+
+1. the configured vertical side, if it can hold the panel's **full** height;
+2. the *other* vertical side, if it can;
+3. **beside** the button — the side with room horizontally — because a 320px-wide panel fits beside a
+   mid-page ⚡ even when 630px of height does not fit above or below it.
+
+Inside every case the panel is clamped into the window on both axes, from the measured box. If even
+"beside" cannot hold it (a window shorter than the panel), the **top** is pinned inside the margin, so
+what overflows is the bottom and the **header — grip, title, × — always survives**. That priority is
+the point of the whole change: a clipped panel loses exactly the part that cannot be done without.
+
+MEASURED on a 1440x900 viewport with a 630px panel:
+
+| Position / button | New placement | Result |
+|---|---|---|
+| overlay, mid-page at the conversation's right edge | **beside-left**, left 1055, top 262 | fully visible |
+| `input` (default), mid-page | **beside-right**, left 730, top 262 | fully visible |
+| `input`, near bottom / near bottom-right | above, left 1112 | fully visible (was 80px past the right edge) |
+| header, near the top | below, left 604 | fully visible — unchanged |
+| `input`, window shorter than the panel (vh 500) | beside-right, top 8 | bottom overflows, **header intact** |
 
 Two supporting details:
 
-- **The cap is shared, not restated.** `PANEL_MAX_VH` drives both the container's `max-height` and the
-  arithmetic, so the box can never be taller than the placement believes it is.
 - **The height is 0 when placement first runs.** `openPanel()` calls `positionPanel()` BEFORE
   `display: flex`, and React 18's `createRoot().render()` is async anyway, so the old overlay branch's
-  `|| 320` estimate was what every open used. A `ResizeObserver` on the panel re-runs placement once it
-  has a real box — which also covers a tab switch changing the content height.
-
-The horizontal clamp was wrong in the same shape: `right: innerWidth - rect.right` keeps only the
-panel's RIGHT edge inside the window, so a button near the LEFT edge drove the left edge negative —
-the opposite of what its own comment claimed. Both axes are now clamped from the measured box.
+  `|| 320` estimate was what every open used. An unknown height takes the configured side; a
+  `ResizeObserver` on the panel re-runs placement once it has a real box, which is also what makes the
+  "beside" decision possible at all. It covers a tab switch changing the content height too.
+- **Both axes are clamped from the measured box.** The old horizontal clamp
+  (`right: innerWidth - rect.right`) kept only the panel's RIGHT edge inside the window, so a button
+  near the LEFT edge drove the left edge negative, and the `input` branch's `left: max(8, rect.left)`
+  drove the right edge out for a button near the RIGHT edge. Neither axis had a two-sided clamp.
 
 ---
 
