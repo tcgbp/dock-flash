@@ -60,6 +60,11 @@ Seven invariants:
   card's **last row, centred**, arrow pointing the way the click moves the content (`▼` reveals,
   `▲` tucks away) — keep it there rather than beside the head, where it reads as an ornament, and
   keep it **count-free** (a number beside a triangle reads as a badge). It defaults to **FOLDED**.
+  **The hit area is the whole strip, not the glyph**: the button is `width: 100%` plus
+  `box-sizing: border-box` inside that row, so a click anywhere along the card's bottom edge toggles
+  it — the glyph stays centred, so the drawn control is unchanged and only the target grew.
+  `border-box` is load-bearing: under the default content box the button's own padding is added on
+  top of `100%` and the strip overflows the card.
   Reordering forces it open and omits the fold button, because the body is click-through there and a
   dead control is worse than a long block. Membership never changes shape — that is the point of a
   fold over a `visible` gate: the panel's structure and the saved order survive a proxy being
