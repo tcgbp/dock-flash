@@ -916,6 +916,14 @@ slotsCallback({
 })
 const sizeSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:trigger-size')
 check('the trigger-size switch is registered', !!sizeSwitch)
+// The close-on-blur row and the header button draw the SAME glyph. They did not: the row asked for
+// the generic `eye` while the button drew a panel with a pointer leaving it, so one setting wore two
+// faces. Here the row half is behavioural (its registered icon name); section 27 pins the button's
+// real DOM against the same declaration.
+const cobSwitch = registry.getSwitches().find((s) => s.id === 'dock-flash:close-on-blur')
+check('the close-on-blur row asks for the SHARED glyph, not the generic eye',
+  !!cobSwitch && cobSwitch.icon === 'close-on-blur',
+  cobSwitch ? String(cobSwitch.icon) : 'switch not registered')
 check('it is a slider spanning the OVERLAY ceiling (24..64, step 2)',
   !!sizeSwitch && sizeSwitch.type === 'slider' && sizeSwitch.min === 24 &&
   sizeSwitch.max === 64 && sizeSwitch.step === 2,
@@ -3230,6 +3238,31 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
     // `visibility: hidden`, NOT `display: none` — the title is the row's `flex: 1` spacer, so
     // taking it out of the layout slides the close buttons to the left. Measured in Chrome (the
     // sandbox has no layout engine): x right edge 168 of 176 either way, 90 with `display: none`.
+    // One glyph, ONE source. The row asked for the generic `eye` while the header button drew a
+    // panel with a pointer leaving it — the same setting wearing two faces.
+    //
+    // The two halves are observed in the only two ways this sandbox allows. The ROW is asserted
+    // through the registry it actually registered with (behaviour). The header BUTTON is a real DOM
+    // node and its SVG is compared against the declaration in `_ICON_PATHS` — a SOURCE pin, because
+    // the table lives inside the factory closure and React rows are never materialized here. Stated
+    // as such rather than implied.
+    const declaredPaths = (key) => {
+      const m = new RegExp("'" + key + "':\\s*\\[([\\s\\S]*?)\\]").exec(code)
+      return m ? (m[1].match(/'([^']+)'/g) || []).map((x) => x.slice(1, -1)) : []
+    }
+    const sharedPaths = declaredPaths('close-on-blur')
+    const eyePaths = declaredPaths('eye')
+    // Every node's markup, not "the first svg" — the head's FIRST `<svg>` is the ⚡ (the product
+    // mark), which cost one wrong assertion before this was written this way.
+    const headMarkup = head ? head.descendants().map((e) => String(e.innerHTML || '')) : []
+    const drawsShared = sharedPaths.length === 2
+      && headMarkup.some((html) => sharedPaths.every((d) => html.indexOf(d) !== -1))
+    const drawsEye = eyePaths.some((d) => headMarkup.some((html) => html.indexOf(d) !== -1))
+    check('...and the header button draws that same declaration, not a second drawing',
+      drawsShared && !drawsEye,
+      'shared=' + JSON.stringify(sharedPaths.map((d) => d.slice(0, 18)))
+        + ' eyeDrawn=' + String(drawsEye))
+
     check('...and compact mode hides the title WITHOUT taking its flex slot away',
       !!titleEl && titleEl.style.visibility === 'hidden' && titleEl.style.display === '',
       titleEl ? JSON.stringify([titleEl.style.visibility, titleEl.style.display]) : 'no title node')
