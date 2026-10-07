@@ -99,6 +99,10 @@ export const Config = Schema.object({
     // list changes (the 1.1.0 lesson this namespace already records).
     triggerLayer: Schema.number().default(DEFAULT_TRIGGER_LAYER).volatile(),
     overlayOpacity: Schema.number().default(DEFAULT_OVERLAY_OPACITY).volatile(),
+    // Double-clicking the ⚡ shows a narrower, chrome-free panel: icons and the controls
+    // themselves, nothing to read and nothing to reorder. A preference rather than a
+    // per-session state because it is a way of working, and the double-click is its switch.
+    compactPanel: Schema.boolean().default(false).volatile(),
     // ── D · System alerts (merged with A per §7 decision) ────────────────
     // Per-monitor thresholds extracted to companion plugins
     // (dsh-flash-ctx-mon / dsh-flash-mem-mon); only the host alert queue

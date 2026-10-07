@@ -3057,6 +3057,198 @@ console.log('\n=== 26. a style swap must not lose an edge (React diffs style obj
     'TAB_HAIRLINE references = ' + (code.match(/TAB_HAIRLINE/g) || []).length)
 }
 
+
+console.log('\n=== 27. the compact panel: a preference, a gesture, and the cluster rule ===')
+{
+  // Three separate claims, because they fail in three different ways:
+  //   * the MODE is a preference, so it must reach the panel from the host namespace (not from a
+  //     prop, and not from localStorage) and must remove the text chrome;
+  //   * the GESTURE is `MouseEvent.detail`, because `dblclick` only fires after two `click`s and
+  //     the second of those is the one that toggles the panel;
+  //   * the CLUSTER rule drops a whole block when its master switch is off, which is the one
+  //     thing about this mode that can silently hide a working control.
+
+  // The plugin injects `slots` and registers the trigger through it; the harness's own stub is
+  // local to an earlier section, so this one carries its own.
+  const slotsService = {
+    inject: (_name, fn) => { try { fn() } catch (_) {} return () => {} },
+    register: () => () => {},
+  }
+
+  let storedSlotCallback = null
+
+  const NAMESPACE_COMPACT = {
+    ok: true,
+    value: { namespaces: [{ ns: 'dock-flash', revision: 3, value: {
+      panelOrder: {}, activeSkin: '', triggerPosition: 'conversation.overlay',
+      compactPanel: true,   // <- the mode arrives as a PREFERENCE
+    } }] },
+  }
+
+  function compactSandbox (compactPanel) {
+    const store = new Map()
+    // The overlay is the position this section needs (it owns the ⚡ that takes the double-click),
+    // and the DEFAULT is a slot position — so it is seeded here exactly as the base sandbox does.
+    store.set('dock-flash:trigger-position', 'conversation.overlay')
+    const body = new El('body')
+    const docEl = new El('html')
+    docEl.setAttribute('lang', 'en')
+    const doc = Object.assign({}, documentStub, {
+      documentElement: docEl,
+      body,
+      querySelectorAll: (s) => [...body.querySelectorAll(s), ...head.querySelectorAll(s)],
+      getElementById: (id) => body.descendants().find((e) => e.id === id) || null,
+      addEventListener() {}, removeEventListener() {},
+      __fire() {},
+    })
+    body.isConnected = true
+    const sb = Object.assign({}, sandbox, {
+      document: doc,
+      navigator: { userAgent: 'harness', language: 'en', languages: ['en'] },
+      localStorage: {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: (k) => store.delete(k),
+        clear: () => store.clear(),
+        get length() { return store.size },
+      },
+    })
+    sb.window = sb
+    sb.globalThis = sb
+    let def = null
+    sb.window.__ModuleLoader__ = { load: (d) => { def = d } }
+    vm.runInNewContext(code, sb, { filename: 'lib/client.js#compact' })
+    const plugin = def.factory(requireStub)
+    const provided = {}
+    const updates = []
+    const ctx = {
+      get: (name) => (name === 'remote' ? undefined : (name === 'slots' ? slotsService : provided[name])),
+      provide: (name, value) => { provided[name] = value },
+      on: () => () => {},
+      emit: () => {},
+      effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+      // STORED, not called — the same shape the base sandbox uses, and for the same reason: the
+      // callback mounts the SLOT trigger and registers the Layout switches, and running it
+      // synchronously inside apply() means anything it throws aborts apply() itself, so
+      // `applyTrigger()` never runs and the overlay button this section clicks is never created.
+      // It also matches Cordis: the service arrives when it arrives, not mid-apply.
+      inject: (deps, cb) => { if (typeof cb === 'function') storedSlotCallback = cb; return () => {} },
+      // The slot path needs a `slots` service to mount the trigger; the overlay needs none.
+      slots: slotsService,
+      remote: {
+        settings: {
+          describe: () => Promise.resolve(compactPanel === undefined
+            ? NAMESPACE_COMPACT
+            : { ok: true, value: { namespaces: [{ ns: 'dock-flash', revision: 3, value: {
+                panelOrder: {}, activeSkin: '', triggerPosition: 'conversation.overlay', compactPanel,
+              } }] } }),
+          update: (...args) => { updates.push(args); return Promise.resolve({ ok: true, value: { revision: 4 } }) },
+        },
+      },
+      logger: { info() {}, warn() {}, error() {} },
+    }
+    return { sb, plugin, ctx, provided, updates }
+  }
+
+  async function openCompactPanel (compactPanel) {
+    const { plugin, ctx, provided, updates, sb } = compactSandbox(compactPanel)
+    plugin.apply(ctx)
+    await new Promise((r) => setTimeout(r, 60))
+    const reg = provided.quickControl
+    // A cluster whose MEMBERS are gated on a master toggle — the shape the rule exists for.
+    let masterOn = true
+    reg.registerSwitch({
+      id: 'harness:master', label: 'master switch', type: 'toggle', group: 'system', order: 200,
+      cluster: 'harness-cluster', icon: 'shield',
+      getValue: () => masterOn, setValue: (v) => { masterOn = !!v },
+    })
+    reg.registerSwitch({
+      id: 'harness:member', label: 'member switch', type: 'toggle', group: 'system', order: 201,
+      cluster: 'harness-cluster', icon: 'ruler',
+      visible: () => masterOn,
+      getValue: () => true, setValue: () => {},
+    })
+    // Open it: the standalone trigger is the double-click target, and opening renders the panel —
+    // which is what assigns the console hook the assertions read.
+    const btn = sb.document.getElementById('dock-flash-overlay-trigger')
+    const ev = (detail) => ({ button: 0, clientX: 1236, clientY: 84, detail,
+      preventDefault() {}, stopPropagation() {} })
+    btn.dispatch('mousedown', ev(1))
+    btn.dispatch('click', ev(1))
+    await new Promise((r) => setTimeout(r, 20))
+    return { reg, updates, sb, btn, ev, snapshot: () => sb.window.__dockFlashPanelOrder(),
+             setMaster: (v) => { masterOn = !!v; reg.notifyChange('harness:master') } }
+  }
+
+  // ── (a) the mode comes from the preference, and it removes the text chrome ──────────────
+  {
+    const t = await openCompactPanel(true)
+    const snap = t.snapshot()
+    check('the compact mode arrives from the host preference and reaches the panel',
+      !!snap && !!snap.compact && snap.compact.on === true,
+      snap && JSON.stringify(snap.compact))
+    check('...and the Changes page is not offered at all (it is a text log)',
+      !!snap && !snap.compact.pages.includes('changes'), snap && JSON.stringify(snap.compact.pages))
+    check('...and the alert bar is not drawn',
+      !!snap && snap.compact.alertBar === false, snap && String(snap.compact.alertBar))
+  }
+
+  // ── (b) the cluster rule: master OFF drops the WHOLE cluster, master ON draws it ────────
+  {
+    const t = await openCompactPanel(true)
+    // The unit key, not the head's switch id: a cluster is addressed as ONE unit
+    // (` cluster:<label>`), which is also what the reorder mode moves and what hiding
+    // stores — so matching on the label is the honest way to ask.
+    const clusterDropped = (snap) => snap.compact.droppedClusters.some((k) => k.includes('harness-cluster'))
+    check('a cluster whose master is ON is NOT dropped',
+      !clusterDropped(t.snapshot()), JSON.stringify(t.snapshot().compact.droppedClusters))
+    t.setMaster(false)
+    await new Promise((r) => setTimeout(r, 20))
+    check('...and when the master goes OFF the whole cluster is dropped, head included',
+      clusterDropped(t.snapshot()), JSON.stringify(t.snapshot().compact.droppedClusters))
+    check('...which is the whole point: none of it is left showing',
+      !t.snapshot().compact.pages.includes('changes') && t.snapshot().compact.on === true,
+      JSON.stringify(t.snapshot().compact))
+  }
+
+  // ── (c) with the mode OFF nothing is dropped — the rule is the mode's, not a new default ──
+  {
+    const t = await openCompactPanel(false)
+    t.setMaster(false)
+    await new Promise((r) => setTimeout(r, 20))
+    check('with compact mode OFF, an off-master cluster is untouched (the full panel still lists it)',
+      t.snapshot() === undefined || t.snapshot().compact.droppedClusters.length === 0,
+      t.snapshot() ? JSON.stringify(t.snapshot().compact.droppedClusters) : 'hook absent (panel not in compact mode)')
+  }
+
+  // ── (d) the gesture: detail 2 flips the preference; detail 1 must not touch it ──────────
+  {
+    const t = await openCompactPanel(true)
+    t.updates.length = 0
+    // The FIRST press of a double-click: an ordinary open/close, and no preference write.
+    t.btn.dispatch('mousedown', t.ev(1))
+    t.btn.dispatch('click', t.ev(1))
+    await new Promise((r) => setTimeout(r, 10))
+    check('a single click does NOT write the compact preference',
+      !t.updates.some((a) => a[1] && 'compactPanel' in a[1]),
+      JSON.stringify(t.updates.map((a) => Object.keys(a[1] || {}))))
+
+    t.updates.length = 0
+    // The SECOND press of a double-click — the one that would otherwise CLOSE the panel.
+    t.btn.dispatch('mousedown', t.ev(2))
+    t.btn.dispatch('click', t.ev(2))
+    await new Promise((r) => setTimeout(r, 20))
+    const written = t.updates.map((a) => a[1]).filter((p) => p && 'compactPanel' in p).pop()
+    check('the second press of a double-click flips the compact preference',
+      !!written && written.compactPanel === false,   // it was true, so it must now be false
+      JSON.stringify(written))
+    check('...and it writes ONLY that field, through the three-argument host call',
+      !!written && Object.keys(written).length === 1
+        && t.updates.every((a) => a[0] === 'dock-flash' && a.length === 3),
+      JSON.stringify(t.updates.map((a) => [a[0], Object.keys(a[1] || {})])))
+  }
+}
+
 console.log('\n' + (failures.length === 0 ? '✅ ALL CHECKS PASSED' : '❌ FAILURES: ' + failures.join('; ')))
 // The bundle installs its own intervals (skin refresh, i18n watch), so exit
 // explicitly rather than waiting for the event loop to drain.

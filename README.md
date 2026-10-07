@@ -261,6 +261,17 @@ The three tab glyphs are `sliders` / `blocks` / `doc` from the panel's own `_ICO
 
 Within the same group, switches are sorted by `order` ascending.
 
+### Compact panel — double-click the ⚡
+
+Double-clicking the standalone ⚡ switches the panel to a compact form: a **narrower strip with no borders and no scrollbar, showing only each switch's icon and its control** — no labels, no descriptions, no group or tab text, and no reordering or visibility buttons. It is a preference (`compactPanel`), so it follows your profile rather than the session, and double-clicking again brings the full panel back. A single click keeps its meaning — open or close — because the **second** press of a double-click is what switches the mode, so opening the panel never waits to find out whether a second click is coming.
+
+Two rules are worth knowing, both deliberate:
+
+- **A cluster whose master switch is OFF is not shown at all**, head included. Its members are the things that depend on it, so a quick-access strip has nothing to offer from it; the full panel still lists it, and that is one double-click away.
+- **`log` switches are left out** (a log block is text, which this mode exists to remove) and an `action` becomes an icon-only button whose wording moves into its tooltip. Everything else — `toggle`, `select`, `buttongroup`, `slider` — keeps its control, including switches registered by other plugins.
+
+`window.__dockFlashPanelOrder().compact` reports the mode and which clusters it is hiding, so "why is that block not here?" is answerable without reading the source.
+
 ### quickControl Service API
 
 | Method | Description |
