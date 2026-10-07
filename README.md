@@ -265,9 +265,10 @@ Within the same group, switches are sorted by `order` ascending.
 
 Double-clicking the standalone ⚡ switches the panel to a compact form: a **narrower strip with no borders and no scrollbar, showing only each switch's icon and its control** — no labels, no descriptions, no group or tab text, and no reordering or visibility buttons. It is a preference (`compactPanel`), so it follows your profile rather than the session, and double-clicking again brings the full panel back. A single click keeps its meaning — open or close — because the **second** press of a double-click is what switches the mode, so opening the panel never waits to find out whether a second click is coming.
 
-Three rules are worth knowing, all deliberate:
+Four rules are worth knowing, all deliberate:
 
 - **The Workbench page has no header at all** — its controls are drawn directly, always. A chip that only collapsed the panel's own rows was a whole row of chrome for nothing, and having no header means it can no longer be collapsed either: a page that folds with no way to unfold it would hide its rows for good. Other pages keep their glyph chip.
+- **Each icon carries its row's name as a tooltip**, because with the text gone the icon is the only thing naming the row. **Language is the one row drawn without a glyph**: its control already reads 中文 / English, so a globe would spend width saying nothing.
 - **A cluster whose master switch is OFF is not shown at all**, head included. Its members are the things that depend on it, so a quick-access strip has nothing to offer from it; the full panel still lists it, and that is one double-click away.
 - **`log` switches are left out** (a log block is text, which this mode exists to remove) and an `action` becomes an icon-only button whose wording moves into its tooltip. Everything else — `toggle`, `select`, `buttongroup`, `slider` — keeps its control, including switches registered by other plugins.
 

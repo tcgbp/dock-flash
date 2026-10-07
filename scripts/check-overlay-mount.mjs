@@ -3198,6 +3198,11 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
       !!snap && snap.compact.headerlessPages.includes('workbench')
         && snap.compact.pages.includes('workbench'),
       JSON.stringify({ pages: snap.compact.pages, headerless: snap.compact.headerlessPages }))
+    check('...and the language row is drawn without its glyph (its control already says it)',
+      !!snap && snap.compact.iconless.includes('dock-flash:language'),
+      JSON.stringify(snap && snap.compact.iconless))
+    check('...and no other row loses its icon',
+      !!snap && snap.compact.iconless.length === 1, JSON.stringify(snap && snap.compact.iconless))
     check('...and no other page loses its header',
       !!snap && !snap.compact.headerlessPages.includes('extensions'),
       JSON.stringify(snap.compact.headerlessPages))
@@ -3226,6 +3231,9 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
     const t = await openCompactPanel(false)
     t.setMaster(false)
     await new Promise((r) => setTimeout(r, 20))
+    check('with compact mode OFF, every row keeps its icon',
+      t.snapshot() === undefined || t.snapshot().compact.iconless.length === 0,
+      t.snapshot() ? JSON.stringify(t.snapshot().compact.iconless) : 'hook absent')
     check('with compact mode OFF, every page keeps its header',
       t.snapshot() === undefined || t.snapshot().compact.headerlessPages.length === 0,
       t.snapshot() ? JSON.stringify(t.snapshot().compact.headerlessPages) : 'hook absent')
@@ -3255,6 +3263,16 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
     check('the second press of a double-click flips the compact preference',
       !!written && written.compactPanel === false,   // it was true, so it must now be false
       JSON.stringify(written))
+    // ── (e) the tooltip: a SOURCE pin, and it says so ──────────────────────────────────────
+    // An icon-only row has to be able to name itself on hover, and that `title` lives in the
+    // rendered tree — which this harness cannot see. `renderTree()` only INVOKES components; it
+    // never materializes them into an `El`, so there is no DOM to query `title` from. Pinned at
+    // the source rather than dressed up as behavioural evidence.
+    check('the compact row carries its name as a tooltip (source pin — this harness renders no DOM)',
+      /const name = typeof sw\.label === 'function' \? sw\.label\(\) : sw\.label/.test(code)
+        && /\{ title: String\(name\) \}/.test(code),
+      'the compact label column no longer names itself on hover')
+
     check('...and it writes ONLY that field, through the three-argument host call',
       !!written && Object.keys(written).length === 1
         && t.updates.every((a) => a[0] === 'dock-flash' && a.length === 3),
