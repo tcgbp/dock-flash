@@ -3191,6 +3191,16 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
       !!snap && !snap.compact.pages.includes('changes'), snap && JSON.stringify(snap.compact.pages))
     check('...and the alert bar is not drawn',
       !!snap && snap.compact.alertBar === false, snap && String(snap.compact.alertBar))
+    // The Workbench page keeps its ROWS but loses its header: a chip that only collapsed the
+    // panel's own controls was a row of chrome for nothing, and a page with no header must not be
+    // collapsible either — that pair has to agree or its rows become unreachable.
+    check('...and the Workbench page is drawn WITHOUT a tab header, while still being listed',
+      !!snap && snap.compact.headerlessPages.includes('workbench')
+        && snap.compact.pages.includes('workbench'),
+      JSON.stringify({ pages: snap.compact.pages, headerless: snap.compact.headerlessPages }))
+    check('...and no other page loses its header',
+      !!snap && !snap.compact.headerlessPages.includes('extensions'),
+      JSON.stringify(snap.compact.headerlessPages))
   }
 
   // ── (b) the cluster rule: master OFF drops the WHOLE cluster, master ON draws it ────────
@@ -3216,6 +3226,9 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
     const t = await openCompactPanel(false)
     t.setMaster(false)
     await new Promise((r) => setTimeout(r, 20))
+    check('with compact mode OFF, every page keeps its header',
+      t.snapshot() === undefined || t.snapshot().compact.headerlessPages.length === 0,
+      t.snapshot() ? JSON.stringify(t.snapshot().compact.headerlessPages) : 'hook absent')
     check('with compact mode OFF, an off-master cluster is untouched (the full panel still lists it)',
       t.snapshot() === undefined || t.snapshot().compact.droppedClusters.length === 0,
       t.snapshot() ? JSON.stringify(t.snapshot().compact.droppedClusters) : 'hook absent (panel not in compact mode)')
