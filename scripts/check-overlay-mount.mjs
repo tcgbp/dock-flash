@@ -3168,6 +3168,12 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
       visible: () => masterOn,
       getValue: () => true, setValue: () => {},
     })
+    // Two ADJACENT toggle-only switches, which are what compact mode should pair onto one row.
+    // Order 210/211 and both in `system`, so nothing can come between them.
+    reg.registerSwitch({ id: 'harness:toggle-a', label: 'toggle A', type: 'toggle', group: 'system',
+      order: 210, icon: 'eye', getValue: () => true, setValue: () => {} })
+    reg.registerSwitch({ id: 'harness:toggle-b', label: 'toggle B', type: 'toggle', group: 'system',
+      order: 211, icon: 'clock', getValue: () => false, setValue: () => {} })
     // Open it: the standalone trigger is the double-click target, and opening renders the panel —
     // which is what assigns the console hook the assertions read.
     const btn = sb.document.getElementById('dock-flash-overlay-trigger')
@@ -3198,6 +3204,13 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
       !!snap && snap.compact.headerlessPages.includes('workbench')
         && snap.compact.pages.includes('workbench'),
       JSON.stringify({ pages: snap.compact.pages, headerless: snap.compact.headerlessPages }))
+    check('two CONSECUTIVE toggle-only items share one row (half a row each)',
+      !!snap && snap.compact.pairedToggleRows.some((row) => row.length === 2
+        && row.includes('harness:toggle-a') && row.includes('harness:toggle-b')),
+      JSON.stringify(snap && snap.compact.pairedToggleRows))
+    check('...and the pair is exactly a pair, never three to a row',
+      !!snap && snap.compact.pairedToggleRows.every((row) => row.length === 2),
+      JSON.stringify(snap && snap.compact.pairedToggleRows))
     check('...and the language row is drawn without its glyph (its control already says it)',
       !!snap && snap.compact.iconless.includes('dock-flash:language'),
       JSON.stringify(snap && snap.compact.iconless))
@@ -3231,6 +3244,9 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
     const t = await openCompactPanel(false)
     t.setMaster(false)
     await new Promise((r) => setTimeout(r, 20))
+    check('with compact mode OFF, nothing is paired — every toggle keeps a full row',
+      t.snapshot() === undefined || t.snapshot().compact.pairedToggleRows.length === 0,
+      t.snapshot() ? JSON.stringify(t.snapshot().compact.pairedToggleRows) : 'hook absent')
     check('with compact mode OFF, every row keeps its icon',
       t.snapshot() === undefined || t.snapshot().compact.iconless.length === 0,
       t.snapshot() ? JSON.stringify(t.snapshot().compact.iconless) : 'hook absent')

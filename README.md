@@ -263,7 +263,7 @@ Within the same group, switches are sorted by `order` ascending.
 
 ### Compact panel — double-click the ⚡
 
-Double-clicking the standalone ⚡ switches the panel to a compact form: a **narrower strip with no borders and no scrollbar, showing only each switch's icon and its control** — no labels, no descriptions, no group or tab text, and no reordering or visibility buttons. It is a preference (`compactPanel`), so it follows your profile rather than the session, and double-clicking again brings the full panel back. A single click keeps its meaning — open or close — because the **second** press of a double-click is what switches the mode, so opening the panel never waits to find out whether a second click is coming.
+Double-clicking the standalone ⚡ switches the panel to a compact form: a **narrower strip with no borders and no scrollbar, showing only each switch's icon and its control** — no labels, no descriptions, no group or tab text, and no reordering or visibility buttons. **Two consecutive toggle-only rows share one line**, so a run of them reads as a compact grid instead of a stack; a lone one keeps its half-row. It is a preference (`compactPanel`), so it follows your profile rather than the session, and double-clicking again brings the full panel back. A single click keeps its meaning — open or close — because the **second** press of a double-click is what switches the mode, so opening the panel never waits to find out whether a second click is coming.
 
 Four rules are worth knowing, all deliberate:
 
