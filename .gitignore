@@ -14,6 +14,18 @@ Thumbs.db
 dock-flash.tgz
 dock-flash-*.tgz
 
+# Scratch files. Ad-hoc repro pages, throwaway scripts and API responses written while
+# verifying a change all use a leading underscore, and `git add -A` has twice swept them
+# into a commit — once baking a scratch JSON into history. They are never part of the
+# published plugin (`files` in package.json does not list them either), so the pattern is
+# ignored rather than trusted to be deleted in time.
+_*.py
+_*.mjs
+_*.json
+_*.html
+_*.png
+_*.txt
+
 # Local AI-assistant tooling — developer-machine state, not part of the
 # published plugin. graphflow-out/ holds a SQLite graph database and
 # .graphflow-cache/ an index cache; neither belongs in a public repo.
