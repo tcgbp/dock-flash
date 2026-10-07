@@ -242,10 +242,6 @@ export const Config = Schema.object({
   // themselves, nothing to read and nothing to reorder. A preference rather than a
   // per-session state because it is a way of working, and the double-click is its switch.
   compactPanel: Schema.boolean().default(false).volatile(),
-  // The DOCKED panel's own compact switch, kept apart from the floating panel's so enabling one
-  // never silently restyles the other's window — see `_compactPanelForSurface` client-side. The
-  // docked panel is somebody else's window: dock-base owns its width and its chrome.
-  compactPanelDocked: Schema.boolean().default(false).volatile(),
 
   // ── D · System alerts (merged with A per §7 decision) ────────────────
   // Per-monitor thresholds extracted to companion plugins

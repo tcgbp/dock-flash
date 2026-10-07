@@ -3225,27 +3225,34 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
     const head = panelEl && panelEl.children[0]
     const titleEl = head && head.descendants().find((e) => e.getAttribute('data-dock-flash-title') !== null)
     const toggleBtn = head && head.descendants().find((e) => e.getAttribute('data-dock-flash-compact-toggle') !== null)
-    check('the floating header carries the compact toggle', !!toggleBtn,
-      head ? head.descendants().length + ' nodes in the head' : 'no head element')
-    check('...and compact mode hides the title, which could only be drawn truncated',
-      !!titleEl && titleEl.style.display === 'none',
-      titleEl ? JSON.stringify(titleEl.style.display) : 'no title node')
+    check('the floating header carries NO compact toggle (the double-click is the only way in)',
+      !toggleBtn, head ? head.descendants().length + ' nodes in the head' : 'no head element')
+    // `visibility: hidden`, NOT `display: none` — the title is the row's `flex: 1` spacer, so
+    // taking it out of the layout slides the close buttons to the left. Measured in Chrome (the
+    // sandbox has no layout engine): x right edge 168 of 176 either way, 90 with `display: none`.
+    check('...and compact mode hides the title WITHOUT taking its flex slot away',
+      !!titleEl && titleEl.style.visibility === 'hidden' && titleEl.style.display === '',
+      titleEl ? JSON.stringify([titleEl.style.visibility, titleEl.style.display]) : 'no title node')
 
+    // The double-click remains the entry point, and the title follows the mode in both directions.
     t.updates.length = 0
-    toggleBtn.dispatch('click', { stopPropagation() {}, preventDefault() {} })
+    t.btn.dispatch('mousedown', t.ev(2))
+    t.btn.dispatch('click', t.ev(2))
     await new Promise((r) => setTimeout(r, 20))
-    check('...and pressing it flips the FLOATING panel preference',
+    check('...and the double-click still flips the preference (it is the only entry point)',
       t.updates.some((a) => a[1] && a[1].compactPanel === false),
       JSON.stringify(t.updates.map((a) => a[1] || {})))
     check('...and the title comes back with the full panel',
-      !!titleEl && titleEl.style.display !== 'none', titleEl && JSON.stringify(titleEl.style.display))
+      !!titleEl && titleEl.style.visibility !== 'hidden',
+      titleEl && JSON.stringify(titleEl.style.visibility))
 
-    // The docked surface reads its OWN field: enabling one must never restyle the other.
-    // The independence the split exists for: the FLOATING pref off, the DOCKED pref on.
-    const docked = await openCompactPanel(false, true)
-    check('the DOCKED surface reads its own preference, not the floating one',
-      docked.sb.window.__dockFlashCompactMode(false) === true
-        && docked.sb.window.__dockFlashCompactMode(true) === false,
+    // The docked panel must stay FULL whatever is stored — including a `compactPanelDocked` left in
+    // the profile by the version that briefly offered the mode there. That field is gone from the
+    // schema; the point of this assertion is that its ghost cannot reach the docked panel.
+    const docked = await openCompactPanel(true, true)
+    check('the DOCKED surface is never compact, even with a stored docked flag',
+      docked.sb.window.__dockFlashCompactMode(false) === false
+        && docked.sb.window.__dockFlashCompactMode(true) === true,
       'docked=' + docked.sb.window.__dockFlashCompactMode(false)
         + ' floating=' + docked.sb.window.__dockFlashCompactMode(true))
 

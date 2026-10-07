@@ -1,0 +1,160 @@
+{
+  "sha": "23fcca7dec228424dc077746b6bcae2f0f5fa1bc",
+  "node_id": "C_kwDOUhE-J9oAKDIzZmNjYTdkZWMyMjg0MjRkYzA3Nzc0NmI2YmNhZTJmMGY1ZmExYmM",
+  "commit": {
+    "author": {
+      "name": "guobaoping",
+      "email": "tcguobaoping@gmail.com",
+      "date": "2026-10-07T01:50:42Z"
+    },
+    "committer": {
+      "name": "guobaoping",
+      "email": "tcguobaoping@gmail.com",
+      "date": "2026-10-07T01:50:42Z"
+    },
+    "message": "feat(panel): a compact toggle in BOTH headers, and no title in compact mode\n\nThree changes that belong together, because the second is what makes the first safe.\n\n* **The panel title is dropped in compact mode.** At 176px \"快捷控制\" can only be drawn truncated,\n  which is indistinguishable from a layout defect. The grip and the close / close-on-blur buttons\n  stay: they are what makes the panel movable and closable.\n\n* **Both headers carry a compact toggle**, and the docked one is why this exists: the double-click\n  only ever reached the standalone ⚡, so dock mode had no way in at all. It is the same button in\n  both — same glyph (`COMPACT_ICON_SVG`, rows of unequal length), same painted state, one painter\n  (`_paintCompactToggle`) — sitting beside the close-on-blur toggle it is modelled on.\n\n* **Each surface remembers its OWN answer** (`compactPanel` / `compactPanelDocked`). This is not\n  tidiness: applying one preference to both surfaces is exactly what made the workbench panel look\n  broken, because the docked panel is somebody else's window — dock-base owns its width and its\n  chrome. The mode is allowed there, but it has to be ASKED, and the header button is how.\n\nThe two nodes the mode drives carry hooks (`data-dock-flash-title`, `data-dock-flash-compact-toggle`)\nso section 27 can assert this on the REAL imperative head rather than at the source: the toggle is\nthere, the title is `display: none` while compact, pressing the button writes `compactPanel: false`\nthrough the three-argument host call, and the title comes back with the full panel. A second sandbox\nproves the independence the split exists for — `docked=true` with `floating=false` from one namespace.\n\n270 assertions, 0 fail. dist/ rebuilt because the host schema gained the field.",
+    "tree": {
+      "sha": "5b369ead776f7320da3b528f60e6bcbebaed9f1a",
+      "url": "https://api.github.com/repos/tcgbp/dock-flash/git/trees/5b369ead776f7320da3b528f60e6bcbebaed9f1a"
+    },
+    "url": "https://api.github.com/repos/tcgbp/dock-flash/git/commits/23fcca7dec228424dc077746b6bcae2f0f5fa1bc",
+    "comment_count": 0,
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  },
+  "url": "https://api.github.com/repos/tcgbp/dock-flash/commits/23fcca7dec228424dc077746b6bcae2f0f5fa1bc",
+  "html_url": "https://github.com/tcgbp/dock-flash/commit/23fcca7dec228424dc077746b6bcae2f0f5fa1bc",
+  "comments_url": "https://api.github.com/repos/tcgbp/dock-flash/commits/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/comments",
+  "author": {
+    "login": "tcgbp",
+    "id": 1475927,
+    "node_id": "MDQ6VXNlcjE0NzU5Mjc=",
+    "avatar_url": "https://avatars.githubusercontent.com/u/1475927?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/tcgbp",
+    "html_url": "https://github.com/tcgbp",
+    "followers_url": "https://api.github.com/users/tcgbp/followers",
+    "following_url": "https://api.github.com/users/tcgbp/following{/other_user}",
+    "gists_url": "https://api.github.com/users/tcgbp/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/tcgbp/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/tcgbp/subscriptions",
+    "organizations_url": "https://api.github.com/users/tcgbp/orgs",
+    "repos_url": "https://api.github.com/users/tcgbp/repos",
+    "events_url": "https://api.github.com/users/tcgbp/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/tcgbp/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "committer": {
+    "login": "tcgbp",
+    "id": 1475927,
+    "node_id": "MDQ6VXNlcjE0NzU5Mjc=",
+    "avatar_url": "https://avatars.githubusercontent.com/u/1475927?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/tcgbp",
+    "html_url": "https://github.com/tcgbp",
+    "followers_url": "https://api.github.com/users/tcgbp/followers",
+    "following_url": "https://api.github.com/users/tcgbp/following{/other_user}",
+    "gists_url": "https://api.github.com/users/tcgbp/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/tcgbp/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/tcgbp/subscriptions",
+    "organizations_url": "https://api.github.com/users/tcgbp/orgs",
+    "repos_url": "https://api.github.com/users/tcgbp/repos",
+    "events_url": "https://api.github.com/users/tcgbp/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/tcgbp/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "parents": [
+    {
+      "sha": "a14c950ec2782fd9ff1f086266605737e44923fd",
+      "url": "https://api.github.com/repos/tcgbp/dock-flash/commits/a14c950ec2782fd9ff1f086266605737e44923fd",
+      "html_url": "https://github.com/tcgbp/dock-flash/commit/a14c950ec2782fd9ff1f086266605737e44923fd"
+    }
+  ],
+  "stats": {
+    "total": 177,
+    "additions": 167,
+    "deletions": 10
+  },
+  "files": [
+    {
+      "sha": "a34959ea7a94a670c3ddad81d56985f7a31f09f5",
+      "filename": "README.md",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 1,
+      "changes": 4,
+      "blob_url": "https://github.com/tcgbp/dock-flash/blob/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/README.md",
+      "raw_url": "https://github.com/tcgbp/dock-flash/raw/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/README.md",
+      "contents_url": "https://api.github.com/repos/tcgbp/dock-flash/contents/README.md?ref=23fcca7dec228424dc077746b6bcae2f0f5fa1bc",
+      "patch": "@@ -263,7 +263,9 @@ Within the same group, switches are sorted by `order` ascending.\n \n ### Compact panel — double-click the ⚡\n \n-Double-clicking the standalone ⚡ switches the panel to a compact form: a **narrower strip with no borders and no scrollbar, showing only each switch's icon and its control** — no labels, no descriptions, no group or tab text, and no reordering or visibility buttons. **Two consecutive toggle-only rows share one line**, so a run of them reads as a compact grid instead of a stack; a lone one keeps its half-row. It is a preference (`compactPanel`), so it follows your profile rather than the session, and double-clicking again brings the full panel back. A single click keeps its meaning — open or close — because the **second** press of a double-click is what switches the mode, so opening the panel never waits to find out whether a second click is coming.\n+The mode has **two entry points**: double-click the standalone ⚡, or press the compact toggle in the panel's own header — the header button is the one that also exists in dock mode, so the docked panel can enter the mode too. It is the same button in both headers, and the two surfaces remember **their own** answer: turning it on for the floating panel never silently restyles dock-base's sidebar, and vice versa. In compact mode the panel **drops its title** — at 176px it could only be drawn truncated, which reads as a defect — while the grip and the close/close-on-blur buttons stay.\n+\n+A **narrower strip with no borders and no scrollbar, showing only each switch's icon and its control** — no labels, no descriptions, no group or tab text, and no reordering or visibility buttons. **Two consecutive toggle-only rows share one line**, so a run of them reads as a compact grid instead of a stack; a lone one keeps its half-row. It is a preference (`compactPanel`), so it follows your profile rather than the session, and double-clicking again brings the full panel back. A single click keeps its meaning — open or close — because the **second** press of a double-click is what switches the mode, so opening the panel never waits to find out whether a second click is coming.\n \n Four rules are worth knowing, all deliberate:\n "
+    },
+    {
+      "sha": "27c25081a24aef27923a7f02a06ad9220d2a2838",
+      "filename": "README.zh-CN.md",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 1,
+      "changes": 4,
+      "blob_url": "https://github.com/tcgbp/dock-flash/blob/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/README.zh-CN.md",
+      "raw_url": "https://github.com/tcgbp/dock-flash/raw/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/README.zh-CN.md",
+      "contents_url": "https://api.github.com/repos/tcgbp/dock-flash/contents/README.zh-CN.md?ref=23fcca7dec228424dc077746b6bcae2f0f5fa1bc",
+      "patch": "@@ -258,7 +258,9 @@ setTimeout(() => {\n \n ### 精简面板 —— 双击 ⚡\n \n-双击独立模式的 ⚡ 会把面板切换成精简形态：**更窄、无边框、无滚动条，每行只留该开关的图标和它的控件本身** —— 没有标签文字、没有说明文字、没有分组与标签页文字，也不提供排序和可见性按钮。**两个连续的纯 toggle 项合占一行**，一串 toggle 因此读起来是一块紧凑的网格而不是一条长列；落单的那个仍占半行。它是一个偏好（`compactPanel`），跟随你的 profile 而不是本次会话，再双击一次即可恢复完整面板。单击的含义不变（开/关）—— 因为切换模式的是双击的**第二次**按下，所以打开面板永远不会先等一下看看还有没有第二次点击。\n+这个模式有**两个入口**：双击独立模式的 ⚡，或按面板自己标题栏上的精简开关图标 —— 后者正是集成模式（dock）里也存在的那一个，所以侧栏面板同样能进这个模式。两个标题栏用的是同一个按钮（同一图形、同一状态表现），而且**两个界面各自记住自己的答案**：给浮动面板打开它，绝不会悄悄改掉 dock-base 侧栏的样式，反之亦然。**精简模式下会去掉面板标题** —— 176px 宽度下它只能被截断显示，看起来像坏掉了 —— 而拖动手柄、关闭与失焦关闭按钮都保留。\n+\n+**更窄、无边框、无滚动条，每行只留该开关的图标和它的控件本身** —— 没有标签文字、没有说明文字、没有分组与标签页文字，也不提供排序和可见性按钮。**两个连续的纯 toggle 项合占一行**，一串 toggle 因此读起来是一块紧凑的网格而不是一条长列；落单的那个仍占半行。它是一个偏好（`compactPanel`），跟随你的 profile 而不是本次会话，再双击一次即可恢复完整面板。单击的含义不变（开/关）—— 因为切换模式的是双击的**第二次**按下，所以打开面板永远不会先等一下看看还有没有第二次点击。\n \n 四条规则是有意为之，值得先知道：\n "
+    },
+    {
+      "sha": "672046ab77ef0c6905f180c12412f470ff5d10b3",
+      "filename": "dist/index.js",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 0,
+      "changes": 4,
+      "blob_url": "https://github.com/tcgbp/dock-flash/blob/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/dist%2Findex.js",
+      "raw_url": "https://github.com/tcgbp/dock-flash/raw/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/dist%2Findex.js",
+      "contents_url": "https://api.github.com/repos/tcgbp/dock-flash/contents/dist%2Findex.js?ref=23fcca7dec228424dc077746b6bcae2f0f5fa1bc",
+      "patch": "@@ -103,6 +103,10 @@ export const Config = Schema.object({\n     // themselves, nothing to read and nothing to reorder. A preference rather than a\n     // per-session state because it is a way of working, and the double-click is its switch.\n     compactPanel: Schema.boolean().default(false).volatile(),\n+    // The DOCKED panel's own compact switch, kept apart from the floating panel's so enabling one\n+    // never silently restyles the other's window — see `_compactPanelForSurface` client-side. The\n+    // docked panel is somebody else's window: dock-base owns its width and its chrome.\n+    compactPanelDocked: Schema.boolean().default(false).volatile(),\n     // ── D · System alerts (merged with A per §7 decision) ────────────────\n     // Per-monitor thresholds extracted to companion plugins\n     // (dsh-flash-ctx-mon / dsh-flash-mem-mon); only the host alert queue"
+    },
+    {
+      "sha": "99b92a6218455aa7169ffae5a6a0524c48bf91c1",
+      "filename": "lib/client.js",
+      "status": "modified",
+      "additions": 116,
+      "deletions": 4,
+      "changes": 120,
+      "blob_url": "https://github.com/tcgbp/dock-flash/blob/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/lib%2Fclient.js",
+      "raw_url": "https://github.com/tcgbp/dock-flash/raw/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/lib%2Fclient.js",
+      "contents_url": "https://api.github.com/repos/tcgbp/dock-flash/contents/lib%2Fclient.js?ref=23fcca7dec228424dc077746b6bcae2f0f5fa1bc",
+      "patch": "@@ -346,6 +346,8 @@ window.__ModuleLoader__.load({\n       companionsDesktopHint: '此 profile 由 DSH Desktop 独占管理，请用应用内的 Plugins 页面安装。',\n       companionsIdleHint: '「已安装，但未运行」表示它的开关没有出现：请在 Plugins 页面确认它是否被停用，或查看控制台里 [dsh-flash-…] 前缀的日志。',\n       companionsUnknownHint: '「状态未知」表示读不到 profile 的包清单，因此无法确认是否已安装 —— 若上面这条命令没装过，可以直接执行。',\n+      compactEnter: '切换到精简模式',\n+      compactExit: '切换回完整面板',\n       companionsCopyAction: '复制安装命令',\n       companionsDontShow: '不再提示 —— 之后可在标签栏的 ◉ 可见性模式里重新勾选，把这两行找回来',\n       companionsCopied: '已复制',\n@@ -472,6 +474,8 @@ window.__ModuleLoader__.load({\n       companionsDesktopHint: 'This profile is managed exclusively by DSH Desktop — install from its in-app Plugins page.',\n       companionsIdleHint: '\"installed, not running\" means its switch never appeared: check whether it is switched off on the Plugins page, or look for [dsh-flash-…] lines in the console.',\n       companionsUnknownHint: '\"state unknown\" means the profile\\'s package list could not be read, so whether it is installed cannot be confirmed — if you have never installed it, the command above is safe to run.',\n+      compactEnter: 'Switch to the compact panel',\n+      compactExit: 'Switch back to the full panel',\n       companionsCopyAction: 'Copy install command',\n       companionsDontShow: \"Don't show again — bring these rows back later with the ◉ visibility mode in the tab header\",\n       companionsCopied: 'Copied',\n@@ -2451,6 +2455,15 @@ window.__ModuleLoader__.load({\n     //    A panel outline with a pointer leaving it: \"click away → closes\".\n     //    pointer-events:none so a click's event.target is always the button\n     //    itself, which the standalone header's drag guard compares against.\n+    // ── Icon for the header compact-mode toggle ──────────────────────────\n+    //    Rows of unequal length: the dense block of controls this mode draws. ONE glyph for both\n+    //    states, exactly like the close-on-blur toggle beside it — the button's background and\n+    //    opacity say which state it is in, and its `title` names what pressing it does.\n+    const COMPACT_ICON_SVG =\n+      '<svg width=\"13\" height=\"13\" viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block;pointer-events:none\">' +\n+      '<path d=\"M2.5 4.6h11M4.6 8h6.8M2.5 11.4h11\" stroke=\"currentColor\" stroke-width=\"1.3\" stroke-linecap=\"round\"/>' +\n+      '</svg>'\n+\n     const CLOSE_ON_BLUR_ICON_SVG =\n       '<svg width=\"13\" height=\"13\" viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block;pointer-events:none\">' +\n       '<rect x=\"2.25\" y=\"3.25\" width=\"7.5\" height=\"9.5\" rx=\"1.4\" stroke=\"currentColor\" stroke-width=\"1.2\"/>' +\n@@ -3009,17 +3022,47 @@ window.__ModuleLoader__.load({\n      *\n      *  Callable on its own so the answer is inspectable — `window.__dockFlashCompactMode(true)` —\n      *  rather than only observable by looking at a rendered panel. */\n+    /** The DOCKED panel's own switch — see `_compactPanelForSurface`. */\n+    function _compactPanelDocked() {\n+      return !!(_hostPrefs && _hostPrefs.compactPanelDocked)\n+    }\n+\n+    /** Is the compact panel in force on THIS surface?\n+     *\n+     *  TWO preferences, not one, and the split is deliberate. The docked panel is somebody else's\n+     *  window: dock-base owns its width and its chrome, so a mode turned on for the floating strip\n+     *  must not silently restyle it — that is the defect that made the workbench panel look broken\n+     *  the first time. It is not that the docked panel cannot be compact; it is that it has to be\n+     *  ASKED, and the toggle in its own header is how. Each surface remembers its own answer.\n+     *\n+     *  Callable on its own so the answer is inspectable: `window.__dockFlashCompactMode(true)`. */\n     function _compactPanelForSurface(props) {\n-      return !!(props && props.standalone === true) && _compactPanel()\n+      return !!(props && props.standalone === true) ? _compactPanel() : _compactPanelDocked()\n     }\n \n-    function _setCompactPanel(on) {\n+    /** One painter for the compact toggle in EITHER header, so the two cannot disagree about what\n+     *  \"on\" looks like. Mirrors the close-on-blur button beside it: the same glyph in both states,\n+     *  with background + opacity carrying the state and the `title` naming the action. */\n+    function _paintCompactToggle(btn, docked) {\n+      if (!btn) return\n+      var on = docked ? _compactPanelDocked() : _compactPanel()\n+      btn.setAttribute('aria-pressed', String(on))\n+      btn.setAttribute('aria-label', t(on ? 'compactExit' : 'compactEnter'))\n+      btn.setAttribute('title', t(on ? 'compactExit' : 'compactEnter'))\n+      btn.style.opacity = on ? '1' : '0.55'\n+      btn.style.background = on ? 'var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.18))' : 'transparent'\n+    }\n+\n+    function _setCompactPanel(on, docked) {\n       var next = !!on\n-      if (_hostPrefs) _hostPrefs.compactPanel = next\n+      var field = docked ? 'compactPanelDocked' : 'compactPanel'\n+      var patch = {}\n+      patch[field] = next\n+      if (_hostPrefs) _hostPrefs[field] = next\n       // Optimistic in memory, persisted through the one writer: the panel re-renders from\n       // `_emitPrefs`, not from the host's answer, so the gesture is instant and a rejected write\n       // can still roll the flag back through `savePrefs`' own error path.\n-      try { savePrefs(_prefCtx, { compactPanel: next }, null) } catch (_) {}\n+      try { savePrefs(_prefCtx, patch, null) } catch (_) {}\n       // The panel is a React tree that subscribes to the REGISTRY version, not to this flag —\n       // `_emitPrefs()` reaches the imperative surfaces (the container skin, the trigger size) and\n       // would leave the panel itself showing the previous mode until something else re-rendered.\n@@ -3216,6 +3259,7 @@ window.__ModuleLoader__.load({\n           triggerLayer: resolved.triggerLayer,\n           overlayOpacity: resolved.overlayOpacity,\n           compactPanel: resolved.compactPanel === true,\n+          compactPanelDocked: resolved.compactPanelDocked === true,\n \n           // D · System alerts — host-pushed alert queue capacity and\n           //      retention. Per-monitor thresholds live in the companion\n@@ -8099,6 +8143,10 @@ window.__ModuleLoader__.load({\n       var floatingHead = null\n       var closeBtn = null\n       var cobBtn = null\n+      // The compact-mode toggle, and the title it makes redundant: compact mode drops the title\n+      // because at 176px it can only ever be truncated (\"快捷…\"), which reads as a defect.\n+      var compactBtn = null\n+      var floatingTitle = null\n       var cobDispose = null\n       var dragging = false\n       var dragSource = null\n@@ -8122,6 +8170,11 @@ window.__ModuleLoader__.load({\n       function applyPanelSkin() {\n         if (!panelContainer) return\n         var compact = _compactPanel()\n+        // The title goes in compact mode: at 176px \"快捷控制\" can only be drawn truncated, and a\n+        // truncated title is indistinguishable from a layout defect. The grip and the buttons\n+        // stay — they are what makes the panel movable and closable.\n+        if (floatingTitle) floatingTitle.style.display = compact ? 'none' : ''\n+        _paintCompactToggle(compactBtn, false)\n         Object.assign(panelContainer.style, {\n           width: compact ? COMPACT_PANEL_WIDTH : '320px',\n           // No border in compact mode, and a plain drop shadow rather than `E.*` — those tokens\n@@ -8194,6 +8247,10 @@ window.__ModuleLoader__.load({\n         iconSpan.innerHTML = '<svg width=\"13\" height=\"13\" viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block\"><path d=\"M9.22 1.35a.75.75 0 0 1 .43.68v4.72h3.1a.75.75 0 0 1 .59 1.22l-5.4 6.72a.75.75 0 0 1-1.34-.46V9.49H3.25a.75.75 0 0 1-.59-1.22l5.4-6.72a.75.75 0 0 1 1.16-.2Z\" fill=\"currentColor\"/></svg>'\n         Object.assign(iconSpan.style, { fontSize: '13px', display: 'inline-flex', alignItems: 'center', lineHeight: 1 })\n         var titleSpan = document.createElement('span')\n+        floatingTitle = titleSpan\n+        // Named for the same reason the trigger button is: a test (and a person in the console)\n+        // has to be able to find the node whose `display` this mode drives.\n+        titleSpan.setAttribute('data-dock-flash-title', '')\n         titleSpan.textContent = t('title')\n         Object.assign(titleSpan.style, {\n           flex: '1',\n@@ -8237,6 +8294,36 @@ window.__ModuleLoader__.load({\n         // Repaint when the Layout switch (or anything else) changes the value.\n         cobDispose = subscribeCloseOnBlur(_cobPaint)\n \n+        // ── Compact-mode toggle ──────────────────────────────────────────\n+        //    The same button as the close-on-blur one beside it, on purpose: same size, same\n+        //    glyph-in-both-states, same painted state. It is the SECOND entry point to this mode\n+        //    (the double-click on the ⚡ is the first) and the only one that exists in a header\n+        //    the WORKBENCH panel also renders — which is what lets dock mode turn it on at all.\n+        compactBtn = document.createElement('button')\n+        compactBtn.type = 'button'\n+        compactBtn.setAttribute('data-dock-flash-focus', '')\n+        compactBtn.setAttribute('data-dock-flash-compact-toggle', '')\n+        compactBtn.innerHTML = COMPACT_ICON_SVG\n+        Object.assign(compactBtn.style, {\n+          border: '0',\n+          borderRadius: R.sm,\n+          background: 'transparent',\n+          cursor: 'pointer',\n+          color: 'inherit',\n+          padding: '2px 6px',\n+          display: 'inline-flex',\n+          alignItems: 'center',\n+        })\n+        compactBtn.addEventListener('mouseenter', function () { compactBtn.style.opacity = '1' })\n+        compactBtn.addEventListener('mouseleave', function () { _paintCompactToggle(compactBtn, false) })\n+        compactBtn.addEventListener('click', function (e) {\n+          e.stopPropagation()\n+          _setCompactPanel(!_compactPanel(), false)\n+          applyPanelSkin()\n+          positionPanel()\n+        })\n+        _paintCompactToggle(compactBtn, false)\n+\n         closeBtn = document.createElement('button')\n         closeBtn.setAttribute('data-dock-flash-focus', '')\n         closeBtn.textContent = '×'\n@@ -8263,6 +8350,7 @@ window.__ModuleLoader__.load({\n         floatingHead.appendChild(gripSpan)\n         floatingHead.appendChild(iconSpan)\n         floatingHead.appendChild(titleSpan)\n+        floatingHead.appendChild(compactBtn)\n         floatingHead.appendChild(cobBtn)\n         floatingHead.appendChild(closeBtn)\n         panelContainer.appendChild(floatingHead)\n@@ -13303,6 +13391,8 @@ window.__ModuleLoader__.load({\n           // ONE mounted workbench header at a time, so a single disposer slot is\n           // enough to keep the repaint subscription from leaking across renders.\n           let _cobHeaderDispose = null\n+          /** Disposer for the workbench header's compact-toggle pref subscription. */\n+          let _compactHeaderDispose = null\n \n           // ── 3. Register a sidebar panel (renders QuickControlPanel in the sidebar) ──\n           //    Wrapped in PanelErrorBoundary to prevent render errors from\n@@ -13352,6 +13442,28 @@ window.__ModuleLoader__.load({\n                     el.setAttribute('title', closeOnBlurLabel(on))\n                   }\n                   return h('div', { style: { display: 'flex', alignItems: 'center', gap: '2px' } },\n+                    // The compact-mode toggle, FIRST so it sits beside the title it acts on. This\n+                    // header is dock-base's, so this button is the only way the DOCKED panel can\n+                    // enter compact mode — and it drives its own preference (`docked: true`), so\n+                    // turning it on here never restyles the floating panel and vice versa.\n+                    h('button', {\n+                      type: 'button',\n+                      ref: (el) => {\n+                        if (_compactHeaderDispose) { _compactHeaderDispose(); _compactHeaderDispose = null }\n+                        if (el) {\n+                          _paintCompactToggle(el, true)\n+                          _compactHeaderDispose = _subscribePrefs(() => _paintCompactToggle(el, true))\n+                        }\n+                      },\n+                      style: { ...S.panelCloseBtn, fontSize: '14px', display: 'inline-flex', alignItems: 'center' },\n+                      onClick: (e) => {\n+                        _setCompactPanel(!_compactPanelDocked(), true)\n+                        _paintCompactToggle(e.currentTarget, true)\n+                      },\n+                      onMouseEnter: (e) => { e.currentTarget.style.opacity = '1' },\n+                      onMouseLeave: (e) => _paintCompactToggle(e.currentTarget, true),\n+                      dangerouslySetInnerHTML: { __html: COMPACT_ICON_SVG },\n+                    }),\n                     h('button', {\n                       type: 'button',\n                       ref: (el) => {"
+    },
+    {
+      "sha": "4ff1a249cc3186040d9b06cc1be2f8387f18b0e2",
+      "filename": "scripts/check-overlay-mount.mjs",
+      "status": "modified",
+      "additions": 37,
+      "deletions": 4,
+      "changes": 41,
+      "blob_url": "https://github.com/tcgbp/dock-flash/blob/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/scripts%2Fcheck-overlay-mount.mjs",
+      "raw_url": "https://github.com/tcgbp/dock-flash/raw/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/scripts%2Fcheck-overlay-mount.mjs",
+      "contents_url": "https://api.github.com/repos/tcgbp/dock-flash/contents/scripts%2Fcheck-overlay-mount.mjs?ref=23fcca7dec228424dc077746b6bcae2f0f5fa1bc"
+    },
+    {
+      "sha": "94058ed932357cdee6b6bdf4da7377d672d25723",
+      "filename": "src/index.ts",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 0,
+      "changes": 4,
+      "blob_url": "https://github.com/tcgbp/dock-flash/blob/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/src%2Findex.ts",
+      "raw_url": "https://github.com/tcgbp/dock-flash/raw/23fcca7dec228424dc077746b6bcae2f0f5fa1bc/src%2Findex.ts",
+      "contents_url": "https://api.github.com/repos/tcgbp/dock-flash/contents/src%2Findex.ts?ref=23fcca7dec228424dc077746b6bcae2f0f5fa1bc",
+      "patch": "@@ -242,6 +242,10 @@ export const Config = Schema.object({\n   // themselves, nothing to read and nothing to reorder. A preference rather than a\n   // per-session state because it is a way of working, and the double-click is its switch.\n   compactPanel: Schema.boolean().default(false).volatile(),\n+  // The DOCKED panel's own compact switch, kept apart from the floating panel's so enabling one\n+  // never silently restyles the other's window — see `_compactPanelForSurface` client-side. The\n+  // docked panel is somebody else's window: dock-base owns its width and its chrome.\n+  compactPanelDocked: Schema.boolean().default(false).volatile(),\n \n   // ── D · System alerts (merged with A per §7 decision) ────────────────\n   // Per-monitor thresholds extracted to companion plugins"
+    }
+  ]
+}
