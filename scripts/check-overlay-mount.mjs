@@ -3085,7 +3085,7 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
     } }] },
   }
 
-  function compactSandbox (compactPanel) {
+  function compactSandbox (compactPanel, docked) {
     const store = new Map()
     // The overlay is the position this section needs (it owns the ⚡ that takes the double-click),
     // and the DEFAULT is a slot position — so it is seeded here exactly as the base sandbox does.
@@ -3141,6 +3141,7 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
             ? NAMESPACE_COMPACT
             : { ok: true, value: { namespaces: [{ ns: 'dock-flash', revision: 3, value: {
                 panelOrder: {}, activeSkin: '', triggerPosition: 'conversation.overlay', compactPanel,
+                compactPanelDocked: docked === true,
               } }] } }),
           update: (...args) => { updates.push(args); return Promise.resolve({ ok: true, value: { revision: 4 } }) },
         },
@@ -3150,8 +3151,8 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
     return { sb, plugin, ctx, provided, updates }
   }
 
-  async function openCompactPanel (compactPanel) {
-    const { plugin, ctx, provided, updates, sb } = compactSandbox(compactPanel)
+  async function openCompactPanel (compactPanel, docked) {
+    const { plugin, ctx, provided, updates, sb } = compactSandbox(compactPanel, docked)
     plugin.apply(ctx)
     await new Promise((r) => setTimeout(r, 60))
     const reg = provided.quickControl
@@ -3216,6 +3217,38 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
     check('...and it reports the surface it rendered on',
       !!snap && snap.compact.surfaceStandalone === true, String(snap && snap.compact.surfaceStandalone))
 
+    // ── the header toggle and the hidden title, on the REAL imperative head ────────────────
+    // This harness does build that head (`ensurePanelContainer` runs on the first open), so unlike
+    // the React rows these two are asserted as behaviour rather than at the source.
+    const panelEl = t.sb.document.body.descendants()
+      .find((e) => e.getAttribute('data-dsh-plugin') === 'dock-flash-standalone')
+    const head = panelEl && panelEl.children[0]
+    const titleEl = head && head.descendants().find((e) => e.getAttribute('data-dock-flash-title') !== null)
+    const toggleBtn = head && head.descendants().find((e) => e.getAttribute('data-dock-flash-compact-toggle') !== null)
+    check('the floating header carries the compact toggle', !!toggleBtn,
+      head ? head.descendants().length + ' nodes in the head' : 'no head element')
+    check('...and compact mode hides the title, which could only be drawn truncated',
+      !!titleEl && titleEl.style.display === 'none',
+      titleEl ? JSON.stringify(titleEl.style.display) : 'no title node')
+
+    t.updates.length = 0
+    toggleBtn.dispatch('click', { stopPropagation() {}, preventDefault() {} })
+    await new Promise((r) => setTimeout(r, 20))
+    check('...and pressing it flips the FLOATING panel preference',
+      t.updates.some((a) => a[1] && a[1].compactPanel === false),
+      JSON.stringify(t.updates.map((a) => a[1] || {})))
+    check('...and the title comes back with the full panel',
+      !!titleEl && titleEl.style.display !== 'none', titleEl && JSON.stringify(titleEl.style.display))
+
+    // The docked surface reads its OWN field: enabling one must never restyle the other.
+    // The independence the split exists for: the FLOATING pref off, the DOCKED pref on.
+    const docked = await openCompactPanel(false, true)
+    check('the DOCKED surface reads its own preference, not the floating one',
+      docked.sb.window.__dockFlashCompactMode(false) === true
+        && docked.sb.window.__dockFlashCompactMode(true) === false,
+      'docked=' + docked.sb.window.__dockFlashCompactMode(false)
+        + ' floating=' + docked.sb.window.__dockFlashCompactMode(true))
+
     check('two CONSECUTIVE toggle-only items share one row (half a row each)',
       !!snap && snap.compact.pairedToggleRows.some((row) => row.length === 2
         && row.includes('harness:toggle-a') && row.includes('harness:toggle-b')),
@@ -3237,7 +3270,7 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
   {
     const t = await openCompactPanel(true)
     // The unit key, not the head's switch id: a cluster is addressed as ONE unit
-    // (` cluster:<label>`), which is also what the reorder mode moves and what hiding
+    // (`\u0000cluster:<label>`), which is also what the reorder mode moves and what hiding
     // stores — so matching on the label is the honest way to ask.
     const clusterDropped = (snap) => snap.compact.droppedClusters.some((k) => k.includes('harness-cluster'))
     check('a cluster whose master is ON is NOT dropped',
