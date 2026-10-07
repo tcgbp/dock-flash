@@ -3204,6 +3204,18 @@ console.log('\n=== 27. the compact panel: a preference, a gesture, and the clust
       !!snap && snap.compact.headerlessPages.includes('workbench')
         && snap.compact.pages.includes('workbench'),
       JSON.stringify({ pages: snap.compact.pages, headerless: snap.compact.headerlessPages }))
+    // ── the SURFACE gate: the reported regression, pinned where it actually failed ──────────
+    // The docked workbench panel is mounted by dock-base, with none of the standalone props, and
+    // it must stay FULL: reading the preference unconditionally is what made it draw icon-only
+    // rows and no tab headers inside dock-base's own pane.
+    const compactFor = (standalone) => t.sb.window.__dockFlashCompactMode(standalone)
+    check('compact mode is in force on the surface dock-flash owns (standalone: true)',
+      compactFor(true) === true, String(compactFor(true)))
+    check('...and NOT on a surface it does not own — the docked workbench panel stays full',
+      compactFor(false) === false, String(compactFor(false)))
+    check('...and it reports the surface it rendered on',
+      !!snap && snap.compact.surfaceStandalone === true, String(snap && snap.compact.surfaceStandalone))
+
     check('two CONSECUTIVE toggle-only items share one row (half a row each)',
       !!snap && snap.compact.pairedToggleRows.some((row) => row.length === 2
         && row.includes('harness:toggle-a') && row.includes('harness:toggle-b')),
