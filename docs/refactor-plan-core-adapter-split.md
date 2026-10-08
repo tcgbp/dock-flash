@@ -323,11 +323,17 @@ ctx.provide('dockFlashPanel', {
 - **产出**：0.1.7 / 0.1.5 / 0.1.4 / 0.1.5
 
 ### Phase 4 — 身份整理
-- [ ] 两个仓库的 README（中英）："核心 + 适配器"架构图与升级指引（`^2` 用户怎么办）
-- [ ] `dsh-flash` 仓库的 `AGENTS.md`：新增 `dockFlashPanel` 契约与归属握手；**注意 headroom**（上次约 2.5 KB，动手前重测）。本仓库（适配器）的 AGENTS.md 同步改成"适配器仓库"口径
-- [ ] 市场：新增 `dsh-flash` 条目（`tcgbp__dsh-flash.yml`，tarball 指向新仓库 Release）；`dock-flash` 条目保留，描述里点明"dock 适配器"
-- [ ] **没有仓库改名步骤**：L2 下两个仓库名本来就正确 ⇒ §9 里那条 raw 重定向未知项随之消失
+- [x] 两个仓库的 README（中英）："核心 + 适配器"架构图与升级指引（`^2` 用户怎么办）
+- [x] `dsh-flash` 仓库的 `AGENTS.md`：新增 `dockFlashPanel` 契约与归属握手；**注意 headroom**（上次约 2.5 KB，动手前重测）。本仓库（适配器）的 AGENTS.md 同步改成"适配器仓库"口径
+- [x] 市场：新增 `dsh-flash` 条目（`tcgbp__dsh-flash.yml`，tarball 指向新仓库 Release）；`dock-flash` 条目保留，描述里点明"dock 适配器"
+- [x] **没有仓库改名步骤**：L2 下两个仓库名本来就正确 ⇒ §9 里那条 raw 重定向未知项随之消失
 - **验收**：`check:docs` 通过；市场两条目都能装
+
+> **Phase 4 状态（本次会话）**：326 / 328 / 329 已在两个仓库完成并推送——两边的 README（中英）都加了"核心 + 适配器"单向依赖图与 `^2` 升级指引（核心仓库那条指引是本次实测出来的：profile patch 的 `name:` 是**断言**，`name: dock-flash` 在拆分后会让 DSH 报 `patch: name mismatch … skipping` 并整块丢掉 `config:`，改成 `name: dsh-flash` 且保留 `id: dock-flash` 即可）；适配器市场条目已改成"dock 适配器"措辞（**需要一次 registry PR**才能刷新已合并的描述），核心的 `tcgbp__dsh-flash.yml` 已新增（同样待 PR；其 GitHub 镜像仓库建于 2026-10-08，注意 registry 的建仓时长门槛，`dsh-plugin` topic 已补上）。
+>
+> 327 也已完成：核心 `AGENTS.md` 已有 `dockFlashPanel` 契约与归属握手（本次补上 `name:` 断言迁移与 inject 提示，63699 字节 / 1837 headroom）；**适配器 `AGENTS.md` 已重写为适配器口径（866 行 / 62958 字节 → 274 行 / 15047 字节，全部核心专属章节删除）**，`check:docs` 27 条链接全部解析、版本一致。
+>
+> 发布门未变：`dsh-flash@1.0.0 --tag next` → `dock-flash@3.0.0 --tag next`，以及 Phase 3 的四个同伴重指，都等维护者明确点头。
 
 ### Phase 5 — 可选
 - [ ] D1=M2 的命名空间改名与迁移
