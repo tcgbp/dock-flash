@@ -290,8 +290,18 @@ ctx.provide('dockFlashPanel', {
 - [x] 适配器侧改为 `ctx.get('dockFlashPanel')` + `claim()/release()`
 - [x] `check:overlay` 新增第 28 节：真值表 5 行 + 契约字段 + 认领看门狗（**290 PASS / 0 FAIL**，基线 272 + 新增 18）
 - [ ] `desktop` profile（有 dock-base）与无 dock 的 profile 两种真机验证（需用户重启 DSH；见 §7 结尾）
-- **验收**：Check 全绿 ✅；真机验证待用户确认；隐藏/恢复循环无刷新无重复面板（第 28 节已用假 workbench 覆盖）
-- **产出**：`dock-flash@2.3.0`（**此时用户侧零变化**，是纯粹的内部重构）
+- **验收**：Check 全绿 ✅；真机验证见下方记录；隐藏/恢复循环无刷新无重复面板（第 28 节已用假 workbench 覆盖）
+- **产出**：`dock-flash@2.3.0` ✅（版本号与 CHANGELOG 已提交，**未推送**）
+
+#### Phase 1 真机验证记录（两个副本 profile，本工作树以 `link:` 接入）
+
+| 场景 | 做法 | 结果 |
+|---|---|---|
+| **有 dock-base** | `probe-desktop`（`desktop` 的完整副本 + `dock-flash` 链到本工作树），真实 boot | ✅ 客户端 bundle 进图（`"id":"dock-flash","url":"plugins/??dock-flash/client.js&rev=e70d8f1a313c"`）；服务器实际下发的 bundle 是重构版（717,117 字节，`CLIENT_VERSION='2.3.0'`、`dockFlashPanel`×10、`createPanelHeader`、`CLAIM_WATCHDOG_MS`、`//#region DockAdapter` 全在）；宿主半侧 `/plugins/dock-flash/health` 200、`/profile-packages` 200；日志无 `ReferenceError`、无 `apply failed` |
+| **无 dock-base** | `probe-nodock`（`dsh --profile probe-nodock --from-default-profile web` 新建，只加 `dock-flash`） | ✅ boot 图含 dock-flash、**完全不含** dock-base 包（唯一一处 "dock-base" 字样是 `dsh.client.inject` 里的加载顺序提示字符串）；`/profile-packages` 回 `{"installed":["dock-flash"],"active":[…,"dock-flash"]}`；下发的仍是同一份 2.3.0 重构 bundle；宿主半侧 health 200 |
+| **界面级**（面板外观、标题栏开关联动、隐藏↔恢复循环） | 需要人眼看渲染结果 | ⏳ 待用户确认（agent 无浏览器截图通道，`/plugins/...` 只能 curl 下来比对内容，不能冒充界面证据） |
+
+> 两个副本 profile 的创建**没有改动** `desktop` / `web` / `web-desktop` 任何一个（已逐一核对依赖字段）。
 
 
 ### Phase 2 — 拆包（L2：核心进新仓库，本仓库瘦身为适配器）
