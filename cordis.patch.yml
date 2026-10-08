@@ -1,11 +1,41 @@
-# dock-flash bundle layer — registers the HOST half into a profile.
+# dock-flash bundle layer — the dock-base ADAPTER.
 #
-# The BROWSER half needs no row here: the module loader auto-discovers the
-# client bundle from package.json `exports["./client"]` + `dsh.client` and
-# serves it at /plugins/<pkg>/client.js.
+# TWO rows, and the first one is not this package.
+#
+# The BROWSER half needs no row of its own here: the module loader
+# auto-discovers a client bundle from package.json `exports["./client"]` +
+# `dsh.client` and serves it at /plugins/<pkg>/client.js.
 #
 # PITFALL: `name` is a PACKAGE NAME (resolved via the profile's node_modules),
 # NOT a relative path.
+#
+# WHY ROW 1 (the core) IS INSERTED BY THE ADAPTER
+# -----------------------------------------------
+# `dsh-flash` is a real `dependencies` entry of this package, so npm/pnpm
+# installs it and hoists it into the profile's node_modules. But a HOISTED
+# PACKAGE IS NOT A COMPOSED ROW: DSH composes the rows a profile names, plus
+# the rows a composed package's own bundle patch inserts. Nothing walks a
+# dependency's `dsh.bundle.patch` just because the dependency is present. So
+# without row 1 an adapter-only install would place the core on disk, load no
+# core plugin, publish no `dockFlashPanel` service, and leave the browser half
+# of the adapter waiting out its watchdog. The core's own patch inserts this
+# same row for the standalone-⚡-only install; an `insert` is keyed by `id`, so
+# a profile that ends up with both patches applied is not composed twice.
+#
+# WHY THE ID IS `dock-flash` AND NOT `dsh-flash`
+# ----------------------------------------------
+# The entry id IS the settings namespace (docs/refactor-plan-core-adapter-split.md
+# §1.4, D1=M1). `dock-flash` is the id every published preference of this panel
+# already lives under — panel order, active skin, trigger position, alert
+# thresholds, and the `/plugins/dock-flash/…` routes — so keeping it means a
+# profile that upgrades across the split migrates nothing. The core's own
+# `cordis.patch.yml` derives the same id for the same reason.
 - insert:
+    # 1. The panel core. `name` is its package name; the id stays `dock-flash`.
     - id: dock-flash
+      name: dsh-flash
+    # 2. This adapter. A distinct id because the core already owns `dock-flash`,
+    #    and its `name` is this package — which is what attaches `lib/client.js`
+    #    to a row, and the reason this host half exists at all.
+    - id: dock-flash-adapter
       name: dock-flash

@@ -1,7 +1,7 @@
 {
   "name": "dock-flash",
-  "version": "2.3.0",
-  "description": "Quick Control dock plugin — a dynamic floating shortcut panel for DSH Workbench with extensible switch registry. Works standalone or with dock-base.",
+  "version": "3.0.0",
+  "description": "dock-base adapter for the DSH Quick Control panel — mounts the panel into the dock-base Workbench. The panel itself is the separate package `dsh-flash`.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,7 +29,9 @@
     "dsh-plugin",
     "deepseek-harness",
     "dock",
+    "dock-base",
     "workbench",
+    "adapter",
     "quick-control",
     "ui"
   ],
@@ -39,10 +41,11 @@
     },
     "client": {
       "inject": [
+        "dsh-flash",
+        "dock-base",
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-api-remotes",
-        "@deepseek-ai/dsh-api-session-controller",
-        "dock-base"
+        "@deepseek-ai/dsh-api-session-controller"
       ],
       "platform": "web"
     }
@@ -51,23 +54,17 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check:docs": "node scripts/check-docs-size.mjs",
-    "check:overlay": "node scripts/check-overlay-mount.mjs"
+    "check:overlay": "node scripts/check-adapter-mount.mjs"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.4"
+    "dsh-flash": "^1.0.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0-rc.1 <5.0.0-0 || >=4.0.1-0 <5.0.0-0",
     "dock-base": ">=0.1.2-0 <1.0.0-0 || >=0.2.0-0 <1.0.0-0"
   },
-  "peerDependenciesMeta": {
-    "dock-base": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/dsh-settings": "0.1.7-rc.2",
     "@types/node": "^22.10.0",
     "typescript": "^5.6.0"
   }
