@@ -277,20 +277,22 @@ ctx.provide('dockFlashPanel', {
 ## 7. 分阶段执行计划
 
 ### Phase 0 — 准备（无发布）
-- [ ] 重跑基线：`pnpm run check:docs`（记录 headroom）、`pnpm run check:overlay`（当前 272 PASS / 0 FAIL）
-- [ ] 在 `docs/` 定稿本文；**D1–D5 已全部定案**（M1 / L2 / 发 2.3.0 / 不可选 peer / 保留+幂等）
-- [ ] 干活分支 `refactor/core-adapter-split`
+- [x] 重跑基线：`pnpm run check:docs`（AGENTS.md 62958 B，headroom 2578）、`pnpm run check:overlay`（基线 **272 PASS / 0 FAIL**）
+- [x] 在 `docs/` 定稿本文；**D1–D5 已全部定案**（M1 / L2 / 发 2.3.0 / 不可选 peer / 保留+幂等）
+- [x] 干活分支 `refactor/core-adapter-split`
 - **验收**：基线数字记录在案，决策点全部有结论
 
 ### Phase 1 — 就地抽出（单包，不改名，不发新包）
-- [ ] 新增 `Header` 组件，把 §2.1 的 7 个符号封进去
-- [ ] `ctx.provide('dockFlashPanel', …)`（§2.2）
-- [ ] 把 §3.1 的代码搬到 `lib/dock-adapter.js`（本仓库内独立文件）
-- [ ] 核心改为"默认挂载 ⚡ + `isClaimed()` 判断 + 看门狗"
-- [ ] 适配器侧改为 `ctx.get('dockFlashPanel')` + `claim()/release()`
-- [ ] `check:overlay` 新增一节：真值表 5 行 + 契约字段 + 认领看门狗
-- **验收**：Check 全绿；`desktop` profile（有 dock-base）与无 dock 的 profile 两种真机验证；隐藏/恢复循环无刷新无重复面板
+- [x] 新增 `Header` 组件（`createPanelHeader(registry)`），把 §2.1 的 7 个符号封进去；顺带修掉 §2.1 那个 wart（旧 header 把 workbench 服务当 registry 传，`notifyChange` 抛进 try/catch 被吞）
+- [x] `ctx.provide('dockFlashPanel', …)`（§2.2），外加**重复 apply 守卫**（`ctx.get('dockFlashPanel')` 存在即 return；不用模块级/`window` 标志，见 §1.4 修正 2）
+- [x] ~~把 §3.1 的代码搬到 `lib/dock-adapter.js`（本仓库内独立文件）~~ → **改为 region 标记**（`//#region DockAdapter`）：实测客户端 bundle 的同步 `require` 不支持相对路径（只认 seed word / 已 materialize 的模块 / 已注册包工厂，否则抛 `require("…") missed the module table`），只有 `require.async()` 接受相对路径且必须是 `client.<name>.js` chunk 名。文件边界留给 Phase 2——那时两半是两个包，天然无需相对 require。
+- [x] 核心改为"默认挂载 ⚡ + `isClaimed()` 判断"
+- [x] 适配器侧改为 `ctx.get('dockFlashPanel')` + `claim()/release()`
+- [x] `check:overlay` 新增第 28 节：真值表 5 行 + 契约字段 + 认领看门狗（**290 PASS / 0 FAIL**，基线 272 + 新增 18）
+- [ ] `desktop` profile（有 dock-base）与无 dock 的 profile 两种真机验证（需用户重启 DSH；见 §7 结尾）
+- **验收**：Check 全绿 ✅；真机验证待用户确认；隐藏/恢复循环无刷新无重复面板（第 28 节已用假 workbench 覆盖）
 - **产出**：`dock-flash@2.3.0`（**此时用户侧零变化**，是纯粹的内部重构）
+
 
 ### Phase 2 — 拆包（L2：核心进新仓库，本仓库瘦身为适配器）
 - [ ] 新建 `tcgbp/dsh-flash`：Gitee 仓库 + GitHub 镜像仓库 + `sync-from-gitee.yml`，树从本仓库复制（保留历史）
@@ -318,6 +320,8 @@ ctx.provide('dockFlashPanel', {
 ### Phase 5 — 可选
 - [ ] D1=M2 的命名空间改名与迁移
 - [ ] 适配器 / 核心的接口版本升级流程（`version` 字段的兼容矩阵）
+
+> **Phase 1 真机验证的现状**：自动化已经覆盖到"真实客户端 bundle 在真实 ctx 上 apply"这一层——第 28 节把 bundle 放进 VM、用假 workbench 驱动适配器的五次注册、认领/释放/隐藏/看门狗/晚到 workbench 全部实测。真机冒烟仍需要一次 DSH 重启：`desktop` profile 里 `dock-flash` 是 `link:C:/codes/ai-test/dock-flash`（就是本工作树），重启即加载本次重构；`web` profile 装的是 npm 上的 2.2.0，不受影响。无 dock-base 的 profile 跑的是同一个 bundle 的真值表第 1/2 行，与第 28 节的对应项等价。
 
 ---
 
