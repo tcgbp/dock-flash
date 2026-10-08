@@ -109,13 +109,14 @@ own.
 - `/repos/<owner>/<repo>/releases/latest` reports the expected tag, and lists the asset.
 - Download the asset back through `api.github.com` and `cmp` it against the local build. Byte
   equality is the only proof the upload was not truncated.
-- **Query the registry with the package's EXACT name — `dock-flash`, no `s`.** The four companions
-  are all `dsh-flash-*`, so `dsh-flash` reads as the obvious short form and is simply a different,
-  non-existent package: it answers `{"error":"Not found"}` for its packument, every version AND its
-  tarball, which looks exactly like a publish that never landed. It cost a false alarm once — an
-  `npm install dsh-flash@<version>` (also a typo) failing 404 had already been read as "the release
-  is broken". Check the packument, not only `/pkg/<version>`: the packument is what every
-  `npm install` resolves through, and a `?cb=` query string does NOT defeat its CDN cache.
+- **Query the registry with the package's EXACT name — this adapter is `dock-flash`, no `s`.** The
+  four companions are all `dsh-flash-*`, so `dsh-flash` reads as the obvious short form — and since the
+  core/adapter split it is no longer a typo but the **core package's real name**. That is a worse trap
+  than the 404 it used to be: a check of a `dock-flash` release that queries `dsh-flash` now returns a
+  perfectly healthy **200 with the wrong version**, so it neither errors nor proves anything. Read the
+  packument's `name` back, do not just check that it answered. Check the packument, not only
+  `/pkg/<version>`: the packument is what every `npm install` resolves through, and a `?cb=` query
+  string does NOT defeat its CDN cache.
 - Do not try to verify by fetching `releases/latest/download/...` from the browser on the maintainer
   machine: `github.com` is intermittently unreachable there while `api.github.com` is not, so a
   connection reset says nothing about whether the asset is good.
@@ -247,8 +248,15 @@ monitor into `dsh-flash-ctx-mon`.
 
 ### Order, and the peer range is a hard gate
 
-**Publish `dock-flash` first, then the companions** (`dsh-flash-ctx-mon`, `dsh-flash-mem-mon`,
-`dsh-flash-net-mon`, `dsh-flash-proxy`), each from its own repository.
+**Publish in dependency order: the core `dsh-flash` first, then this adapter `dock-flash`, then the
+companions** (`dsh-flash-ctx-mon`, `dsh-flash-mem-mon`, `dsh-flash-net-mon`, `dsh-flash-proxy`), each
+from its own repository.
+
+The core comes first because since the core/adapter split this adapter declares
+`"dsh-flash": "^1.0.0"` as a real **dependency**, not a peer: publishing the adapter first would point
+every install at a package npm cannot resolve. The companions come last and now range against the
+**core** — their `peerDependencies` key and their `dsh.client.inject` hint both read `dsh-flash` since
+the split, because the service they consume (`quickControl`, `dockFlashAlerts`) is the core's.
 
 npm 7+ resolves `peerDependencies` and **errors** when they conflict; pnpm only warns. So a companion
 whose range excludes the dock-flash being published is a package nobody can install with npm, however
@@ -261,7 +269,8 @@ npm error Could not resolve dependency:
 npm error peer dock-flash@">=1.5.0-0 <2.0.0-0" from dsh-flash-ctx-mon@0.1.3
 ```
 
-Before publishing any companion, check that its `dock-flash` range accepts the version going out — and
+Before publishing any companion, check that its `dsh-flash` range accepts the core version going out —
+and
 spell the range with **one branch per tuple whose prereleases must resolve**
 (`>=1.5.0-0 <2.0.0-0 || >=2.0.0-0 <3.0.0-0`). A single `>=1.5.0-0 <3.0.0-0` looks equivalent and is
 not: semver only lets a prerelease satisfy a comparator set whose matching tuple also carries one, so
