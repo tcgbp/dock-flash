@@ -5,7 +5,7 @@
 
 ## 0. 一句话状态
 
-分支 `refactor/core-adapter-split`，**6 个本地提交、一行未推送**；全部自检绿（`check:overlay` **295 PASS / 0 FAIL**、`check:docs` 版本一致、`typecheck`/`build` 通过）。等待**用户界面复验** → 然后 gate 2 发布 `dock-flash@2.3.0` → 再进 Phase 2 拆包。
+分支 `refactor/core-adapter-split`，**7 个本地提交、一行未推送**；全部自检绿（`check:overlay` **295 PASS / 0 FAIL**、`check:docs` 版本一致、`typecheck`/`build` 通过）。等待**用户界面复验** → 然后 gate 2 发布 `dock-flash@2.3.0` → 再进 Phase 2 拆包。
 
 ## 1. 目标与已定方案
 
@@ -29,6 +29,7 @@
 | `83cd0dc` | docs(plan): 真机 boot 验证记录（两个副本 profile 的证据） |
 | `2bc6cff` | fix(adapter): claim 持有计数（多挂载不再互相抽走面板） |
 | `4b1b409` | fix(adapter): 同栈服务解析（用户报障根因，见 §5） |
+| `d948a0e` | docs: 本交接文件 |
 
 ## 3. 已验证 / 待验证
 
