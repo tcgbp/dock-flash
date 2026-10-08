@@ -25,6 +25,9 @@ _*.json
 _*.html
 _*.png
 _*.txt
+# Scratch DIRECTORIES follow the same convention (`_probe/` held a throwaway DSH home and
+# profile). The file patterns above do not match a directory, so name it explicitly.
+_*/
 
 # Local AI-assistant tooling — developer-machine state, not part of the
 # published plugin. graphflow-out/ holds a SQLite graph database and
