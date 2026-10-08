@@ -3597,6 +3597,41 @@ console.log('\n=== 28. the ownership handshake: the core offers the ⚡, a dock 
     !hostSvc.isClaimed() && !!boltEl(),
     'claimed=' + hostSvc.isClaimed() + ' bolt=' + !!boltEl())
 
+  // ── the same-tick service-resolution trap: the real-boot failure this section missed ──
+  // Reported from a real boot on this tree: dock-flash was ABSENT from dock-base's plugin
+  // configuration, with a stray ⚡ instead. Cause: apply() mounts the adapter one statement
+  // after `ctx.provide('dockFlashPanel', …)`, and cordis resolves services
+  // ASYNCHRONOUSLY — a `ctx.get()` in that same synchronous call stack returns undefined
+  // even though the service was just provided. MEASURED against cordis 4.0.4 with a
+  // minimal probe: right after provide → `undefined`, on the next tick → the service.
+  // The adapter therefore took its "service is missing" branch, registered NOTHING into
+  // dock-base, and the core fell back to its own ⚡.
+  //
+  // This harness could not catch it, and the reason is the lesson: its ctx stub answers
+  // `get()` from a plain object, synchronously — it stubbed away the exact mechanism that
+  // breaks in production. The row below reproduces the PRODUCTION condition (a ctx that
+  // cannot resolve the panel) and requires registration anyway, because the core now
+  // PASSES the service in.
+  const wbBlind = makeFakeWb()
+  const blindCtx = makeDockCtx(wbBlind, { noPanel: true })
+  const disposeBlind = sandbox.window.__dockFlashAdapterMount(blindCtx, panelSvc)
+  check('a ctx that CANNOT resolve the panel still registers it — the core passes the service',
+    wbBlind.calls.filter((c) => c[0] !== 'panelDispose').length === 5 && hostSvc.isClaimed(),
+    'registered=' + JSON.stringify(wbBlind.calls.map((c) => c[0]))
+      + ' claimed=' + hostSvc.isClaimed())
+  if (typeof disposeBlind === 'function') disposeBlind()
+  check('...and that path gives the ⚡ back when it lets go',
+    !hostSvc.isClaimed() && !!boltEl(),
+    'claimed=' + hostSvc.isClaimed() + ' bolt=' + !!boltEl())
+
+  // …and the CALL SITE has to pass it, or the row above passes while the app still fails.
+  // A SOURCE pin, labelled as one: the lookup fallback is correct for Phase 2 (a separate
+  // package resolving on a later tick) and fatal here.
+  check('...and apply() passes the service explicitly instead of looking it up (source pin)',
+    code.includes('mountDockPanelAdapter(ctx, panelService)'),
+    code.includes('mountDockPanelAdapter(ctx, panelService)')
+      ? 'call site passes panelService' : 'call site does NOT pass it — the app would fail')
+
   // ── the two refusals: a missing core, and a core from another contract version ──
   // `console.error`'s collector is restored after section 1 (only the warn channel
   // stays bound for the whole run), so bind it around this one call — the same
