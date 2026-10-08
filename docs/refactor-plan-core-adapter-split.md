@@ -309,12 +309,22 @@ ctx.provide('dockFlashPanel', {
 - [x] 新仓库侧：`name: dsh-flash`、`repository: github.com/tcgbp/dsh-flash`、`cordis.patch.yml` 只插自己那一行且 **`id: dock-flash`**（D1=M1）、机具随迁（`AGENTS.md` / `docs/releasing.md` / `scripts/`）并改路径
 - [x] 本仓库侧：删掉核心代码，只留 §3.1 适配器 + 最小宿主；`name: dock-flash`；`dependencies: { "dsh-flash": "^1.0.0" }`；`peerDependencies: { "dock-base": "…" }`（不可选）+ cordis；`dsh.client.inject: ["dsh-flash", "dock-base", …]`
 - [x] 适配器 `cordis.patch.yml` **同时插核心那一行**（§1.4 修正 1，id 取法同上）+ 拿不到 `dockFlashPanel` 时大声报错（修正 2）
-- [ ] 发布顺序：**先** `dsh-flash@1.0.0 --tag next` 跑通 → **再** `dock-flash@3.0.0 --tag next`
+- [x] 发布顺序：**先** `dsh-flash@1.0.0 --tag next` 跑通 → **再** `dock-flash@3.0.0 --tag next`
 - [x] 两包各自 `check` / `pack --dry-run` 文件清单核对（互不包含对方代码）
-- **验收**：`dsh-flash` + `dock-flash@3 --tag next` 装进隔离 profile，真值表 5 行全部实测通过
+- [x] **验收**：`dsh-flash` + `dock-flash@3 --tag next` 装进隔离 profile，真值表 5 行全部实测通过（界面渲染除外，见下）
 - **产出**：`dsh-flash@1.0.0`、`dock-flash@3.0.0`（均先 `next`，验证后提升 latest）
 
 > **Phase 2 状态（本次会话）**：308–311、313 已在本地完成并各自提交——核心仓库的树在克隆里（`bfadf75`，其文档收尾为 `6db1feb`），本仓库的适配器在 `cd2a09f`。两个包的 `check` / `check:docs` / `pack --dry-run` 全部通过（核心 7 文件 229.1 kB、适配器 7 文件 33.5 kB，互不包含对方代码）。**312 / 314 / 315 以及推送、打 tag、发布仍等发布门**：先 `dsh-flash@1.0.0 --tag next`，再 `dock-flash@3.0.0 --tag next`。
+
+> **Phase 2 验收（隔离 profile 真机，本次会话）**：312 已完成（先核心后适配器）。314 已完成——新建 7 个隔离 profile 真机 boot：`acc1` 只装核心 / `acc2` 核心+dock-base / `acc3` 核心+适配器（无 dock-base）/ `acc45` 三件套 / `acc6` **只装适配器**+dock-base（真实用户形态）/ `acc7` 只装适配器（无 dock-base）/ `acc8` 无豁免对照。全部走 npm 上的真实发布版（`dsh-flash@1.0.0`、`dock-flash@3.0.0`），安装零 ERESOLVE。
+> - **§1.4 修正 1 端到端成立**：`acc6`/`acc7` 里 `dsh-flash` 只是被 hoist 上来的传递依赖（不在 `dsh.profile.bundles`），boot 图里两个客户端模块却都在（`dsh-flash` rev `d98976a53216`、`dock-flash` rev `aa3ec088de4f`），宿主半侧也起来了——适配器的 patch 确实为核心作保。
+> - **发布版 bundle 实测**：核心 702,833 B / `CLIENT_VERSION='1.0.0'` / 模块 id `dsh-flash` / `dockFlashPanel`×8 / `CLAIM_WATCHDOG_MS`×4 / `mountWorkbench`×0 / 无 `DockAdapter` 区；适配器 25,126 B / `'3.0.0'` / id `dock-flash` / `mountWorkbench`×4 / `_dockBaseInstalled`×2 / 只有 Module+PluginEntry 两区。
+> - 两个 harness 直接跑**已安装的 tarball**（`DOCK_FLASH_BUNDLE=<profile>/node_modules/...`）：核心 288 PASS / 0 FAIL、适配器 41 PASS / 0 FAIL。
+> - **真值表 5 行**：1/2 行 = `acc1`/`acc2` 真机 boot + 第 28 节（无宿主⇒不认领⇒⚡在）；3 行 = `acc7` 真机 boot + 适配器 harness 第 5 组（不认领 + 一条 warn）；4 行 = `acc6`/`acc45` 真机 boot + 第 3 组（claim×1、confirm×1、五次注册 id 精确）；5 行 = 第 8 组（dock-hidden ⇒ `release`×1）+ 第 28 节（release ⇒ ⚡ 回归）。**界面渲染仍是人眼项**（与第 302 行同一条限制）。
+> - **实测发现 A**：用户同时显式安装 `dsh-flash` 与 `dock-flash` 时，组合树里 `id: dock-flash` 会出现**两行**（适配器 patch 插一行、核心自己的 patch 再插一行），但 loader 按 id 去重，boot 图里只有一个 `dsh-flash`——无 warn 无报错，只是树里冗余。
+> - **实测发现 B**：v2 profile patch 的 `name: dock-flash` 断言在真机上原样复现——`patch: name mismatch for "dock-flash" (expected "dsh-flash", got "dock-flash"), skipping`，整块 `config:` 被静默丢弃（`legacy-value` 计数 0）；改成 `name: dsh-flash` 后恢复（计数 1）。
+> - pnpm 24h 门实测**不影响全新安装**（无豁免的 `acc8` 正常装上 `dock-flash@3.0.0` 并传递拉到 `dsh-flash@1.0.0`，`--frozen-lockfile` 也过）；此前加的豁免是保险，非必需。
+> - 315 的 `next → latest` 提升仍待发布门。
 
 ### Phase 3 — 同伴重指
 - [ ] 四个仓库 peerDeps：`dock-flash: …` → `dsh-flash: ">=1.0.0-0 <2.0.0-0"`（描述 / keywords 同步）
