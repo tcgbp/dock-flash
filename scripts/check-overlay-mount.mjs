@@ -3543,6 +3543,25 @@ console.log('\n=== 28. the ownership handshake: the core offers the ⚡, a dock 
     !hostSvc.isClaimed() && !!boltEl(),
     'returned=' + typeof dispose1 + ' claimed=' + hostSvc.isClaimed() + ' bolt=' + !!boltEl())
 
+  // ── a host that mounts the panel TWICE must keep it until the LAST one lets go ──
+  // Two of dock-base's own paths lead here (the sidebar pane and the floating-window
+  // route), and the first version gave both mounts the SAME lease — so whichever
+  // unmounted first tore the panel away from the other, still-mounted one. The dock
+  // half now counts its claims, and this drives the sequence that used to break it.
+  const wb2 = makeFakeWb()
+  const disposeA = sandbox.window.__dockFlashAdapterMount(makeDockCtx(wb2))
+  const disposeB = sandbox.window.__dockFlashAdapterMount(makeDockCtx(wb2))
+  const claimedByTwo = hostSvc.isClaimed() && !boltEl()
+  if (typeof disposeA === 'function') disposeA()
+  check('a SECOND host mounting the panel does not release the first one',
+    claimedByTwo && hostSvc.isClaimed() && !boltEl(),
+    'two mounted: claimed=' + claimedByTwo + ' → after first dispose: claimed='
+      + hostSvc.isClaimed() + ' bolt=' + !!boltEl())
+  if (typeof disposeB === 'function') disposeB()
+  check('...and the ⚡ returns only when the LAST holder releases',
+    !hostSvc.isClaimed() && !!boltEl(),
+    'after both disposes: claimed=' + hostSvc.isClaimed() + ' bolt=' + !!boltEl())
+
   // ── Row 6: the watchdog. A host that dies between claim() and its registrations ──
   hostSvc.claim()
   check('an UNCONFIRMED claim stands the ⚡ down immediately (the host renders now)',
