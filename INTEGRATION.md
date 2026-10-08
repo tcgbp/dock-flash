@@ -1,14 +1,15 @@
-# dock-flash Third-Party Integration Guide
+# dsh-flash Third-Party Integration Guide
 
-> How to register quick-control switches from your DSH plugin **without a hard dependency** on dock-flash.
+> How to register quick-control switches from your DSH plugin **without a hard dependency** on dsh-flash.
 
 ---
+> **Since the core/adapter split:** the package described below is `dsh-flash`. It owns the `quickControl` registry, and `dock-flash` is now the dock-base adapter that mounts the panel — installing `dock-flash` pulls `dsh-flash` in. The service name, the `dock-flash:ready` event and the `dock-flash:*` switch ids deliberately keep their old names so nothing already shipping against them has to change. The one thing that DOES change is the `dsh.client.inject` entry: a client module graph row's id IS its package name, so it must read `"dsh-flash"`.
 
 ## Overview
 
-dock-flash exposes a `quickControl` Cordis service — a pub/sub registry that any plugin can use to register switches (toggles, sliders, selects, action buttons, button groups). Registered switches appear in the dock-flash **Extensions** tab, grouped by source plugin.
+dsh-flash exposes a `quickControl` Cordis service — a pub/sub registry that any plugin can use to register switches (toggles, sliders, selects, action buttons, button groups). Registered switches appear in the dsh-flash **Extensions** tab, grouped by source plugin.
 
-**Key principle**: Your plugin must work whether or not dock-flash is installed. Never declare a hard dependency on `quickControl`.
+**Key principle**: Your plugin must work whether or not dsh-flash is installed. Never declare a hard dependency on `quickControl`.
 
 ---
 
@@ -17,20 +18,20 @@ dock-flash exposes a `quickControl` Cordis service — a pub/sub registry that a
 ### Mode A — Hard Dependency (NOT recommended)
 
 ```js
-// ⚠️ Your plugin will NOT load if dock-flash is absent
+// ⚠️ Your plugin will NOT load if dsh-flash is absent
 exports.inject = ['quickControl']
 ```
 
-Use this **only** if your plugin is meaningless without dock-flash. For most plugins, this is wrong — it breaks the "graceful degradation" principle.
+Use this **only** if your plugin is meaningless without dsh-flash. For most plugins, this is wrong — it breaks the "graceful degradation" principle.
 
 ### Mode B — Optional Integration (recommended)
 
 ```js
-// ✅ Your plugin loads regardless; registers switches only when dock-flash is present
+// ✅ Your plugin loads regardless; registers switches only when dsh-flash is present
 exports.inject = []
 ```
 
-Your plugin discovers dock-flash at runtime via two mechanisms:
+Your plugin discovers dsh-flash at runtime via two mechanisms:
 
 1. **Passive**: Listen for the `dock-flash:ready` event
 2. **Active**: Call `ctx.get('quickControl')` to check immediately
@@ -67,7 +68,7 @@ exports.apply = function (ctx) {
   // 1. Passive: listen for dock-flash:ready (covers case where we load first)
   const off = ctx.on('dock-flash:ready', registerMySwitches)
 
-  // 2. Active: check if dock-flash already loaded (covers case where it loaded before us)
+  // 2. Active: check if dsh-flash already loaded (covers case where it loaded before us)
   const registry = ctx.get('quickControl')
   if (registry) registerMySwitches(registry)
 
@@ -79,29 +80,29 @@ exports.apply = function (ctx) {
 
 | Scenario | Mechanism that catches it |
 |---|---|
-| dock-flash loads **before** your plugin | Active check (`ctx.get`) |
-| dock-flash loads **after** your plugin | Passive listener (`ctx.on`) |
-| dock-flash is **not installed** | Neither fires — your plugin runs without switches |
+| dsh-flash loads **before** your plugin | Active check (`ctx.get`) |
+| dsh-flash loads **after** your plugin | Passive listener (`ctx.on`) |
+| dsh-flash is **not installed** | Neither fires — your plugin runs without switches |
 
 ---
 
 ## Load-Order Hint (package.json)
 
-Add a load-order hint so that, when dock-flash IS installed, it loads before your plugin:
+Add a load-order hint so that, when dsh-flash IS installed, it loads before your plugin:
 
 ```json
 {
   "dsh": {
     "client": {
-      "inject": ["dock-flash"]
+      "inject": ["dsh-flash"]
     }
   }
 }
 ```
 
-**Important**: Use `"dock-flash"`, NOT `"dock-flash/client"`. The DSH ModuleLoader's `arriveGraphRow()` does NOT strip the `/client` suffix for inject lookups — using `"dock-flash/client"` silently fails.
+**Important**: Use `"dsh-flash"`, NOT `"dsh-flash/client"`. The DSH ModuleLoader's `arriveGraphRow()` does NOT strip the `/client` suffix for inject lookups — using `"dsh-flash/client"` silently fails.
 
-This hint does NOT create a hard dependency. When dock-flash is absent, the entry is silently skipped and your plugin loads normally.
+This hint does NOT create a hard dependency. When dsh-flash is absent, the entry is silently skipped and your plugin loads normally.
 
 ---
 
@@ -109,7 +110,7 @@ This hint does NOT create a hard dependency. When dock-flash is absent, the entr
 
 - Format: `plugin-name:switch-name` (e.g., `dock-git:show-stash`)
 - The prefix before `:` determines grouping in the Extensions tab
-- Built-in dock-flash switches use `dock-flash:*` and appear in the Workbench tab
+- Built-in dsh-flash switches use `dock-flash:*` and appear in the Workbench tab
 - Your switches use `your-plugin:*` and appear in the Extensions tab
 
 ---
@@ -204,7 +205,7 @@ Static string labels won't update when the user changes the UI language.
 
 ## Standalone Mode
 
-When dock-base is not installed, dock-flash runs in **standalone mode** — a floating ⚡ button with a popup panel. Third-party switches appear in the Extensions tab just like in workbench mode. No changes are needed in your integration code.
+When dock-base is not installed, dsh-flash runs in **standalone mode** — a floating ⚡ button with a popup panel. Third-party switches appear in the Extensions tab just like in workbench mode. No changes are needed in your integration code.
 
 ---
 
@@ -255,7 +256,7 @@ window.__ModuleLoader__.load({
       var notificationsEnabled = true
       var refreshInterval = 30
 
-      // ── Register switches when dock-flash is available ──
+      // ── Register switches when dsh-flash is available ──
       var registered = false
 
       function registerSwitches(registry) {
@@ -294,7 +295,7 @@ window.__ModuleLoader__.load({
           return dispose
         }, 'my-plugin: refresh slider')
 
-        console.log('[my-plugin] registered 2 switches in dock-flash ✓')
+        console.log('[my-plugin] registered 2 switches in dsh-flash ✓')
       }
 
       // Dual-discovery: passive (event) + active (ctx.get)
@@ -317,7 +318,7 @@ Corresponding `package.json`:
   "name": "my-plugin",
   "dsh": {
     "client": {
-      "inject": ["dock-flash"]
+      "inject": ["dsh-flash"]
     }
   }
 }
@@ -329,7 +330,7 @@ Corresponding `package.json`:
 
 | Event | Payload | When |
 |---|---|---|
-| `dock-flash:ready` | `QuickControlRegistry` | Fired once after dock-flash creates and publishes the `quickControl` service |
+| `dock-flash:ready` | `QuickControlRegistry` | Fired once after dsh-flash creates and publishes the `quickControl` service |
 
 ---
 
@@ -339,8 +340,8 @@ If your plugin currently uses `exports.inject = ['quickControl']`:
 
 1. Change `exports.inject = []`
 2. Add the dual-discovery pattern (passive listener + active check)
-3. Add `"dock-flash"` to `dsh.client.inject` in `package.json`
-4. Test with dock-flash both present and absent
+3. Add `"dsh-flash"` to `dsh.client.inject` in `package.json`
+4. Test with dsh-flash both present and absent
 
 ---
 
@@ -352,4 +353,4 @@ If your plugin currently uses `exports.inject = ['quickControl']`:
 | Switch appears twice | `registered` guard missing | Add `if (registered) return` at the top of your registration function |
 | Duplicate changelog entries | `setValue()` calls `_notifyChange()` | Remove `_notifyChange()` from `setValue()` — panel handles it |
 | Switch not removed on plugin reload | Not using `ctx.effect()` | Wrap `registerSwitch()` in `ctx.effect()` and return the disposer |
-| Load-order hint ignored | Using `"dock-flash/client"` in `dsh.client.inject` | Use `"dock-flash"` (base package name) |
+| Load-order hint ignored | Using `"dsh-flash/client"` in `dsh.client.inject` | Use `"dsh-flash"` (base package name) |

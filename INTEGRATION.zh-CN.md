@@ -1,14 +1,15 @@
-# dock-flash 第三方集成指南
+# dsh-flash 第三方集成指南
 
-> 如何从你的 DSH 插件注册快捷控制开关，**无需对 dock-flash 强依赖**。
+> 如何从你的 DSH 插件注册快捷控制开关，**无需对 dsh-flash 强依赖**。
 
 ---
+> **自核心/适配器拆分以来：** 下文描述的包是 `dsh-flash`。它拥有 `quickControl` 注册表，而 `dock-flash` 现在是挂载面板的 dock-base 适配器——安装 `dock-flash` 会一并拉入 `dsh-flash`。服务名、`dock-flash:ready` 事件和 `dock-flash:*` 开关 id 都刻意保留旧名，因此已经针对它们发布的一切都无需改动。唯一改变的是 `dsh.client.inject` 条目：客户端模块图的行 id 就是它的包名，所以必须写成 `"dsh-flash"`。
 
 ## 概述
 
-dock-flash 通过 `quickControl` Cordis 服务暴露了一个发布/订阅注册表——任何插件都可以用它来注册开关（切换、滑块、下拉选择、动作按钮、按钮组）。注册的开关会出现在 dock-flash 的**扩展**标签页中，按来源插件分组。
+dsh-flash 通过 `quickControl` Cordis 服务暴露了一个发布/订阅注册表——任何插件都可以用它来注册开关（切换、滑块、下拉选择、动作按钮、按钮组）。注册的开关会出现在 dsh-flash 的**扩展**标签页中，按来源插件分组。
 
-**核心原则**：你的插件无论 dock-flash 是否安装都必须能正常工作。永远不要对 `quickControl` 声明硬依赖。
+**核心原则**：你的插件无论 dsh-flash 是否安装都必须能正常工作。永远不要对 `quickControl` 声明硬依赖。
 
 ---
 
@@ -17,20 +18,20 @@ dock-flash 通过 `quickControl` Cordis 服务暴露了一个发布/订阅注册
 ### 模式 A — 硬依赖（不推荐）
 
 ```js
-// ⚠️ 如果 dock-flash 不存在，你的插件将无法加载
+// ⚠️ 如果 dsh-flash 不存在，你的插件将无法加载
 exports.inject = ['quickControl']
 ```
 
-仅在你的插件离开 dock-flash 就完全没意义时使用。对大多数插件来说这是错误的做法——它违背了"优雅降级"原则。
+仅在你的插件离开 dsh-flash 就完全没意义时使用。对大多数插件来说这是错误的做法——它违背了"优雅降级"原则。
 
 ### 模式 B — 可选集成（推荐）
 
 ```js
-// ✅ 你的插件始终加载；仅在 dock-flash 存在时注册开关
+// ✅ 你的插件始终加载；仅在 dsh-flash 存在时注册开关
 exports.inject = []
 ```
 
-你的插件通过两种机制在运行时发现 dock-flash：
+你的插件通过两种机制在运行时发现 dsh-flash：
 
 1. **被动方式**：监听 `dock-flash:ready` 事件
 2. **主动方式**：调用 `ctx.get('quickControl')` 立即检查
@@ -67,7 +68,7 @@ exports.apply = function (ctx) {
   // 1. 被动：监听 dock-flash:ready 事件（覆盖我们先加载的情况）
   var off = ctx.on('dock-flash:ready', registerMySwitches)
 
-  // 2. 主动：检查 dock-flash 是否已经加载（覆盖它先加载的情况）
+  // 2. 主动：检查 dsh-flash 是否已经加载（覆盖它先加载的情况）
   var registry = ctx.get('quickControl')
   if (registry) registerMySwitches(registry)
 
@@ -79,29 +80,29 @@ exports.apply = function (ctx) {
 
 | 场景 | 捕获机制 |
 |---|---|
-| dock-flash 在你的插件**之前**加载 | 主动检查（`ctx.get`） |
-| dock-flash 在你的插件**之后**加载 | 被动监听（`ctx.on`） |
-| dock-flash **未安装** | 两者都不触发——你的插件正常运行，只是没有开关 |
+| dsh-flash 在你的插件**之前**加载 | 主动检查（`ctx.get`） |
+| dsh-flash 在你的插件**之后**加载 | 被动监听（`ctx.on`） |
+| dsh-flash **未安装** | 两者都不触发——你的插件正常运行，只是没有开关 |
 
 ---
 
 ## 加载顺序提示（package.json）
 
-添加加载顺序提示，使得 dock-flash 存在时能在你的插件之前加载：
+添加加载顺序提示，使得 dsh-flash 存在时能在你的插件之前加载：
 
 ```json
 {
   "dsh": {
     "client": {
-      "inject": ["dock-flash"]
+      "inject": ["dsh-flash"]
     }
   }
 }
 ```
 
-**重要**：使用 `"dock-flash"`，而不是 `"dock-flash/client"`。DSH ModuleLoader 的 `arriveGraphRow()` 在查找 inject 条目时不会去掉 `/client` 后缀——使用 `"dock-flash/client"` 会静默失败。
+**重要**：使用 `"dsh-flash"`，而不是 `"dsh-flash/client"`。DSH ModuleLoader 的 `arriveGraphRow()` 在查找 inject 条目时不会去掉 `/client` 后缀——使用 `"dsh-flash/client"` 会静默失败。
 
-此提示不会创建硬依赖。当 dock-flash 不存在时，该条目会被静默跳过，你的插件正常加载。
+此提示不会创建硬依赖。当 dsh-flash 不存在时，该条目会被静默跳过，你的插件正常加载。
 
 ---
 
@@ -109,7 +110,7 @@ exports.apply = function (ctx) {
 
 - 格式：`plugin-name:switch-name`（例如 `dock-git:show-stash`）
 - `:` 前的前缀决定了在扩展标签页中的分组
-- dock-flash 内置开关使用 `dock-flash:*` 前缀，出现在 工作台 标签页
+- dsh-flash 内置开关使用 `dock-flash:*` 前缀，出现在 工作台 标签页
 - 你的开关使用 `your-plugin:*` 前缀，出现在 扩展 标签页
 
 ---
@@ -204,7 +205,7 @@ label: () => document.documentElement.lang === 'zh' ? '我的开关' : 'My Switc
 
 ## 独立模式
 
-当 dock-base 未安装时，dock-flash 以**独立模式**运行——一个浮动的 ⚡ 按钮和弹出面板。第三方开关同样会出现在扩展标签页中，与工作台模式完全一致。你的集成代码无需任何更改。
+当 dock-base 未安装时，dsh-flash 以**独立模式**运行——一个浮动的 ⚡ 按钮和弹出面板。第三方开关同样会出现在扩展标签页中，与工作台模式完全一致。你的集成代码无需任何更改。
 
 ---
 
@@ -255,7 +256,7 @@ window.__ModuleLoader__.load({
       var notificationsEnabled = true
       var refreshInterval = 30
 
-      // ── dock-flash 可用时注册开关 ──
+      // ── dsh-flash 可用时注册开关 ──
       var registered = false
 
       function registerSwitches(registry) {
@@ -294,7 +295,7 @@ window.__ModuleLoader__.load({
           return dispose
         }, 'my-plugin: refresh slider')
 
-        console.log('[my-plugin] 在 dock-flash 中注册了 2 个开关 ✓')
+        console.log('[my-plugin] 在 dsh-flash 中注册了 2 个开关 ✓')
       }
 
       // 双重发现：被动（事件）+ 主动（ctx.get）
@@ -317,7 +318,7 @@ window.__ModuleLoader__.load({
   "name": "my-plugin",
   "dsh": {
     "client": {
-      "inject": ["dock-flash"]
+      "inject": ["dsh-flash"]
     }
   }
 }
@@ -329,7 +330,7 @@ window.__ModuleLoader__.load({
 
 | 事件 | 载荷 | 触发时机 |
 |---|---|---|
-| `dock-flash:ready` | `QuickControlRegistry` | dock-flash 创建并发布 `quickControl` 服务后触发一次 |
+| `dock-flash:ready` | `QuickControlRegistry` | dsh-flash 创建并发布 `quickControl` 服务后触发一次 |
 
 ---
 
@@ -339,8 +340,8 @@ window.__ModuleLoader__.load({
 
 1. 将 `exports.inject` 改为 `[]`
 2. 添加双重发现模式（被动监听 + 主动检查）
-3. 在 `package.json` 的 `dsh.client.inject` 中添加 `"dock-flash"`
-4. 测试 dock-flash 存在和不存在两种情况
+3. 在 `package.json` 的 `dsh.client.inject` 中添加 `"dsh-flash"`
+4. 测试 dsh-flash 存在和不存在两种情况
 
 ---
 
@@ -352,4 +353,4 @@ window.__ModuleLoader__.load({
 | 开关出现两次 | 缺少 `registered` 守卫 | 在注册函数顶部添加 `if (registered) return` |
 | 重复的变更日志条目 | `setValue()` 调用了 `_notifyChange()` | 从 `setValue()` 中移除 `_notifyChange()`——面板会自动处理 |
 | 插件重载后开关未移除 | 未使用 `ctx.effect()` | 将 `registerSwitch()` 包裹在 `ctx.effect()` 中并返回清理函数 |
-| 加载顺序提示无效 | `dsh.client.inject` 使用了 `"dock-flash/client"` | 使用 `"dock-flash"`（基础包名） |
+| 加载顺序提示无效 | `dsh.client.inject` 使用了 `"dsh-flash/client"` | 使用 `"dsh-flash"`（基础包名） |

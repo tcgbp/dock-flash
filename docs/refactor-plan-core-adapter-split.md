@@ -305,14 +305,16 @@ ctx.provide('dockFlashPanel', {
 
 
 ### Phase 2 — 拆包（L2：核心进新仓库，本仓库瘦身为适配器）
-- [ ] 新建 `tcgbp/dsh-flash`：Gitee 仓库 + GitHub 镜像仓库 + `sync-from-gitee.yml`，树从本仓库复制（保留历史）
-- [ ] 新仓库侧：`name: dsh-flash`、`repository: github.com/tcgbp/dsh-flash`、`cordis.patch.yml` 只插自己那一行且 **`id: dock-flash`**（D1=M1）、机具随迁（`AGENTS.md` / `docs/releasing.md` / `scripts/`）并改路径
-- [ ] 本仓库侧：删掉核心代码，只留 §3.1 适配器 + 最小宿主；`name: dock-flash`；`dependencies: { "dsh-flash": "^1.0.0" }`；`peerDependencies: { "dock-base": "…" }`（不可选）+ cordis；`dsh.client.inject: ["dsh-flash", "dock-base", …]`
-- [ ] 适配器 `cordis.patch.yml` **同时插核心那一行**（§1.4 修正 1，id 取法同上）+ 拿不到 `dockFlashPanel` 时大声报错（修正 2）
+- [x] 新建 `tcgbp/dsh-flash`：Gitee 仓库 + GitHub 镜像仓库 + `sync-from-gitee.yml`，树从本仓库复制（保留历史）
+- [x] 新仓库侧：`name: dsh-flash`、`repository: github.com/tcgbp/dsh-flash`、`cordis.patch.yml` 只插自己那一行且 **`id: dock-flash`**（D1=M1）、机具随迁（`AGENTS.md` / `docs/releasing.md` / `scripts/`）并改路径
+- [x] 本仓库侧：删掉核心代码，只留 §3.1 适配器 + 最小宿主；`name: dock-flash`；`dependencies: { "dsh-flash": "^1.0.0" }`；`peerDependencies: { "dock-base": "…" }`（不可选）+ cordis；`dsh.client.inject: ["dsh-flash", "dock-base", …]`
+- [x] 适配器 `cordis.patch.yml` **同时插核心那一行**（§1.4 修正 1，id 取法同上）+ 拿不到 `dockFlashPanel` 时大声报错（修正 2）
 - [ ] 发布顺序：**先** `dsh-flash@1.0.0 --tag next` 跑通 → **再** `dock-flash@3.0.0 --tag next`
-- [ ] 两包各自 `check` / `pack --dry-run` 文件清单核对（互不包含对方代码）
+- [x] 两包各自 `check` / `pack --dry-run` 文件清单核对（互不包含对方代码）
 - **验收**：`dsh-flash` + `dock-flash@3 --tag next` 装进隔离 profile，真值表 5 行全部实测通过
 - **产出**：`dsh-flash@1.0.0`、`dock-flash@3.0.0`（均先 `next`，验证后提升 latest）
+
+> **Phase 2 状态（本次会话）**：308–311、313 已在本地完成并各自提交——核心仓库的树在克隆里（`bfadf75`，其文档收尾为 `6db1feb`），本仓库的适配器在 `cd2a09f`。两个包的 `check` / `check:docs` / `pack --dry-run` 全部通过（核心 7 文件 229.1 kB、适配器 7 文件 33.5 kB，互不包含对方代码）。**312 / 314 / 315 以及推送、打 tag、发布仍等发布门**：先 `dsh-flash@1.0.0 --tag next`，再 `dock-flash@3.0.0 --tag next`。
 
 ### Phase 3 — 同伴重指
 - [ ] 四个仓库 peerDeps：`dock-flash: …` → `dsh-flash: ">=1.0.0-0 <2.0.0-0"`（描述 / keywords 同步）
