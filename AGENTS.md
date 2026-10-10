@@ -102,8 +102,14 @@ Rules:
 suffix, while graph-row keys are base names — so a suffixed entry is **silently ignored**. The current list is:
 
 ```json
-["dsh-flash","dock-base","@deepseek-ai/dsh-client-runtime","@deepseek-ai/dsh-api-remotes","@deepseek-ai/dsh-api-session-controller"]
+["dsh-flash","dock-base","@deepseek-ai/dsh-client-locale","@deepseek-ai/dsh-client-runtime","@deepseek-ai/dsh-api-remotes","@deepseek-ai/dsh-api-session-controller"]
 ```
+
+> `@deepseek-ai/dsh-client-locale` must stay listed here so the official `locale` service
+> (`LocaleRuntime`, which the adapter reuses for dock-flash chrome) arrives before the adapter
+> mounts. It is a `peerDependency` (`^0.1.1-rc.2`), the same version family the official package
+> itself peers on — it is a shared platform runtime, not a private dependency. The adapter keeps a
+> `panel.i18n` fallback anyway, so a composition that omits it still mounts.
 
 - `dock-base` is a **NON-optional** `peerDependencies` entry (there is no `peerDependenciesMeta` opt-out).
 - `dsh-flash` is a plain `dependencies` entry (`^1.0.0`).
@@ -195,7 +201,7 @@ node scripts/check-adapter-mount.mjs    # aka pnpm run check:overlay
 ```
 
 `check-adapter-mount.mjs` reads the **REAL** `lib/client.js`, evaluates it in a `node:vm` sandbox with a tiny
-fake DOM and a fake cordis `ctx`, and asserts **52 things across 9 groups**:
+fake DOM and a fake cordis `ctx`, and asserts **53 things across 9 groups**:
 
 1. module id/name;
 2. the loud watchdog naming both `dockFlashPanel` and `dsh-flash` at exactly 2000 ms;
@@ -259,6 +265,7 @@ releases: the two gates above still stand.
 |---|---|---|---|
 | `dsh-flash` `^1.0.0` | dependency | The panel core (another repository) | Plain dependency; supplies `dockFlashPanel` |
 | `dock-base` | peer | `ctx.workbench` registry services | **NON-optional** — no `peerDependenciesMeta` |
+| `@deepseek-ai/dsh-client-locale` `^0.1.1-rc.2` | peer | Official `LocaleRuntime` (`ctx.locale` / `locale/change`) | Shared platform runtime; adapter reuses it for dock chrome and must list it in inject |
 | `@deepseek-ai/cordis` `>=4.0.0-rc.1 <5.0.0-0 \|\| >=4.0.1-0 <5.0.0-0` | peer | Plugin framework | Required |
 
 > The peer range carries an explicit prerelease branch **on purpose**, so prerelease harness builds resolve.

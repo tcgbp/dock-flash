@@ -29,6 +29,13 @@ function section(title) { console.log('\n' + title) }
 const BUNDLE = process.env.DOCK_FLASH_BUNDLE || new URL('../lib/client.js', import.meta.url)
 const source = fs.readFileSync(BUNDLE, 'utf8')
 
+// The manifest's inject list drives arriveGraphRow load order. The adapter reuses
+// the official @deepseek-ai/dsh-client-locale runtime, so that package name must
+// be present here (as a BASE name, per AGENTS.md) for its locale service to arrive
+// before the adapter mounts.
+const manifest = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const injectedNames = manifest.dsh?.client?.inject || []
+
 // ── sandbox pieces ──────────────────────────────────────────────────────────
 const fakeReact = {
   createElement(type, props, ...children) { return { type, props, children } },
@@ -396,6 +403,9 @@ check('registerPanel.title is a deferred () => string backed by the bound transl
   typeof rp9.title === 'function' && /^T:/.test(rp9.title()), String(rp9.title && rp9.title()))
 check('a console.log mentions reusing @deepseek-ai/dsh-client-locale',
   anyLine(h9.lines.log, /dsh-client-locale/), JSON.stringify(h9.lines.log))
+check("manifest dsh.client.inject lists '@deepseek-ai/dsh-client-locale' as a base name",
+  injectedNames.includes('@deepseek-ai/dsh-client-locale'),
+  JSON.stringify(injectedNames))
 
 // The fallback still works when the official service is absent (no `locale`).
 const h9b = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: false })
