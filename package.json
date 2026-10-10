@@ -1,6 +1,6 @@
 {
   "name": "dock-flash",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "dock-base adapter for the DSH Quick Control panel — mounts the panel into the dock-base Workbench. The panel itself is the separate package `dsh-flash`.",
   "license": "Apache-2.0",
   "type": "module",
