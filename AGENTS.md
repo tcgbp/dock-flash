@@ -156,10 +156,20 @@ bailing out.
 ```js
 dockFlashPanel = {
   version: 1, Panel, ErrorBoundary, Header, icon, registry,
-  i18n: { t, L },
+  i18n: { t, L },   // legacy fallback; the adapter prefers the official ctx.locale
   host: { claim, release, releaseOne, isClaimed },
 }
 ```
+
+**The adapter's i18n.** The dock-base copy of the panel chrome (sidebar / activity-bar / editor-view /
+command titles and the plugin card) is OWNED by the adapter and is translated by reusing the official
+`@deepseek-ai/dsh-client-locale` `LocaleRuntime`: the adapter `register`s its own `dock-flash` namespace
+(zh/en dictionaries) and `bind`s it, then refreshes the sidebar title through the official `locale/change`
+event (`ctx.on`). `ctx.locale` / `ctx.get('locale')` is resolved against the official service; only when
+that service is absent does the adapter fall back to the core's `panel.i18n.{t,L}` wrapper (and its
+`t.onLocaleChange`). Either path must leave the half mounted — a missing locale is never a mount failure.
+The plugin-card `description` is read once from the active locale at mount and does not follow live
+switches (dock-base's `createPluginCard` renders it statically).
 
 ## Upgrade hazard: the `^2` profile's panel row
 
@@ -185,7 +195,7 @@ node scripts/check-adapter-mount.mjs    # aka pnpm run check:overlay
 ```
 
 `check-adapter-mount.mjs` reads the **REAL** `lib/client.js`, evaluates it in a `node:vm` sandbox with a tiny
-fake DOM and a fake cordis `ctx`, and asserts **41 things across 8 groups**:
+fake DOM and a fake cordis `ctx`, and asserts **52 things across 9 groups**:
 
 1. module id/name;
 2. the loud watchdog naming both `dockFlashPanel` and `dsh-flash` at exactly 2000 ms;
@@ -194,7 +204,9 @@ fake DOM and a fake cordis `ctx`, and asserts **41 things across 8 groups**:
 5. dock-base absent;
 6. a late `workbench`;
 7. `version !== 1` refusal;
-8. the dock-hidden detach.
+8. the dock-hidden detach;
+9. i18n reusing the official `@deepseek-ai/dsh-client-locale` (register + bind + `locale/change`) when the
+   service is present, and cleanly falling back to `panel.i18n` when it is absent.
 
 **Its limits, honestly:** the `Panel` / `ErrorBoundary` / `Header` / `registry` stubs are inert, so rendering
 is untested; `document.querySelector` returns `null`, so the sidebar-title patch body does not run; and the

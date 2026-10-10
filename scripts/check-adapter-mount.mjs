@@ -73,6 +73,7 @@ function makeCtx(services) {
   const gets = []
   const injections = []
   const effects = []
+  const events = []
   const ctx = {
     get(name) { gets.push(name); return services[name] },
     inject(deps, cb) {
@@ -85,9 +86,33 @@ function makeCtx(services) {
       effects.push(rec)
       return rec.cleanup
     },
-    on() {}, provide() {},
+    on(event, fn) { events.push({ event, fn }); return () => {} },
+    provide() {},
   }
-  return { ctx, gets, injections, effects }
+  return { ctx, gets, injections, effects, events }
+}
+
+// A faithful stub of the OFFICIAL @deepseek-ai/dsh-client-locale LocaleRuntime,
+// so the adapter's reuse of ctx.locale (register + bind + locale/change) can be
+// asserted without a real browser. Mirrors the typed surface the adapter uses:
+// register(ns, {zh,en}) -> disposer, bind(ns) -> (key):string, plus the cordis
+// `locale/change` event the adapter subscribes to via ctx.on.
+function makeLocale() {
+  const registrations = []
+  const port = {
+    register(ns, dicts) {
+      registrations.push({ ns, dicts })
+      return () => { port._disposed = true }
+    },
+    bind(ns) {
+      port._boundNs = ns
+      return (key) => 'T:' + key
+    },
+    getSnapshot: () => ({ active: 'en', locales: [], revision: 0 }),
+    _disposed: false,
+    _boundNs: undefined,
+  }
+  return { locale: port, registrations }
 }
 
 // The `dockFlashPanel` service, built to the exact shape lib/client.js consumes.
@@ -167,7 +192,9 @@ function scenario(opts = {}) {
   const services = {}
   if (opts.workbench) services.workbench = wbH.wb
   if (opts.graphRows) services.modules = { graphRows: opts.graphRows }
-  const { ctx, gets, injections, effects } = makeCtx(services)
+  const localeH = opts.locale ? makeLocale() : null
+  if (opts.locale) services.locale = localeH.locale
+  const { ctx, gets, injections, effects, events } = makeCtx(services)
 
   const captured = {}
   const fakeEl = { style: {}, appendChild() {}, remove() {}, addEventListener() {}, removeEventListener() {} }
@@ -195,9 +222,10 @@ function scenario(opts = {}) {
   const mod = captured.opts.factory(requireStub)
 
   return {
-    captured, mod, ctx, gets, injections, effects, panel, hostCalls, i18nListeners,
+    captured, mod, ctx, gets, injections, effects, events, panel, hostCalls, i18nListeners,
     wb: wbH.wb, wbCalls: wbH.calls, callsOf: wbH.callsOf, setHidden: wbH.setHidden,
     fireSetting: wbH.fireSetting, timers, lines, windowObj, documentStub,
+    locale: localeH && localeH.locale, localeRegistrations: localeH && localeH.registrations,
   }
 }
 
@@ -336,6 +364,47 @@ h8.fireSetting()
 const after8 = h8.hostCalls.slice(before8)
 check('dock-hidden calls panel.host.release exactly once', count(after8, 'release') === 1, JSON.stringify(after8))
 check('a console.log mentions dock-hidden', anyLine(h8.lines.log, /dock-hidden/), JSON.stringify(h8.lines.log))
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('9. I18n reuses the official @deepseek-ai/dsh-client-locale when present')
+// When the official LocaleRuntime is resolvable on ctx (via ctx.get('locale')),
+// the adapter must register its own 'dock-flash' namespace and bind it, then
+// refresh the sidebar title through the official `locale/change` event — NOT the
+// core's hand-rolled `panel.i18n.t.onLocaleChange`.
+const h9 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: true })
+let threw9 = null
+try { h9.mod.apply(h9.ctx) } catch (e) { threw9 = e }
+check('apply() does not throw with the official locale service', !threw9, threw9 && threw9.message)
+h9.injections[0].cb({ dockFlashPanel: h9.panel })
+check("ctx requested the 'locale' service", h9.gets.includes('locale'), JSON.stringify(h9.gets))
+check("the adapter registered its own namespace 'dock-flash'",
+  h9.localeRegistrations.length === 1 && h9.localeRegistrations[0].ns === 'dock-flash',
+  JSON.stringify(h9.localeRegistrations))
+const reg9 = h9.localeRegistrations[0]
+check('the registered namespace ships bilingual zh and en dictionaries',
+  !!reg9 && reg9.dicts && reg9.dicts.zh && reg9.dicts.en
+    && typeof reg9.dicts.zh.title === 'string' && typeof reg9.dicts.en.title === 'string',
+  reg9 && JSON.stringify(reg9.dicts))
+check('the adapter bound the dock-flash namespace', h9.locale._boundNs === 'dock-flash',
+  String(h9.locale._boundNs))
+check('the sidebar title patch subscribes via the official locale/change event',
+  h9.events.some((e) => e.event === 'locale/change'),
+  JSON.stringify(h9.events.map((e) => e.event)))
+// The bound translator drives the deferred title getters dock-base consumes.
+const rp9 = h9.callsOf('registerPanel')[0].arg
+check('registerPanel.title is a deferred () => string backed by the bound translator',
+  typeof rp9.title === 'function' && /^T:/.test(rp9.title()), String(rp9.title && rp9.title()))
+check('a console.log mentions reusing @deepseek-ai/dsh-client-locale',
+  anyLine(h9.lines.log, /dsh-client-locale/), JSON.stringify(h9.lines.log))
+
+// The fallback still works when the official service is absent (no `locale`).
+const h9b = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: false })
+h9b.mod.apply(h9b.ctx)
+h9b.injections[0].cb({ dockFlashPanel: h9b.panel })
+check('with the official locale absent, it falls back to panel.i18n without throwing',
+  h9b.callsOf('registerPanel').length === 1, JSON.stringify(h9b.callsOf('registerPanel').length))
+check('a console.log does NOT claim dsh-client-locale reuse on the fallback path',
+  !anyLine(h9b.lines.log, /dsh-client-locale/))
 
 // ═══════════════════════════════════════════════════════════════════════════
 console.log('')
