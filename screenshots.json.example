@@ -1,0 +1,16 @@
+{
+  "screenshots": [
+    {
+      "path": "screenshots/quick-control-sidebar.png",
+      "alt": "Quick Control panel mounted into the dock-base sidebar"
+    },
+    {
+      "path": "screenshots/floating-panel.png",
+      "alt": "Quick Control as a floating panel"
+    },
+    {
+      "path": "screenshots/activity-bar-trigger.png",
+      "alt": "Activity-bar lightning bolt entry that opens the panel"
+    }
+  ]
+}

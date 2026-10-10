@@ -184,6 +184,14 @@ pnpm run check:overlay  # adapter mount behavioural checks
 For development rules and constraints, see [AGENTS.md](./AGENTS.md). For what
 changed in each release, see [CHANGELOG.md](./CHANGELOG.md).
 
+## dsh-market listing screenshot (optional)
+
+If you want a screenshot on the plugin-market card, add a `screenshots.json` at the
+repository root (next to `package.json`) and put the images in a `screenshots/`
+directory. This is optional and needs **no extra pull request** to the registry —
+the market reads `screenshots.json` from your own repository. Example and enabling
+steps: [docs/screenshots.md](./docs/screenshots.md).
+
 ## License
 
 [Apache License 2.0](./LICENSE)

@@ -159,6 +159,10 @@ pnpm run check:overlay  # 适配器挂载行为检查
 
 开发规则与关键约束见 [AGENTS.md](./AGENTS.md)；各版本的改动内容见 [CHANGELOG.md](./CHANGELOG.md)。
 
+## 插件市场卡片截图（可选）
+
+如希望插件市场卡片显示截图，请在仓库根目录（`package.json` 旁边）添加 `screenshots.json`，并把图片放到 `screenshots/` 目录。此为可选项，**无需**向注册表再提 PR——market 会直接读取你仓库里的 `screenshots.json`。示例与启用步骤见 [docs/screenshots.md](./docs/screenshots.md)。
+
 ## 许可证
 
 [Apache License 2.0](./LICENSE)
