@@ -19,8 +19,16 @@
 # without row 1 an adapter-only install would place the core on disk, load no
 # core plugin, publish no `dockFlashPanel` service, and leave the browser half
 # of the adapter waiting out its watchdog. The core's own patch inserts this
-# same row for the standalone-⚡-only install; an `insert` is keyed by `id`, so
-# a profile that ends up with both patches applied is not composed twice.
+# same row for the standalone-⚡-only install.
+#
+# A ROOT-LEVEL `insert` IS A LITERAL APPEND — `applyEntryPatches` does
+# `data.push(...insert)` and never dedupes by `id`. So a profile that lists
+# BOTH `dsh-flash` and `dock-flash` in `dsh.profile.bundles` composes this row
+# TWICE. That is survivable but not free: both rows carry `name: dsh-flash`, so
+# they share one Loader source and one client bundle, and the core's idempotent
+# `apply()` (early return when `ctx.get('dockFlashPanel')` exists) is what keeps
+# it a no-op rather than a double mount. Do NOT rely on that. A profile installs
+# exactly ONE of the two: the adapter alone, or the core alone.
 #
 # WHY THE ID IS `dock-flash` AND NOT `dsh-flash`
 # ----------------------------------------------
