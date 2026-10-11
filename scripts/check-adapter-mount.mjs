@@ -65,9 +65,13 @@ function makeTimers() {
     setTimeoutStub(fn, ms) { const id = nextId++; timers.push({ id, fn, ms, cleared: false }); return id },
     clearTimeoutStub(id) { const t = timers.find((x) => x.id === id); if (t) t.cleared = true },
     fire(ms) {
+      // No throw when the timer is absent: the check above already records that
+      // the watchdog was never armed. Throwing here would abort the run and hide
+      // every later section, which is the failure mode this file must not have.
       const t = timers.find((x) => x.ms === ms)
-      if (!t) throw new Error('no captured timer with delay ' + ms)
+      if (!t) return false
       t.fn()
+      return true
     },
   }
 }
@@ -76,12 +80,21 @@ function makeTimers() {
 // the cleanup without running it — which is exactly how the real bundle expects to be
 // driven (its own comment: the harness's effect stub returns the cleanup without
 // invoking it), and it is how section 4 tears the mount down by hand.
-function makeCtx(services) {
+//
+// The ctx is a PROXY, and that is load-bearing. A real cordis context is a Proxy
+// whose get trap (cordis 4.0.4, ReflectService.handler) THROWS
+// `cannot get property "x" without inject` for any service the plugin did not
+// declare in its `inject` array — MEASURED, see section 10. A plain object stub
+// silently returns `undefined` for those reads, so it structurally cannot express
+// the defect that made the adapter vanish: `typeof ctx.locale` is not a safe
+// existence check, `typeof` evaluates the getter and the throw escapes. Anything
+// the adapter may read is either a framework member below or a name it declared.
+function makeCtx(services, inject = []) {
   const gets = []
   const injections = []
   const effects = []
   const events = []
-  const ctx = {
+  const base = {
     get(name) { gets.push(name); return services[name] },
     inject(deps, cb) {
       const rec = { deps, cb, invoked: false }
@@ -96,12 +109,26 @@ function makeCtx(services) {
     on(event, fn) { events.push({ event, fn }); return () => {} },
     provide() {},
   }
+  const declared = new Set(inject)
+  const ctx = new Proxy(base, {
+    get(target, prop) {
+      if (typeof prop === 'symbol' || prop in target) return target[prop]
+      if (declared.has(prop)) return services[prop]
+      throw new Error(`cannot get property "${prop}" without inject`)
+    },
+    has(target, prop) {
+      if (typeof prop === 'symbol' || prop in target) return true
+      return declared.has(prop)
+    },
+  })
   return { ctx, gets, injections, effects, events }
 }
 
 // A faithful stub of the OFFICIAL @deepseek-ai/dsh-client-locale LocaleRuntime,
-// so the adapter's reuse of ctx.locale (register + bind + locale/change) can be
-// asserted without a real browser. Mirrors the typed surface the adapter uses:
+// reachable as the `locale` SERVICE (via ctx.get('locale') — never as a ctx
+// property, see section 10), so the adapter's reuse of it (register + bind +
+// locale/change) can be asserted without a real browser. Mirrors the typed
+// surface the adapter uses:
 // register(ns, {zh,en}) -> disposer, bind(ns) -> (key):string, plus the cordis
 // `locale/change` event the adapter subscribes to via ctx.on.
 function makeLocale() {
@@ -184,7 +211,9 @@ function makeWb() {
     wb, calls,
     callsOf: (n) => calls.filter((c) => c.name === n),
     setHidden: (h) => { hidden = h },
-    fireSetting: () => { if (!settingCb) throw new Error('onDidChangeSetting callback was never registered'); settingCb() },
+    // Returns false rather than throwing when the mount never subscribed: a
+    // broken bundle must produce FAILs, not a crash that truncates the run.
+    fireSetting: () => { if (!settingCb) return false; settingCb(); return true },
   }
 }
 
@@ -239,6 +268,25 @@ function scenario(opts = {}) {
 const count = (arr, v) => arr.filter((x) => x === v).length
 const depsEq = (deps, want) => JSON.stringify(deps) === JSON.stringify(want)
 const anyLine = (lines, re) => lines.some((l) => re.test(l))
+// The FIRST recorded argument of a wb.register* call, or undefined. Never index
+// `[0].arg` directly: when the mount is broken that throws a TypeError halfway
+// through this file, which skips every later section AND the summary — so a
+// bundle that mounts nothing at all produced a truncated, exit-code-1 run with
+// no FAIL line naming the cause. A harness must degrade to FAILs, not to a crash.
+const firstArg = (h, n) => { const c = h.callsOf(n)[0]; return c ? c.arg : undefined }
+// Deref guard for the assertions below: `undefined.id` would crash for the same
+// reason the missing registration would.
+const prop = (o, k) => (o ? o[k] : undefined)
+// Invoke a recorded ctx.inject callback by dependency list, tolerating its
+// absence. Same reasoning as firstArg: a bundle that never subscribes must
+// produce FAILs downstream, not a TypeError that truncates the run.
+const fire = (h, deps, payload) => {
+  const rec = h.injections.find((i) => depsEq(i.deps, deps))
+  if (!rec) { h.missedInject = (h.missedInject || []).concat([JSON.stringify(deps)]); return false }
+  rec.invoked = true
+  rec.cb(payload)
+  return true
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('1. Module entry shape')
@@ -274,7 +322,7 @@ check('apply() does not throw', !threw3, threw3 && threw3.message)
 const inj3 = h3.injections[0]
 check("ctx.inject was called with deps exactly ['dockFlashPanel']",
   !!inj3 && depsEq(inj3.deps, ['dockFlashPanel']), inj3 && JSON.stringify(inj3.deps))
-inj3.cb({ dockFlashPanel: h3.panel })
+fire(h3, ['dockFlashPanel'], { dockFlashPanel: h3.panel })
 check('panel.host.claim called exactly once', count(h3.hostCalls, 'claim') === 1, JSON.stringify(h3.hostCalls))
 check('the returned lease\'s confirm called exactly once', count(h3.hostCalls, 'lease.confirm') === 1)
 check('registerPanel called exactly once', h3.callsOf('registerPanel').length === 1)
@@ -283,20 +331,20 @@ check('registerActivityBarItem called exactly once', h3.callsOf('registerActivit
 check('registerEditorView called exactly once', h3.callsOf('registerEditorView').length === 1)
 check('registerCommand called exactly once', h3.callsOf('registerCommand').length === 1)
 
-const rp = h3.callsOf('registerPanel')[0].arg
-const rg = h3.callsOf('registerPlugin')[0].arg
-const ab = h3.callsOf('registerActivityBarItem')[0].arg
-const ev = h3.callsOf('registerEditorView')[0].arg
-const cm = h3.callsOf('registerCommand')[0].arg
-check("registerPanel id is 'dock-flash:quick-control'", rp.id === 'dock-flash:quick-control', rp.id)
-check('registerPanel region is sideBar', rp.region === 'sideBar', rp.region)
+const rp = firstArg(h3, 'registerPanel')
+const rg = firstArg(h3, 'registerPlugin')
+const ab = firstArg(h3, 'registerActivityBarItem')
+const ev = firstArg(h3, 'registerEditorView')
+const cm = firstArg(h3, 'registerCommand')
+check("registerPanel id is 'dock-flash:quick-control'", prop(rp, 'id') === 'dock-flash:quick-control', prop(rp, 'id'))
+check('registerPanel region is sideBar', prop(rp, 'region') === 'sideBar', prop(rp, 'region'))
 check('registerPanel component and headerComponent are both functions',
-  typeof rp.component === 'function' && typeof rp.headerComponent === 'function',
-  typeof rp.component + '/' + typeof rp.headerComponent)
-check("registerPlugin id is 'dock-flash'", rg.id === 'dock-flash', rg.id)
-check("registerActivityBarItem id is 'dock-flash:quick-control'", ab.id === 'dock-flash:quick-control', ab.id)
-check("registerEditorView id is 'dock-flash:quick-control'", ev.id === 'dock-flash:quick-control', ev.id)
-check("registerCommand id is 'dock-flash:openQuickControl'", cm.id === 'dock-flash:openQuickControl', cm.id)
+  typeof prop(rp, 'component') === 'function' && typeof prop(rp, 'headerComponent') === 'function',
+  typeof prop(rp, 'component') + '/' + typeof prop(rp, 'headerComponent'))
+check("registerPlugin id is 'dock-flash'", prop(rg, 'id') === 'dock-flash', prop(rg, 'id'))
+check("registerActivityBarItem id is 'dock-flash:quick-control'", prop(ab, 'id') === 'dock-flash:quick-control', prop(ab, 'id'))
+check("registerEditorView id is 'dock-flash:quick-control'", prop(ev, 'id') === 'dock-flash:quick-control', prop(ev, 'id'))
+check("registerCommand id is 'dock-flash:openQuickControl'", prop(cm, 'id') === 'dock-flash:openQuickControl', prop(cm, 'id'))
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('4. Teardown uses releaseOne, NOT release (two-mount regression)')
@@ -317,7 +365,7 @@ section('5. dock-base absent')
 const h5 = scenario({ boot: { entries: [] }, workbench: false })
 let threw5 = null
 try { h5.mod.apply(h5.ctx) } catch (e) { threw5 = e }
-h5.injections[0].cb({ dockFlashPanel: h5.panel })
+fire(h5, ['dockFlashPanel'], { dockFlashPanel: h5.panel })
 check('apply() does not throw', !threw5, threw5 && threw5.message)
 check('panel.host.claim is NOT called', count(h5.hostCalls, 'claim') === 0, JSON.stringify(h5.hostCalls))
 check('a console.warn mentions dock-base', anyLine(h5.lines.warn, /dock-base/), JSON.stringify(h5.lines.warn))
@@ -326,13 +374,13 @@ check('a console.warn mentions dock-base', anyLine(h5.lines.warn, /dock-base/), 
 section('6. Workbench late — dock-base installed but its service not yet here')
 const h6 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: false })
 h6.mod.apply(h6.ctx)
-h6.injections[0].cb({ dockFlashPanel: h6.panel })
+fire(h6, ['dockFlashPanel'], { dockFlashPanel: h6.panel })
 check('a console.log mentions waiting for the workbench service',
   anyLine(h6.lines.log, /waiting for the workbench/i), JSON.stringify(h6.lines.log))
 const injWb = h6.injections.find((i) => depsEq(i.deps, ['workbench']))
 check("ctx.inject was called with deps exactly ['workbench']", !!injWb,
   JSON.stringify(h6.injections.map((i) => i.deps)))
-injWb.cb({ workbench: h6.wb })
+fire(h6, ['workbench'], { workbench: h6.wb })
 check('workbench arrival performs the same registrations as the happy path',
   ['registerPanel', 'registerPlugin', 'registerActivityBarItem', 'registerEditorView', 'registerCommand']
     .every((n) => h6.callsOf(n).length === 1),
@@ -342,7 +390,7 @@ check('workbench arrival also claims the panel exactly once', count(h6.hostCalls
 // The manifest fallback: boot entries say nothing, but the module graph does.
 const h6b = scenario({ boot: { entries: [] }, graphRows: new Map([['dock-base', {}]]), workbench: false })
 h6b.mod.apply(h6b.ctx)
-h6b.injections[0].cb({ dockFlashPanel: h6b.panel })
+fire(h6b, ['dockFlashPanel'], { dockFlashPanel: h6b.panel })
 check('the ctx.get("modules").graphRows fallback also detects dock-base',
   h6b.injections.some((i) => depsEq(i.deps, ['workbench'])),
   JSON.stringify(h6b.injections.map((i) => i.deps)))
@@ -352,7 +400,7 @@ section('7. Version mismatch — panel speaks 2, adapter speaks 1')
 const h7 = scenario({ panelVersion: 2, boot: { entries: [{ id: 'dock-base' }] }, workbench: true })
 let threw7 = null
 try { h7.mod.apply(h7.ctx) } catch (e) { threw7 = e }
-h7.injections[0].cb({ dockFlashPanel: h7.panel })
+fire(h7, ['dockFlashPanel'], { dockFlashPanel: h7.panel })
 check('apply() does not throw', !threw7, threw7 && threw7.message)
 check('a console.warn complains about the version', anyLine(h7.lines.warn, /version/i), JSON.stringify(h7.lines.warn))
 check('panel.host.claim is NOT called', count(h7.hostCalls, 'claim') === 0, JSON.stringify(h7.hostCalls))
@@ -364,7 +412,7 @@ check('nothing was registered with wb',
 section('8. Dock-hidden detach — the whole-host release IS correct here')
 const h8 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true })
 h8.mod.apply(h8.ctx)
-h8.injections[0].cb({ dockFlashPanel: h8.panel })
+fire(h8, ['dockFlashPanel'], { dockFlashPanel: h8.panel })
 const before8 = h8.hostCalls.length
 h8.setHidden(['dock-flash'])
 h8.fireSetting()
@@ -382,7 +430,7 @@ const h9 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true,
 let threw9 = null
 try { h9.mod.apply(h9.ctx) } catch (e) { threw9 = e }
 check('apply() does not throw with the official locale service', !threw9, threw9 && threw9.message)
-h9.injections[0].cb({ dockFlashPanel: h9.panel })
+fire(h9, ['dockFlashPanel'], { dockFlashPanel: h9.panel })
 check("ctx requested the 'locale' service", h9.gets.includes('locale'), JSON.stringify(h9.gets))
 check("the adapter registered its own namespace 'dock-flash'",
   h9.localeRegistrations.length === 1 && h9.localeRegistrations[0].ns === 'dock-flash',
@@ -398,9 +446,10 @@ check('the sidebar title patch subscribes via the official locale/change event',
   h9.events.some((e) => e.event === 'locale/change'),
   JSON.stringify(h9.events.map((e) => e.event)))
 // The bound translator drives the deferred title getters dock-base consumes.
-const rp9 = h9.callsOf('registerPanel')[0].arg
+const rp9 = firstArg(h9, 'registerPanel')
 check('registerPanel.title is a deferred () => string backed by the bound translator',
-  typeof rp9.title === 'function' && /^T:/.test(rp9.title()), String(rp9.title && rp9.title()))
+  !!rp9 && typeof rp9.title === 'function' && /^T:/.test(rp9.title()),
+  rp9 ? String(typeof rp9.title) + ' ' + String(rp9.title && rp9.title()) : 'registerPanel never called')
 check('a console.log mentions reusing @deepseek-ai/dsh-client-locale',
   anyLine(h9.lines.log, /dsh-client-locale/), JSON.stringify(h9.lines.log))
 check("manifest dsh.client.inject lists '@deepseek-ai/dsh-client-locale' as a base name",
@@ -410,11 +459,78 @@ check("manifest dsh.client.inject lists '@deepseek-ai/dsh-client-locale' as a ba
 // The fallback still works when the official service is absent (no `locale`).
 const h9b = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: false })
 h9b.mod.apply(h9b.ctx)
-h9b.injections[0].cb({ dockFlashPanel: h9b.panel })
+fire(h9b, ['dockFlashPanel'], { dockFlashPanel: h9b.panel })
 check('with the official locale absent, it falls back to panel.i18n without throwing',
   h9b.callsOf('registerPanel').length === 1, JSON.stringify(h9b.callsOf('registerPanel').length))
 check('a console.log does NOT claim dsh-client-locale reuse on the fallback path',
   !anyLine(h9b.lines.log, /dsh-client-locale/))
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('10. The cordis ctx contract — reading an undeclared service THROWS')
+// THE defect this section exists to keep dead. A cordis context is a Proxy whose
+// get trap throws `cannot get property "x" without inject` for any service the
+// plugin did not declare in `inject`. `typeof ctx.locale` does NOT dodge it —
+// typeof evaluates the getter — so the idiomatic-looking existence check at the
+// heart of the adapter's i18n aborted `mountWorkbench` on EVERY boot, before the
+// claim and before all five wb.register* calls. The user-visible symptom was the
+// core's standalone ⚡ with no sidebar panel and no Flash settings card, and the
+// console went silent right after `workbench mode` because the throw escaped
+// through cordis's own inject callback, outside every try/catch in the file.
+// MEASURED against cordis 4.0.4 (see the note on makeCtx): the read throws both
+// when the locale service is provided and when it is absent, because this
+// plugin's `inject` is []. Only ctx.get() is a safe existence check.
+
+const REG = ['registerPanel', 'registerPlugin', 'registerActivityBarItem', 'registerEditorView', 'registerCommand']
+const regCounts = (h) => JSON.stringify(REG.map((n) => n + ':' + h.callsOf(n).length))
+const allRegistered = (h) => REG.every((n) => h.callsOf(n).length === 1)
+
+// First: the harness itself must actually enforce the contract, or every
+// assertion below is theatre.
+let proxyThrew = null
+try { h1.ctx.someUndeclaredService } catch (e) { proxyThrew = e }
+check('the ctx stub is a cordis-shaped Proxy: an undeclared read throws', !!proxyThrew,
+  proxyThrew && proxyThrew.message)
+
+// Static guard: the bundle must resolve services through ctx.get, never by
+// reading the property. Comments are stripped so the explanatory prose in
+// lib/client.js can keep naming ctx.locale without tripping this.
+const codeOnly = source.replace(/^\s*\/\/.*$/gm, '')
+const banned = [/ctx\.locale\b/, /typeof\s+ctx\.[a-z]/].filter((re) => re.test(codeOnly))
+check('lib/client.js never reads a service off ctx by property access',
+  banned.length === 0, banned.join(', '))
+
+// The live behaviour: a boot with NO official locale service must still come up
+// fully, through the panel.i18n fallback. This is the exact production shape —
+// the locale package is not in the boot batch — and it used to mount nothing.
+const h10 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: false })
+let threw10 = null
+try { h10.mod.apply(h10.ctx); fire(h10, ['dockFlashPanel'], { dockFlashPanel: h10.panel }) } catch (e) { threw10 = e }
+check('a boot without the official locale service does not throw', !threw10, threw10 && threw10.message)
+check('a boot without the official locale service still claims the panel once',
+  count(h10.hostCalls, 'claim') === 1, JSON.stringify(h10.hostCalls))
+check('a boot without the official locale service still performs all five registrations',
+  allRegistered(h10), regCounts(h10))
+check('that mount reports no error', h10.lines.error.length === 0, JSON.stringify(h10.lines.error))
+
+// And the same must hold when the service IS there — the throw was unconditional.
+const h10b = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: true })
+let threw10b = null
+try { h10b.mod.apply(h10b.ctx); fire(h10b, ['dockFlashPanel'], { dockFlashPanel: h10b.panel }) } catch (e) { threw10b = e }
+check('a boot WITH the official locale service does not throw', !threw10b, threw10b && threw10b.message)
+check('a boot with the official locale service resolves it through ctx.get, not a property read',
+  h10b.gets.includes('locale'), JSON.stringify(h10b.gets))
+check('a boot with the official locale service still performs all five registrations',
+  allRegistered(h10b), regCounts(h10b))
+
+// A locale service that throws on register must NOT take the mount down either.
+const h10c = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: true })
+h10c.locale.register = () => { throw new Error('boom') }
+let threw10c = null
+try { h10c.mod.apply(h10c.ctx); h10c.injections[0].cb({ dockFlashPanel: h10c.panel }) } catch (e) { threw10c = e }
+check('a locale service whose register() throws does not abort the mount',
+  allRegistered(h10c), regCounts(h10c))
+check('a failed official registration is reported as a warning, not silence',
+  anyLine(h10c.lines.warn, /official locale registration failed/i), JSON.stringify(h10c.lines.warn))
 
 // ═══════════════════════════════════════════════════════════════════════════
 console.log('')
