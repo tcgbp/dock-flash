@@ -107,9 +107,19 @@ suffix, while graph-row keys are base names — so a suffixed entry is **silentl
 
 > `@deepseek-ai/dsh-client-locale` must stay listed here so the official `locale` service
 > (`LocaleRuntime`, which the adapter reuses for dock-flash chrome) arrives before the adapter
-> mounts. It is a `peerDependency` (`^0.1.1-rc.2`), the same version family the official package
-> itself peers on — it is a shared platform runtime, not a private dependency. The adapter keeps a
-> `panel.i18n` fallback anyway, so a composition that omits it still mounts.
+> mounts. It is a `peerDependency` (`>=0.1.1-rc.2 <0.3.0-0`) — a shared platform runtime, not a
+> private dependency. The adapter keeps a `panel.i18n` fallback anyway, so a composition that omits
+> it still mounts.
+>
+> **That range is a range in DSH's version space, not in locale's.** `evaluatePluginCompatibility()`
+> compares every `@deepseek-ai/dsh*` peer against the **DSH runtime version** (`getDshRuntimeVersion()`,
+> read from app-boot's own `package.json`) — never against the named package's installed version. The
+> official locale package just happens to ship in lockstep, so `^0.1.1-rc.2` reads as "any 0.1.x" and
+> **disables the adapter on every DSH ≥ 0.2.0-0**: `preflight()` sets `row.disabled = true`, the row
+> mounts nothing, the panel vanishes, and the GUI says *"is incompatible with DSH 0.2.0-rc.2
+> (requires @deepseek-ai/dsh-client-locale ^0.1.1-rc.2)"*. Keep this peer a wide range. **Verify a
+> candidate range with DSH's own `evaluatePluginCompatibility()`, not raw `semver.satisfies`** — they
+> disagree (bare semver rejects `>=0.1.1-rc.2 <1.0.0-0` against `0.2.0-rc.2`, DSH accepts it).
 
 - `dock-base` is a **NON-optional** `peerDependencies` entry (there is no `peerDependenciesMeta` opt-out).
 - `dsh-flash` is a plain `dependencies` entry (`^1.0.0`).
@@ -265,7 +275,7 @@ releases: the two gates above still stand.
 |---|---|---|---|
 | `dsh-flash` `^1.0.0` | dependency | The panel core (another repository) | Plain dependency; supplies `dockFlashPanel` |
 | `dock-base` | peer | `ctx.workbench` registry services | **NON-optional** — no `peerDependenciesMeta` |
-| `@deepseek-ai/dsh-client-locale` `^0.1.1-rc.2` | peer | Official `LocaleRuntime` (`ctx.locale` / `locale/change`) | Shared platform runtime; adapter reuses it for dock chrome and must list it in inject |
+| `@deepseek-ai/dsh-client-locale` `>=0.1.1-rc.2 <0.3.0-0` | peer | Official `LocaleRuntime` (`ctx.locale` / `locale/change`) | Shared platform runtime; adapter reuses it for dock chrome and must list it in inject. **Range is in DSH's version space** — see above |
 | `@deepseek-ai/cordis` `>=4.0.0-rc.1 <5.0.0-0 \|\| >=4.0.1-0 <5.0.0-0` | peer | Plugin framework | Required |
 
 > The peer range carries an explicit prerelease branch **on purpose**, so prerelease harness builds resolve.
@@ -280,6 +290,7 @@ releases: the two gates above still stand.
 | Calling `panel.host.release()` from a per-mount disposer | A second mount loses its panel | Use `releaseOne()`; `release()` is the whole-host path |
 | Reading `ctx.get('dockFlashPanel')` in the same tick as the `provide` | `undefined` from an asynchronous service | Pass the service explicitly to `mountDockPanelAdapter` |
 | A non-`insert` patch with a stale `name:` | DSH drops the whole `config:` block | Update `name:` to the real package name, keep `id:` |
+| A `@deepseek-ai/dsh*` peer pinned with `^` | The whole row is **disabled** — panel gone, GUI says "incompatible with DSH x.y.z" | Peer ranges are matched against the **DSH runtime version**; use a wide range and check it with `evaluatePluginCompatibility()` |
 | `pnpm run <script>` | verify-deps-before-run tries to install the not-yet-published `dsh-flash` | Run `./node_modules/.bin/tsc -p tsconfig.json` / `node scripts/…` directly |
 
 ## Where else to read
