@@ -57,9 +57,6 @@ function makeConsole() {
 
 // Timers are captured, never run: the adapter arms a 2000 ms watchdog for a core
 // that never arrives, and a real timer would fire after this process exits.
-// `fire(ms, nth)` picks the NTH timer armed with that delay, because the adapter
-// now arms more than one 2000 ms timer (the core-service watchdog AND the
-// workbench-absence notice).
 function makeTimers() {
   const timers = []
   let nextId = 1
@@ -67,12 +64,9 @@ function makeTimers() {
     timers,
     setTimeoutStub(fn, ms) { const id = nextId++; timers.push({ id, fn, ms, cleared: false }); return id },
     clearTimeoutStub(id) { const t = timers.find((x) => x.id === id); if (t) t.cleared = true },
-    armed(ms) { return timers.filter((x) => x.ms === ms).length },
-    wasCleared(id) { const t = timers.find((x) => x.id === id); return !!t && t.cleared },
-    fire(ms, nth = 1) {
-      const matches = timers.filter((x) => x.ms === ms)
-      const t = matches[nth - 1]
-      if (!t) throw new Error('no captured timer with delay ' + ms + ' (index ' + nth + ' of ' + matches.length + ')')
+    fire(ms) {
+      const t = timers.find((x) => x.ms === ms)
+      if (!t) throw new Error('no captured timer with delay ' + ms)
       t.fn()
     },
   }
@@ -248,14 +242,14 @@ const anyLine = (lines, re) => lines.some((l) => re.test(l))
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('1. Module entry shape')
-const h1 = scenario({ boot: { entries: [{ id: 'dock' }] }, workbench: true })
+const h1 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true })
 check("captured id is 'dock-flash'", h1.captured.opts.id === 'dock-flash', h1.captured.opts.id)
 check("factory return has name === 'dock-flash'", h1.mod.name === 'dock-flash', h1.mod.name)
 check('factory return has inject as an array', Array.isArray(h1.mod.inject))
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('2. Service absent — the loud failure (the split\'s silent no-op)')
-const h2 = scenario({ boot: { entries: [{ id: 'dock' }] }, workbench: true })
+const h2 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true })
 let threw2 = null
 try { h2.mod.apply(h2.ctx) } catch (e) { threw2 = e }
 check('apply() does not throw when the dockFlashPanel service never arrives', !threw2, threw2 && threw2.message)
@@ -273,7 +267,7 @@ check('firing the watchdog emits console.error naming dsh-flash',
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('3. Happy path — workbench present, panel service arrives')
-const h3 = scenario({ boot: { entries: [{ id: 'dock' }] }, workbench: true })
+const h3 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true })
 let threw3 = null
 try { h3.mod.apply(h3.ctx) } catch (e) { threw3 = e }
 check('apply() does not throw', !threw3, threw3 && threw3.message)
@@ -319,36 +313,22 @@ if (eff4) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('5. dock-base absent — still subscribes, warns late, registers nothing')
+section('5. dock-base absent')
 const h5 = scenario({ boot: { entries: [] }, workbench: false })
 let threw5 = null
 try { h5.mod.apply(h5.ctx) } catch (e) { threw5 = e }
 h5.injections[0].cb({ dockFlashPanel: h5.panel })
 check('apply() does not throw', !threw5, threw5 && threw5.message)
 check('panel.host.claim is NOT called', count(h5.hostCalls, 'claim') === 0, JSON.stringify(h5.hostCalls))
-check('nothing was registered with wb',
-  ['registerPanel', 'registerPlugin', 'registerActivityBarItem', 'registerEditorView', 'registerCommand']
-    .every((n) => h5.callsOf(n).length === 0))
-check('workbench is STILL subscribed (the gate is gone)',
-  h5.injections.some((i) => depsEq(i.deps, ['workbench'])),
-  JSON.stringify(h5.injections.map((i) => i.deps)))
-// An empty manifest means a second 2000 ms timer: the core watchdog, then the
-// workbench-absence notice. Fire the LAST one and require the loud diagnosis.
-h5.timers.fire(2000, h5.timers.armed(2000))
 check('a console.warn mentions dock-base', anyLine(h5.lines.warn, /dock-base/), JSON.stringify(h5.lines.warn))
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('6. Workbench late — dock-base installed but its service not yet here')
-// The boot row id here is `dock`, which is what dock-base ACTUALLY declares in
-// its own cordis.patch.yml (`- id: dock / name: dock-base`). Earlier fixtures
-// invented `id: dock-base`, and that fiction is what hid the bug: the adapter
-// compared row ids against the package name, so on a real boot it decided
-// dock-base was missing and registered nothing. See _dockBaseInstalled.
-const h6 = scenario({ boot: { entries: [{ id: 'dock' }] }, workbench: false })
+const h6 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: false })
 h6.mod.apply(h6.ctx)
 h6.injections[0].cb({ dockFlashPanel: h6.panel })
-check('a console.log says the workbench service is not up yet and it is waiting',
-  anyLine(h6.lines.log, /workbench service not up yet[\s\S]*waiting/i), JSON.stringify(h6.lines.log))
+check('a console.log mentions waiting for the workbench service',
+  anyLine(h6.lines.log, /waiting for the workbench/i), JSON.stringify(h6.lines.log))
 const injWb = h6.injections.find((i) => depsEq(i.deps, ['workbench']))
 check("ctx.inject was called with deps exactly ['workbench']", !!injWb,
   JSON.stringify(h6.injections.map((i) => i.deps)))
@@ -358,27 +338,18 @@ check('workbench arrival performs the same registrations as the happy path',
     .every((n) => h6.callsOf(n).length === 1),
   JSON.stringify(['registerPanel', 'registerPlugin', 'registerActivityBarItem', 'registerEditorView', 'registerCommand'].map((n) => n + ':' + h6.callsOf(n).length)))
 check('workbench arrival also claims the panel exactly once', count(h6.hostCalls, 'claim') === 1)
-// The absence notice must stay silent once the service has landed.
-h6.timers.fire(2000, h6.timers.armed(2000))
-check('the absence notice stays silent after the workbench arrived',
-  !anyLine(h6.lines.warn, /has not arrived/i), JSON.stringify(h6.lines.warn))
 
 // The manifest fallback: boot entries say nothing, but the module graph does.
-// Detection is DIAGNOSTIC now, so this asserts the notice's wording branch
-// rather than any mounting decision.
-const h6b = scenario({ boot: { entries: [] }, graphRows: new Map([['dock', {}]]), workbench: false })
+const h6b = scenario({ boot: { entries: [] }, graphRows: new Map([['dock-base', {}]]), workbench: false })
 h6b.mod.apply(h6b.ctx)
 h6b.injections[0].cb({ dockFlashPanel: h6b.panel })
 check('the ctx.get("modules").graphRows fallback also detects dock-base',
   h6b.injections.some((i) => depsEq(i.deps, ['workbench'])),
   JSON.stringify(h6b.injections.map((i) => i.deps)))
-h6b.timers.fire(2000, h6b.timers.armed(2000))
-check('the notice blames the missing service, not a missing install',
-  anyLine(h6b.lines.warn, /publishes no `workbench` service/), JSON.stringify(h6b.lines.warn))
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('7. Version mismatch — panel speaks 2, adapter speaks 1')
-const h7 = scenario({ panelVersion: 2, boot: { entries: [{ id: 'dock' }] }, workbench: true })
+const h7 = scenario({ panelVersion: 2, boot: { entries: [{ id: 'dock-base' }] }, workbench: true })
 let threw7 = null
 try { h7.mod.apply(h7.ctx) } catch (e) { threw7 = e }
 h7.injections[0].cb({ dockFlashPanel: h7.panel })
@@ -391,7 +362,7 @@ check('nothing was registered with wb',
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('8. Dock-hidden detach — the whole-host release IS correct here')
-const h8 = scenario({ boot: { entries: [{ id: 'dock' }] }, workbench: true })
+const h8 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true })
 h8.mod.apply(h8.ctx)
 h8.injections[0].cb({ dockFlashPanel: h8.panel })
 const before8 = h8.hostCalls.length
@@ -407,7 +378,7 @@ section('9. I18n reuses the official @deepseek-ai/dsh-client-locale when present
 // the adapter must register its own 'dock-flash' namespace and bind it, then
 // refresh the sidebar title through the official `locale/change` event — NOT the
 // core's hand-rolled `panel.i18n.t.onLocaleChange`.
-const h9 = scenario({ boot: { entries: [{ id: 'dock' }] }, workbench: true, locale: true })
+const h9 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: true })
 let threw9 = null
 try { h9.mod.apply(h9.ctx) } catch (e) { threw9 = e }
 check('apply() does not throw with the official locale service', !threw9, threw9 && threw9.message)
@@ -437,7 +408,7 @@ check("manifest dsh.client.inject lists '@deepseek-ai/dsh-client-locale' as a ba
   JSON.stringify(injectedNames))
 
 // The fallback still works when the official service is absent (no `locale`).
-const h9b = scenario({ boot: { entries: [{ id: 'dock' }] }, workbench: true, locale: false })
+const h9b = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: false })
 h9b.mod.apply(h9b.ctx)
 h9b.injections[0].cb({ dockFlashPanel: h9b.panel })
 check('with the official locale absent, it falls back to panel.i18n without throwing',

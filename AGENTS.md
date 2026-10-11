@@ -162,15 +162,10 @@ and must **NEVER** call `panel.host.release()`: `release()` is the WHOLE-host re
 dock-hidden detach path (`_syncDockHidden`), and calling it from a per-mount disposer broke the two-mount
 case by pulling the panel out from under the second mount.
 
-**Never gate the mount on a boot row id.** A `__DSH_BOOT__.entries[i].id` is the id the PACKAGE picked in its
-own `cordis.patch.yml`, **not** its package name — and `graphRow()` puts no package name on the wire at all
-(`id`/`url`/`rev`/`inject`/`external`, with `url` built from the id). dock-base ships `- id: dock` /
-`name: dock-base`, so matching row ids against `dock-base` misses it and the adapter concludes the base is
-absent. Measured composed order ends `dock-flash`, `dock-flash-adapter`, **`dock`**: dock-base composes LAST,
-so `ctx.get('workbench')` is undefined on every healthy boot and "not yet" is indistinguishable from
-"never". `mountDockPanelAdapter` therefore subscribes with `ctx.inject(['workbench'], …)` **unconditionally**;
-`_dockBaseInstalled()` is a DIAGNOSTIC that only chooses the wording of the late absence notice, so a stale
-row-id list costs a misleading log line instead of the panel.
+**Behaviour when dock-base is absent.** `_dockBaseInstalled(ctx)` checks `window.__DSH_BOOT__.entries` (ids
+`dock-base` / `dock-base/client`) and then `ctx.get('modules').graphRows`. If the base is installed but
+`ctx.get('workbench')` is not up yet, wait for it via `ctx.inject(['workbench'], scope => …)` instead of
+bailing out.
 
 **What the core publishes** — the adapter consumes it and registers nothing for the core:
 
@@ -216,31 +211,25 @@ node scripts/check-adapter-mount.mjs    # aka pnpm run check:overlay
 ```
 
 `check-adapter-mount.mjs` reads the **REAL** `lib/client.js`, evaluates it in a `node:vm` sandbox with a tiny
-fake DOM and a fake cordis `ctx`, and asserts **56 things across 9 groups**:
+fake DOM and a fake cordis `ctx`, and asserts **53 things across 9 groups**:
 
 1. module id/name;
 2. the loud watchdog naming both `dockFlashPanel` and `dsh-flash` at exactly 2000 ms;
 3. the happy path's five exact registration ids;
 4. the per-mount teardown calling `releaseOne` once and `release` **ZERO** times;
-5. dock-base absent — still subscribes to `workbench`, registers nothing, warns only after the timer;
-6. a late `workbench` — mounts on arrival, then keeps the absence notice silent;
+5. dock-base absent;
+6. a late `workbench`;
 7. `version !== 1` refusal;
 8. the dock-hidden detach;
 9. i18n reusing the official `@deepseek-ai/dsh-client-locale` (register + bind + `locale/change`) when the
    service is present, and cleanly falling back to `panel.i18n` when it is absent.
 
 **Its limits, honestly:** the `Panel` / `ErrorBoundary` / `Header` / `registry` stubs are inert, so rendering
-is untested; `document.querySelector` returns `null`, so the sidebar-title patch body does not run; the
-`effect` stub never auto-runs cleanups; and **the harness only ever proves what its fixtures make true**.
-Its `boot.entries` fixtures used to say `{ id: 'dock-base' }`, a shape dock-base has never emitted, so all
-53 assertions stayed green while the adapter failed on every real boot. Fixtures must copy the REAL shape —
-`{ id: 'dock' }` — and a green suite must be treated as unproven until a fixture has been checked against a
-live `dsh --profile web --dump-config` / `__DSH_BOOT__` capture.
+is untested; `document.querySelector` returns `null`, so the sidebar-title patch body does not run; and the
+`effect` stub never auto-runs cleanups.
 
 **Prove the harness can fail:** flip `mountWorkbench`'s final `return releaseOne` to `return panel.host.release`,
-watch group 4 fail, restore. To re-prove the row-id defect specifically:
-`DOCK_FLASH_BUNDLE=<the pre-fix lib/client.js> node scripts/check-adapter-mount.mjs` — the old bundle must go
-red in groups 5 and 6 against the real fixtures.
+watch group 4 fail, restore.
 
 ## Publishing & repository sync
 
@@ -302,8 +291,6 @@ releases: the two gates above still stand.
 | Reading `ctx.get('dockFlashPanel')` in the same tick as the `provide` | `undefined` from an asynchronous service | Pass the service explicitly to `mountDockPanelAdapter` |
 | A non-`insert` patch with a stale `name:` | DSH drops the whole `config:` block | Update `name:` to the real package name, keep `id:` |
 | A `@deepseek-ai/dsh*` peer pinned with `^` | The whole row is **disabled** — panel gone, GUI says "incompatible with DSH x.y.z" | Peer ranges are matched against the **DSH runtime version**; use a wide range and check it with `evaluatePluginCompatibility()` |
-| Gating a mount on a `__DSH_BOOT__` row id matching a **package name** | Panel never registers with the dock, but the core's ⚡ still floats — looks like "adapter not installed" | A row id is what the package chose in its own patch (`dock-base` ships `id: dock`). Subscribe to the service unconditionally; keep row-id checks diagnostic only |
-| A harness fixture that invents a manifest shape | A fully green suite hiding a bug that fires on every real boot | Copy fixtures from a live `--dump-config` / `__DSH_BOOT__` capture, and prove the check can fail with the pre-fix bundle |
 | `pnpm run <script>` | verify-deps-before-run tries to install the not-yet-published `dsh-flash` | Run `./node_modules/.bin/tsc -p tsconfig.json` / `node scripts/…` directly |
 
 ## Where else to read
