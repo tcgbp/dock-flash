@@ -48,8 +48,11 @@ observe, major for anything removed or renamed.
 
 # 1. Version, in BOTH places — they are not linked, so `pnpm run check:docs` asserts them.
 #      package.json        "version"
-#      lib/client.js       const CLIENT_VERSION — one constant, reported by the
-#                          startup log and by __dockFlashOverlay()
+#      lib/client.js       const CLIENT_VERSION — one constant, printed by the
+#                          boot log as `[dock-flash] adapter v<version>`. There
+#                          is no adapter probe; `__dockFlashOverlay()` and the
+#                          other `__dockFlash*()` readouts belong to the CORE
+#                          package and are not defined by this bundle.
 #    Add the CHANGELOG.md row at the same time.
 
 # 2. If src/index.ts changed, rebuild and commit dist/ in the same commit.
