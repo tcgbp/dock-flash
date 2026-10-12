@@ -109,14 +109,16 @@ suffix, while graph-row keys are base names — so a suffixed entry is **silentl
 ["dsh-flash","dock-base","@deepseek-ai/dsh-client-locale","@deepseek-ai/dsh-api-remotes","@deepseek-ai/dsh-api-session-controller"]
 ```
 
-> `@deepseek-ai/dsh-client-locale` is listed so the official `locale` service (`LocaleRuntime`, which the
-> adapter reuses for dock-flash chrome) arrives before the adapter mounts, if the composition provides it. It
-> is deliberately **not** a `peerDependency` — see the rule below. The adapter keeps a `panel.i18n` fallback,
-> so a composition that omits it still mounts.
+> `@deepseek-ai/dsh-client-locale` is listed so the official `locale` service (`LocaleRuntime`) arrives
+> before the adapter mounts, if the composition provides it. It is deliberately **not** a
+> `peerDependency` — see the rule below. The adapter reads its strings from the core's `panel.i18n`, which
+> proxies that same service, so an early arrival decides the language of the first paint of
+> adapter-owned chrome; a composition that omits it still mounts and still translates.
 >
-> **In practice this entry is currently inert.** The package is absent from the served boot batch, so listing
-> it changes no load order and `ctx.get('locale')` resolves to `undefined`. It records the intended wiring; it
-> is not evidence that the official locale path runs.
+> **This entry is a load-order hint and nothing more.** The adapter resolves nothing off the `locale`
+> service itself — it must not start doing so (see "The adapter's i18n" below). In practice it is also
+> currently inert: the package is absent from the served boot batch, so listing it changes no load order.
+> It records the intended wiring; it is not evidence that the adapter talks to the service.
 >
 > **Never add a `@deepseek-ai/dsh*` peerDependency to this package.** `evaluatePluginCompatibility()` compares
 > every such peer against the **DSH runtime version** (`getDshRuntimeVersion()`, read from app-boot's own
@@ -182,24 +184,31 @@ bailing out.
 ```js
 dockFlashPanel = {
   version: 1, Panel, ErrorBoundary, Header, icon, registry,
-  i18n: { t, L },   // legacy fallback; the adapter prefers the official locale SERVICE
+  i18n: { t, L },   // the adapter's ONLY source of translated strings
   host: { claim, release, releaseOne, isClaimed },
 }
 ```
 
 **The adapter's i18n.** The dock-base copy of the panel chrome (sidebar / activity-bar / editor-view /
-command titles and the plugin card) is OWNED by the adapter and is translated by reusing the official
-`@deepseek-ai/dsh-client-locale` `LocaleRuntime`: the adapter `register`s its own `dock-flash` namespace
-(zh/en dictionaries) and `bind`s it, then refreshes the sidebar title through the official `locale/change`
-event (`ctx.on`). The service is reached with **`ctx.get('locale')` only** — never as a `ctx.locale` property
-read, which throws (see the Pitfalls row). Only when that service is absent does the adapter fall back to the
-core's `panel.i18n.{t,L}` wrapper (and its `t.onLocaleChange`). Either path must leave the half mounted — a
-missing locale is never a mount failure. Official-registration failure is caught too, downgraded to a
-`console.warn`, and falls back the same way. The plugin-card `description` is read once from the active locale
-at mount and does not follow live switches (dock-base's `createPluginCard` renders it statically).
+command titles and the plugin card) is OWNED by the adapter but **translated by the core**: every string
+comes from `panel.i18n.t` / `panel.i18n.L`, and the sidebar-title patch subscribes through
+`t.onLocaleChange`. The adapter claims **no locale namespace of its own** and never resolves the `locale`
+service. That is not a degradation — the core's `t` is itself a proxy over the official
+`@deepseek-ai/dsh-client-locale` `LocaleRuntime` (it reads `getSnapshot().active` and is driven back by
+`svc.subscribe`), so the official service still decides the language.
 
-> **In the current boot the official branch does not run** (see the `inject` note above), so every real user
-> takes the `panel.i18n` fallback. Keep that path first-class; do not "simplify" by deleting it.
+> **Why the adapter must never call `LocaleRuntime.register()` itself.** The core registers `dock-flash`
+> with that service on its own plugin fiber, and `register()` **refuses a repeat locale**. A second
+> claimant therefore cannot succeed — it can only throw. Until 3.0.3 that is exactly what happened, on
+> every boot: the throw was caught, logged as `official locale registration failed; falling back to core
+> panel.i18n`, and the fallback ran anyway. Dead code wearing a warning, whose zh/en copy was
+> byte-identical to the core dictionary's `title` / `description`. A distinct namespace
+> (`dock-flash-adapter`) would technically work and is still the wrong answer: two authorities holding the
+> same strings is how they start disagreeing.
+
+The plugin-card `description` is read once from the active locale at mount and does not follow live
+switches (dock-base's `createPluginCard` renders it statically). A missing locale is never a mount
+failure: `panel.i18n` always exists, because the core always publishes it.
 
 ## Upgrade hazard: the `^2` profile's panel row
 
@@ -225,7 +234,9 @@ node scripts/check-adapter-mount.mjs    # aka pnpm run check:overlay
 ```
 
 `check-adapter-mount.mjs` reads the **REAL** `lib/client.js`, evaluates it in a `node:vm` sandbox with a tiny
-fake DOM and a fake cordis `ctx`, and asserts **67 things across 10 groups**:
+fake DOM and a fake cordis `ctx`, and asserts the adapter's mount contract across **10 groups**. (The
+assertion count is deliberately not written down: it drifts on every assertion added, and a stale number
+reads as authority.)
 
 1. module id/name;
 2. the loud watchdog naming both `dockFlashPanel` and `dsh-flash` at exactly 2000 ms;
@@ -235,16 +246,24 @@ fake DOM and a fake cordis `ctx`, and asserts **67 things across 10 groups**:
 6. a late `workbench`;
 7. `version !== 1` refusal;
 8. the dock-hidden detach;
-9. i18n reusing the official `@deepseek-ai/dsh-client-locale` (register + bind + `locale/change`) when the
-   service is present, and cleanly falling back to `panel.i18n` when it is absent;
+9. i18n going through `panel.i18n` and claiming **no** locale namespace — nothing registered with or
+   resolved from the official `locale` service, every title a deferred `() => string`, the plugin-card
+   `description` a static string, and the sidebar-title patch actually rewriting the DOM on a locale
+   switch **and leaving another pane's title alone**;
 10. the cordis `ctx` contract: the stub throws on an undeclared property read, a static guard keeps
-    `ctx.<service>` property reads out of the bundle, and the mount completes with the locale service
-    absent, present, **and** throwing; plus the manifest guards — no `@deepseek-ai/dsh*` peerDependency,
-    `dock-base`/`cordis` still peers, and every `inject` entry a base name DSH can resolve.
+     `ctx.<service>` property reads out of the bundle, and the mount completes with the locale service
+     absent, present, **and** refusing registration; plus the manifest guards — no `@deepseek-ai/dsh*`
+     peerDependency, `dock-base`/`cordis` still peers, and every `inject` entry a base name DSH can resolve.
 
 **The ctx stub is a Proxy on purpose, and it is load-bearing.** A real cordis context throws from its `get`
 trap for any service the plugin did not declare in `inject`. A plain-object stub returns `undefined` there
 and therefore **cannot express** the defect that made the adapter vanish on every boot. Keep it a Proxy.
+
+**Fixtures must be as strict as the thing they fake.** The `panel.i18n` stub mirrors the real contract —
+`L(key)` returns a getter, not a string, and `t.setLocale()` notifies the listeners `t.onLocaleChange`
+registered. A permissive stub passes bundles that are broken, which is how a plugin card rendering blank
+once sailed through. Same for the locale stub: it is built to REJECT a duplicate registration, so a
+regression reproduces the production symptom instead of passing quietly.
 
 **A broken bundle must produce FAILs, never a crash.** `firstArg`/`prop`/`fire`/`fireSetting`/`timers.fire`
 all degrade to `undefined`/`false` instead of throwing, because a `TypeError` partway through the file skips
@@ -252,13 +271,14 @@ every later section **and the summary** — a truncated run with no FAIL naming 
 survived a green harness. Never reintroduce a throw into a fixture accessor.
 
 **Its limits, honestly:** the `Panel` / `ErrorBoundary` / `Header` / `registry` stubs are inert, so rendering
-is untested; `document.querySelector` returns `null`, so the sidebar-title patch body does not run; the
-`effect` stub never auto-runs cleanups; and the fake `ctx` reproduces the `inject`-declaration rule but not
-cordis's real asynchronous resolution timing.
+is untested; only `.dsh-wb-sidebar-title` is answered by `querySelector`, so no other DOM write is observed;
+the `effect` stub never auto-runs cleanups; and the fake `ctx` reproduces the `inject`-declaration rule but
+not cordis's real asynchronous resolution timing.
 
-**Prove the harness can fail:** flip `mountWorkbench`'s final `return releaseOne` to `return panel.host.release`
-and watch group 4 fail; or resolve the locale service as `(typeof ctx.locale !== 'undefined') ? ctx.locale : …`
-and watch groups 2/3/9/10 report the mount never happened. Restore both.
+**Prove the harness can fail:** re-add a `localeService.register('dock-flash', …)` branch at the top of
+`mountWorkbench` and watch group 9 fail on ten assertions, including the exact production warn line; or flip
+`mountWorkbench`'s final `return releaseOne` to `return panel.host.release` and watch group 4 fail. Restore
+both.
 
 ## Publishing & repository sync
 
@@ -304,7 +324,7 @@ releases: the two gates above still stand.
 |---|---|---|---|
 | `dsh-flash` `^1.0.0` | dependency | The panel core (another repository) | Plain dependency; supplies `dockFlashPanel` |
 | `dock-base` | peer | `ctx.workbench` registry services | **NON-optional** — no `peerDependenciesMeta` |
-| `@deepseek-ai/dsh-client-locale` | **none** — inject only | Official `LocaleRuntime` (`locale` service, `locale/change` event) | Reused opportunistically for dock chrome. Reach it with `ctx.get('locale')`, never `ctx.locale`. Deliberately NOT a peer — a `@deepseek-ai/dsh*` peer is matched against the **DSH runtime version** and can disable the whole row |
+| `@deepseek-ai/dsh-client-locale` | **none** — inject only | Official `LocaleRuntime` (`locale` service) | **Load-order hint only.** The adapter never touches this service; it translates through the core's `panel.i18n`, which proxies it. Reach any service with `ctx.get('name')`, never `ctx.<name>`. Deliberately NOT a peer — a `@deepseek-ai/dsh*` peer is matched against the **DSH runtime version** and can disable the whole row |
 | `@deepseek-ai/cordis` `>=4.0.0-rc.1 <5.0.0-0 \|\| >=4.0.1-0 <5.0.0-0` | peer | Plugin framework | Required |
 
 > The peer range carries an explicit prerelease branch **on purpose**, so prerelease harness builds resolve.
@@ -322,6 +342,7 @@ releases: the two gates above still stand.
 | Reading a service as a `ctx.<name>` **property** | The read **throws** `cannot get property "x" without inject` (a cordis `Proxy` get trap), aborting the mount — ⚡ stays, sidebar panel and Flash card never appear, console goes silent after `workbench mode` | Resolve services with `ctx.get('name')`, which returns `undefined` instead of throwing. `typeof ctx.<name>` does **not** help — `typeof` evaluates the getter and still throws |
 | A `@deepseek-ai/dsh*` **peerDependency** on this package | The whole row is **disabled** — panel gone, GUI says "incompatible with DSH x.y.z". The message names a version to bump; the real fix is deletion | Do not declare one. DSH matches it against the **DSH runtime version**, not the package's own, so no pin is safe. Declare the name in `dsh.client.inject` and reach the service with `ctx.get(...)` instead |
 | `pnpm run <script>` | verify-deps-before-run tries to install the not-yet-published `dsh-flash` | Run `./node_modules/.bin/tsc -p tsconfig.json` / `node scripts/…` directly |
+| The adapter calling `locale.register('dock-flash', …)` | Every boot logs `official locale registration failed; falling back to core panel.i18n` — and the panel still works, so it reads as harmless noise | The core already owns that namespace and `register()` refuses a repeat locale, so the call can only throw. Translate through `panel.i18n` and claim nothing. Do not "fix" it with a second namespace |
 
 ## Where else to read
 

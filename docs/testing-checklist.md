@@ -19,7 +19,7 @@ here, it goes in the other repo.
 
 `node scripts/check-adapter-mount.mjs` (`pnpm run check:overlay`) is the one committed check. It
 evaluates the **real** `lib/client.js` in a `node:vm` sandbox against a minimal DOM and a cordis-shaped
-`ctx`, and asserts **67 things across 10 groups** — see `AGENTS.md` § Verification for the list. Point
+`ctx`, and asserts the mount contract across **10 groups** — see `AGENTS.md` § Verification for the list. Point
 `DOCK_FLASH_BUNDLE` at another copy to confirm it still fails on a broken one:
 
 ```sh
@@ -97,13 +97,15 @@ run there.
    strand the panel in neither mode; the sync also re-runs on `wb.onDidChangeSetting`, so changing any
    dock-base setting re-evaluates it.
 
-10. **i18n falls back rather than failing.** In the current boot the official `locale` service is not
-    in the served batch, so every real user takes the core's `panel.i18n` path. Verify the copy is
-    translated anyway. If the official service is present, expect `[dock-flash] i18n: reusing
-    @deepseek-ai/dsh-client-locale (ns=dock-flash)`; if its `register()` throws, expect a **warn**
-    `[dock-flash] official locale registration failed; falling back to core panel.i18n` and a panel
-    that still mounts. A missing locale must never be a mount failure — that rule exists because a
-    property read on the locale service once took the whole mount down.
+10. **i18n comes from the core, and claims nothing.** Switch the DSH language with the panel open. The
+    sidebar title, the activity-bar tooltip and the editor-view title all follow; the Flash settings-card
+    description does **not** (dock-base renders that card statically — expected, not a defect). Expect **no
+    locale warning at all**: the adapter registers no namespace of its own, so a line like
+    `official locale registration failed; falling back to core panel.i18n` means someone re-added a
+    `LocaleRuntime.register()` call, which can only throw because the core already owns `dock-flash`. Also
+    confirm the negative case — switch language while a DIFFERENT pane is active and that pane's title must
+    be untouched. A missing locale must never be a mount failure: that rule exists because a property read
+    on the locale service once took the whole mount down.
 
 11. **The upgrade hazard, if the profile is on `^2`.** Its `cordis.patch.yml` panel entry may still
     assert `name: dock-flash` while the core's package is `dsh-flash`. DSH then prints

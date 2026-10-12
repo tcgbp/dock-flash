@@ -28,11 +28,20 @@ function section(title) { console.log('\n' + title) }
 
 const BUNDLE = process.env.DOCK_FLASH_BUNDLE || new URL('../lib/client.js', import.meta.url)
 const source = fs.readFileSync(BUNDLE, 'utf8')
+// Comments stripped once, up front: several sections grep the CODE, and the
+// explanatory prose in lib/client.js legitimately names the things the code is
+// forbidden to do.
+const codeOnly = source.replace(/^\s*\/\/.*$/gm, '')
 
-// The manifest's inject list drives arriveGraphRow load order. The adapter reuses
-// the official @deepseek-ai/dsh-client-locale runtime, so that package name must
-// be present here (as a BASE name, per AGENTS.md) for its locale service to arrive
-// before the adapter mounts.
+// The manifest's inject list drives arriveGraphRow load order. The adapter reads
+// its strings from `panel.i18n`, which is the CORE's proxy over the official
+// @deepseek-ai/dsh-client-locale runtime — so the locale row arriving early still
+// decides the language of the very first paint of adapter-owned chrome, and the
+// name stays here (as a BASE name, per AGENTS.md) to record that ordering.
+// It is a load-order hint only: the adapter resolves NOTHING off the `locale`
+// service itself, and must not start doing so — the core already claims the
+// `dock-flash` namespace, and `LocaleRuntime.register()` refuses a repeat locale.
+// See section 9.
 const manifest = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const injectedNames = manifest.dsh?.client?.inject || []
 
@@ -126,15 +135,26 @@ function makeCtx(services, inject = []) {
 
 // A faithful stub of the OFFICIAL @deepseek-ai/dsh-client-locale LocaleRuntime,
 // reachable as the `locale` SERVICE (via ctx.get('locale') — never as a ctx
-// property, see section 10), so the adapter's reuse of it (register + bind +
-// locale/change) can be asserted without a real browser. Mirrors the typed
-// surface the adapter uses:
-// register(ns, {zh,en}) -> disposer, bind(ns) -> (key):string, plus the cordis
-// `locale/change` event the adapter subscribes to via ctx.on.
+// property, see section 10). The adapter must NOT touch it: it translates
+// through the core's `panel.i18n`, which proxies this same service. The stub
+// exists so that is provable rather than merely intended — a boot with the
+// service present must leave `registrations` empty.
+//
+// It is deliberately as hostile as the real runtime. `register()` REFUSES a
+// locale that namespace already has, and `dock-flash` arrives PRE-CLAIMED
+// because in production the CORE claims it, on its own plugin fiber, before the
+// adapter ever runs. So a regression that re-adds a registration throws here
+// with the production message instead of quietly succeeding against a stub too
+// polite to refuse.
 function makeLocale() {
   const registrations = []
+  const claimed = new Map([['dock-flash', { zh: { title: '快捷控制' }, en: { title: 'Quick Control' } }]])
   const port = {
     register(ns, dicts) {
+      if (claimed.has(ns)) {
+        throw new Error(`locale namespace "${ns}" already has locale "zh"`)
+      }
+      claimed.set(ns, dicts)
       registrations.push({ ns, dicts })
       return () => { port._disposed = true }
     },
@@ -153,6 +173,24 @@ function makeLocale() {
 function makePanel() {
   const hostCalls = []
   const i18nListeners = []
+  // The core's `t` is a translator plus the frozen `getLocale` / `setLocale` /
+  // `onLocaleChange` surface. It is modelled as REACTIVE on purpose: the adapter's
+  // sidebar-title patch is only meaningful if a locale switch actually notifies it,
+  // so `setLocale` must notify the very listeners `onLocaleChange` registered.
+  let locale = 'en'
+  const t = (k) => t.prefix + k
+  t.prefix = 'T:'
+  t.getLocale = () => locale
+  t.setLocale = (key) => {
+    if (key !== 'zh' && key !== 'en') return
+    if (key === locale) return
+    locale = key
+    i18nListeners.slice().forEach((fn) => { try { fn() } catch (_) {} })
+  }
+  t.onLocaleChange = (cb) => {
+    i18nListeners.push(cb)
+    return () => { const i = i18nListeners.indexOf(cb); if (i >= 0) i18nListeners.splice(i, 1) }
+  }
   const panel = {
     version: 1,
     Panel: function Panel() {},
@@ -161,13 +199,14 @@ function makePanel() {
     icon: 'ICON',
     registry: {},
     i18n: {
-      L: (k) => 'L:' + k,
-      t: Object.assign((k) => 'T:' + k, {
-        onLocaleChange(cb) {
-          i18nListeners.push(cb)
-          return () => { const i = i18nListeners.indexOf(cb); if (i >= 0) i18nListeners.splice(i, 1) }
-        },
-      }),
+      // Fidelity matters here. The core's `L(key)` returns a DEFERRED getter
+      // (`() => t(key)`), because dock-base's registerPanel /
+      // registerActivityBarItem / registerEditorView take `() => string` for live
+      // i18n. A stub returning a plain string would let a bundle that hands the
+      // registration a bare string pass — and that renders BLANK on the plugin
+      // card, the exact defect AGENTS.md records for `registerPlugin`.
+      t,
+      L: (k) => () => t(k),
     },
     host: {
       // `claim()` returns a lease with confirm()/release(), so the adapter's
@@ -193,6 +232,10 @@ function makeWb() {
   const calls = []
   let hidden = []
   let settingCb = null
+  // The active pane the adapter's title patch checks before it dares to write.
+  // Null by default, so every existing scenario keeps walking the same early
+  // return it always did; section 9 turns it on to drive the patch.
+  let activePane = null
   const rec = (name, arg) => { calls.push({ name, arg }); return () => {} }
   const wb = {
     registerPanel: (a) => rec('registerPanel', a),
@@ -202,8 +245,8 @@ function makeWb() {
     registerCommand: (a) => rec('registerCommand', a),
     openView: (...a) => { calls.push({ name: 'openView', args: a }) },
     closeViewInstance: (...a) => { calls.push({ name: 'closeViewInstance', args: a }) },
-    getLayout: () => { calls.push({ name: 'getLayout' }); return { activity: null, floatingWindows: {}, editorTabs: [] } },
-    getActivityItem: (id) => { calls.push({ name: 'getActivityItem', arg: id }); return null },
+    getLayout: () => { calls.push({ name: 'getLayout' }); return { activity: activePane, floatingWindows: {}, editorTabs: [] } },
+    getActivityItem: (id) => { calls.push({ name: 'getActivityItem', arg: id }); return activePane ? { id, paneId: activePane } : null },
     getHiddenPluginIds: () => { calls.push({ name: 'getHiddenPluginIds' }); return hidden },
     onDidChangeSetting: (cb) => { settingCb = cb; calls.push({ name: 'onDidChangeSetting' }); return () => {} },
   }
@@ -211,6 +254,7 @@ function makeWb() {
     wb, calls,
     callsOf: (n) => calls.filter((c) => c.name === n),
     setHidden: (h) => { hidden = h },
+    setActivePane: (p) => { activePane = p },
     // Returns false rather than throwing when the mount never subscribed: a
     // broken bundle must produce FAILs, not a crash that truncates the run.
     fireSetting: () => { if (!settingCb) return false; settingCb(); return true },
@@ -239,8 +283,13 @@ function scenario(opts = {}) {
     __DSH_BOOT__: opts.boot !== undefined ? opts.boot : { entries: [] },
     addEventListener() {}, removeEventListener() {},
   }
+  // The sidebar title element is answered for, rather than left null, so the
+  // adapter's locale-change patch has a real target and its write can be
+  // ASSERTED. Every other selector stays null, which is what the other scenarios
+  // (and the production boot this models) expect.
+  const titleEl = { textContent: '' }
   const documentStub = {
-    querySelector: () => null,
+    querySelector: (sel) => (sel === '.dsh-wb-sidebar-title' ? titleEl : null),
     createElement: () => fakeEl,
     createElementNS: () => fakeEl,
     head: fakeEl, body: fakeEl, documentElement: fakeEl,
@@ -260,7 +309,8 @@ function scenario(opts = {}) {
   return {
     captured, mod, ctx, gets, injections, effects, events, panel, hostCalls, i18nListeners,
     wb: wbH.wb, wbCalls: wbH.calls, callsOf: wbH.callsOf, setHidden: wbH.setHidden,
-    fireSetting: wbH.fireSetting, timers, lines, windowObj, documentStub,
+    setActivePane: wbH.setActivePane,
+    fireSetting: wbH.fireSetting, timers, lines, windowObj, documentStub, titleEl,
     locale: localeH && localeH.locale, localeRegistrations: localeH && localeH.registrations,
   }
 }
@@ -421,49 +471,69 @@ check('dock-hidden calls panel.host.release exactly once', count(after8, 'releas
 check('a console.log mentions dock-hidden', anyLine(h8.lines.log, /dock-hidden/), JSON.stringify(h8.lines.log))
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('9. I18n reuses the official @deepseek-ai/dsh-client-locale when present')
-// When the official LocaleRuntime is resolvable on ctx (via ctx.get('locale')),
-// the adapter must register its own 'dock-flash' namespace and bind it, then
-// refresh the sidebar title through the official `locale/change` event — NOT the
-// core's hand-rolled `panel.i18n.t.onLocaleChange`.
+section('9. I18n goes through the core panel.i18n and claims NO locale namespace')
+// The core registers `dock-flash` with DSH's official `locale` service on ITS
+// plugin fiber, and `LocaleRuntime.register()` REFUSES a repeat locale. So the
+// adapter must not attempt a second registration of the same namespace: until
+// 3.0.3 it did, the attempt threw on every boot, and the catch logged
+// `official locale registration failed; falling back to core panel.i18n` before
+// running the fallback anyway. The locale stub below is built to REJECT a
+// duplicate exactly like the real runtime, so a regression reproduces the real
+// symptom here instead of passing against a permissive fake.
 const h9 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: true })
 let threw9 = null
 try { h9.mod.apply(h9.ctx) } catch (e) { threw9 = e }
-check('apply() does not throw with the official locale service', !threw9, threw9 && threw9.message)
+check('apply() does not throw with the official locale service present', !threw9, threw9 && threw9.message)
 fire(h9, ['dockFlashPanel'], { dockFlashPanel: h9.panel })
-check("ctx requested the 'locale' service", h9.gets.includes('locale'), JSON.stringify(h9.gets))
-check("the adapter registered its own namespace 'dock-flash'",
-  h9.localeRegistrations.length === 1 && h9.localeRegistrations[0].ns === 'dock-flash',
-  JSON.stringify(h9.localeRegistrations))
-const reg9 = h9.localeRegistrations[0]
-check('the registered namespace ships bilingual zh and en dictionaries',
-  !!reg9 && reg9.dicts && reg9.dicts.zh && reg9.dicts.en
-    && typeof reg9.dicts.zh.title === 'string' && typeof reg9.dicts.en.title === 'string',
-  reg9 && JSON.stringify(reg9.dicts))
-check('the adapter bound the dock-flash namespace', h9.locale._boundNs === 'dock-flash',
-  String(h9.locale._boundNs))
-check('the sidebar title patch subscribes via the official locale/change event',
-  h9.events.some((e) => e.event === 'locale/change'),
-  JSON.stringify(h9.events.map((e) => e.event)))
-// The bound translator drives the deferred title getters dock-base consumes.
+check('the adapter registers NOTHING with the official locale service',
+  h9.localeRegistrations.length === 0, JSON.stringify(h9.localeRegistrations))
+check('the adapter never resolves the locale service at all',
+  !h9.gets.includes('locale'), JSON.stringify(h9.gets))
+check('the mount logs no locale-registration failure',
+  !anyLine(h9.lines.warn, /official locale registration failed/i), JSON.stringify(h9.lines.warn))
+
+// Every string comes from the core's frozen `panel.i18n` surface.
 const rp9 = firstArg(h9, 'registerPanel')
-check('registerPanel.title is a deferred () => string backed by the bound translator',
-  !!rp9 && typeof rp9.title === 'function' && /^T:/.test(rp9.title()),
+const rg9 = firstArg(h9, 'registerPlugin')
+const ab9 = firstArg(h9, 'registerActivityBarItem')
+const ev9 = firstArg(h9, 'registerEditorView')
+check('registerPanel.title is a deferred () => string from panel.i18n.L',
+  !!rp9 && typeof rp9.title === 'function' && rp9.title() === 'T:title',
   rp9 ? String(typeof rp9.title) + ' ' + String(rp9.title && rp9.title()) : 'registerPanel never called')
-check('a console.log mentions reusing @deepseek-ai/dsh-client-locale',
-  anyLine(h9.lines.log, /dsh-client-locale/), JSON.stringify(h9.lines.log))
+check('registerActivityBarItem.title is a deferred () => string from panel.i18n.L',
+  typeof prop(ab9, 'title') === 'function' && prop(ab9, 'title')() === 'T:title',
+  String(prop(ab9, 'title') && prop(ab9, 'title')()))
+check('registerEditorView.title is a deferred () => string from panel.i18n.L',
+  typeof prop(ev9, 'title') === 'function' && prop(ev9, 'title')() === 'T:title',
+  String(prop(ev9, 'title') && prop(ev9, 'title')()))
+// registerPlugin's card renders its children statically, so it MUST get strings
+// (AGENTS.md: a function child renders blank).
+check('registerPlugin.description is a STATIC string, not a getter',
+  typeof prop(rg9, 'description') === 'string' && rg9.description === 'T:description',
+  String(prop(rg9, 'description')))
+
+// The sidebar-title patch: dock-base does not re-resolve titleOf() on a language
+// switch, so the adapter patches the text itself. That patch must be driven by
+// `t.onLocaleChange` — and it must actually WRITE, through the pane guard.
+check('the mount subscribed to locale changes through panel.i18n.t.onLocaleChange',
+  h9.i18nListeners.length >= 1, String(h9.i18nListeners.length))
+h9.setActivePane('dock-flash:quick-control')
+h9.panel.i18n.t.setLocale('zh')
+check('a locale switch while our pane is active rewrites the sidebar title',
+  h9.titleEl.textContent === 'T:title', JSON.stringify(h9.titleEl.textContent))
+h9.titleEl.textContent = 'untouched'
+h9.setActivePane('someone-else')
+h9.panel.i18n.t.setLocale('en')
+check('a locale switch on ANOTHER pane leaves that pane\'s title alone',
+  h9.titleEl.textContent === 'untouched', JSON.stringify(h9.titleEl.textContent))
+
+// The manifest keeps the locale row as a LOAD-ORDER hint: the core's proxy reads
+// the service, so an early arrival sets the language of the first paint.
 check("manifest dsh.client.inject lists '@deepseek-ai/dsh-client-locale' as a base name",
   injectedNames.includes('@deepseek-ai/dsh-client-locale'),
   JSON.stringify(injectedNames))
-
-// The fallback still works when the official service is absent (no `locale`).
-const h9b = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: false })
-h9b.mod.apply(h9b.ctx)
-fire(h9b, ['dockFlashPanel'], { dockFlashPanel: h9b.panel })
-check('with the official locale absent, it falls back to panel.i18n without throwing',
-  h9b.callsOf('registerPanel').length === 1, JSON.stringify(h9b.callsOf('registerPanel').length))
-check('a console.log does NOT claim dsh-client-locale reuse on the fallback path',
-  !anyLine(h9b.lines.log, /dsh-client-locale/))
+check('lib/client.js contains no locale-namespace registration of its own',
+  !/\.register\(\s*['"]dock-flash['"]/.test(codeOnly))
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('10. The cordis ctx contract — reading an undeclared service THROWS')
@@ -492,16 +562,15 @@ check('the ctx stub is a cordis-shaped Proxy: an undeclared read throws', !!prox
   proxyThrew && proxyThrew.message)
 
 // Static guard: the bundle must resolve services through ctx.get, never by
-// reading the property. Comments are stripped so the explanatory prose in
-// lib/client.js can keep naming ctx.locale without tripping this.
-const codeOnly = source.replace(/^\s*\/\/.*$/gm, '')
+// reading the property. Comments are already stripped (see `codeOnly`), so the
+// explanatory prose in lib/client.js can keep naming ctx.locale without tripping this.
 const banned = [/ctx\.locale\b/, /typeof\s+ctx\.[a-z]/].filter((re) => re.test(codeOnly))
 check('lib/client.js never reads a service off ctx by property access',
   banned.length === 0, banned.join(', '))
 
 // The live behaviour: a boot with NO official locale service must still come up
-// fully, through the panel.i18n fallback. This is the exact production shape —
-// the locale package is not in the boot batch — and it used to mount nothing.
+// fully. This is the exact production shape — the locale package is not in the
+// boot batch — and it used to mount nothing.
 const h10 = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: false })
 let threw10 = null
 try { h10.mod.apply(h10.ctx); fire(h10, ['dockFlashPanel'], { dockFlashPanel: h10.panel }) } catch (e) { threw10 = e }
@@ -517,20 +586,22 @@ const h10b = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: tru
 let threw10b = null
 try { h10b.mod.apply(h10b.ctx); fire(h10b, ['dockFlashPanel'], { dockFlashPanel: h10b.panel }) } catch (e) { threw10b = e }
 check('a boot WITH the official locale service does not throw', !threw10b, threw10b && threw10b.message)
-check('a boot with the official locale service resolves it through ctx.get, not a property read',
-  h10b.gets.includes('locale'), JSON.stringify(h10b.gets))
 check('a boot with the official locale service still performs all five registrations',
   allRegistered(h10b), regCounts(h10b))
 
-// A locale service that throws on register must NOT take the mount down either.
+// A locale service that refuses every registration must not affect the mount at
+// all — because the adapter never reaches for it. This is the guard that keeps
+// the 3.0.2 defect from coming back: re-add a `register` call and the hostile
+// stub makes the mount noisy again, exactly as it did in production.
 const h10c = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: true })
-h10c.locale.register = () => { throw new Error('boom') }
+h10c.locale.register = () => { throw new Error('locale namespace "dock-flash" already has locale "zh"') }
 let threw10c = null
 try { h10c.mod.apply(h10c.ctx); fire(h10c, ['dockFlashPanel'], { dockFlashPanel: h10c.panel }) } catch (e) { threw10c = e }
-check('a locale service whose register() throws does not abort the mount',
+check('a locale service that refuses registration does not abort the mount',
   allRegistered(h10c), regCounts(h10c))
-check('a failed official registration is reported as a warning, not silence',
-  anyLine(h10c.lines.warn, /official locale registration failed/i), JSON.stringify(h10c.lines.warn))
+check('a refusing locale service produces no warning, because it is never called',
+  h10c.lines.warn.length === 0 && h10c.localeRegistrations.length === 0,
+  JSON.stringify(h10c.lines.warn))
 
 // ── The manifest must not declare a @deepseek-ai/dsh* peerDependency. ───────
 // evaluatePluginCompatibility() (dsh-app-boot) compares every such peer against
