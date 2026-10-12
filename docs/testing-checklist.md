@@ -29,6 +29,16 @@ Everything else is verified by eye. Items are grouped where
 one pass covers several concerns, and the proxy block is the most detailed because it is the
 easiest to break invisibly.
 
+0. **After any `package.json` change, restart DSH — a browser refresh verifies nothing.**
+   `evaluatePluginCompatibility()` runs once, at boot, inside `preflight()`. When it rejects a
+   `@deepseek-ai/dsh*` peer it sets `row.disabled = true`, and that decision is not recomputed on
+   reload. So a manifest fix looks like it did not work, and — worse — a manifest *break* can be
+   tested past for a whole session. Restart means quit the process and start it again, not reload.
+   The symptom of the row being disabled is the GUI banner
+   *"dock-flash is incompatible with DSH x.y.z (requires …)"* plus a sidebar with every other icon
+   and no Flash. Read the banner as **"delete this peer"**, never as **"bump this version"**: DSH
+   compares such a peer against its own runtime version, so no range satisfies it.
+
 1. **Panel renders**: Click ⚡ → the panel opens without crashing, and the dock survives a
    render error thrown on purpose inside a switch component (error-boundary UI replaces the
    whole dock disappearing).
