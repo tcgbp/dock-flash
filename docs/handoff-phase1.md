@@ -1,5 +1,12 @@
 # Handoff — 核心/适配器拆分 Phase 1 之后（供新会话接手）
 
+> **本文已过期，仅作归档。** 写于 2026-10-08，描述的是 Phase 1 当时"7 个本地提交、一行未推送，
+> 等待 gate 2 发 `dock-flash@2.3.0`"的状态。那批提交早已推送，Phase 2（核心迁 `dsh-flash`）也已完成，
+> 版本现在是 3.0.x。§6 的复验清单、§7 的后续步骤、§8 里的端口与 profile 名都不要再照做——
+> 当前发布流程看 [releasing.md](releasing.md)，当前自检看 [testing-checklist.md](testing-checklist.md)。
+> 仍然有效的只有 §4「关键技术约束」和 §5「修掉的缺陷」：cordis 同栈服务解析、客户端 bundle 的同步
+> `require` 不认相对路径、profile bundles/patch 层的装载规则、claim 持有计数，这些机制现在仍成立。
+
 > 写于 2026-10-08。本文是**交接文件**：新会话读它即可继续，不必依赖上一会话的对话历史。
 > 计划与决策全文在 [refactor-plan-core-adapter-split.md](refactor-plan-core-adapter-split.md)。
 
