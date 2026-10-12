@@ -153,8 +153,11 @@ modules cannot share one require key.
 | `dsh-flash` | `^1.0.0` | regular `dependency` — the panel core |
 
 `dsh.client.inject` is
-`["dsh-flash", "dock-base", "@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-api-remotes", "@deepseek-ai/dsh-api-session-controller"]`,
-and `dsh.bundle.patch` points at `./cordis.patch.yml`.
+`["dsh-flash", "dock-base", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-api-remotes", "@deepseek-ai/dsh-api-session-controller"]`,
+and `dsh.bundle.patch` points at `./cordis.patch.yml`. The official locale runtime is a load-order hint only,
+never a peer dependency: DSH checks every `@deepseek-ai/dsh*` peer against its **own** runtime version, so
+declaring one can disable the whole plugin. The panel localizes through that service when it is present and
+falls back to the core's translations when it is not.
 
 ## Troubleshooting
 

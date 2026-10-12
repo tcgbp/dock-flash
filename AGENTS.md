@@ -102,29 +102,29 @@ Rules:
 suffix, while graph-row keys are base names — so a suffixed entry is **silently ignored**. The current list is:
 
 ```json
-["dsh-flash","dock-base","@deepseek-ai/dsh-client-locale","@deepseek-ai/dsh-client-runtime","@deepseek-ai/dsh-api-remotes","@deepseek-ai/dsh-api-session-controller"]
+["dsh-flash","dock-base","@deepseek-ai/dsh-client-locale","@deepseek-ai/dsh-api-remotes","@deepseek-ai/dsh-api-session-controller"]
 ```
 
 > `@deepseek-ai/dsh-client-locale` is listed so the official `locale` service (`LocaleRuntime`, which the
 > adapter reuses for dock-flash chrome) arrives before the adapter mounts, if the composition provides it. It
-> is a `peerDependency` (`>=0.1.1-rc.2 <0.3.0-0`) — a shared platform runtime, not a private dependency. The
-> adapter keeps a `panel.i18n` fallback anyway, so a composition that omits it still mounts.
+> is deliberately **not** a `peerDependency` — see the rule below. The adapter keeps a `panel.i18n` fallback,
+> so a composition that omits it still mounts.
 >
 > **In practice this entry is currently inert.** The package is absent from the served boot batch, so listing
-> it changes no load order and `ctx.get('locale')` resolves to `undefined`. It records the intended wiring, it
-> is not evidence that the official locale path runs. Whether to drop it along with the peer is an open
-> question for the maintainer — as is the `@deepseek-ai/dsh-client-runtime` entry, which names no package
-> that exists.
+> it changes no load order and `ctx.get('locale')` resolves to `undefined`. It records the intended wiring; it
+> is not evidence that the official locale path runs.
 >
-> **That range is a range in DSH's version space, not in locale's.** `evaluatePluginCompatibility()`
-> compares every `@deepseek-ai/dsh*` peer against the **DSH runtime version** (`getDshRuntimeVersion()`,
-> read from app-boot's own `package.json`) — never against the named package's installed version. The
-> official locale package just happens to ship in lockstep, so `^0.1.1-rc.2` reads as "any 0.1.x" and
-> **disables the adapter on every DSH ≥ 0.2.0-0**: `preflight()` sets `row.disabled = true`, the row
-> mounts nothing, the panel vanishes, and the GUI says *"is incompatible with DSH 0.2.0-rc.2
-> (requires @deepseek-ai/dsh-client-locale ^0.1.1-rc.2)"*. Keep this peer a wide range. **Verify a
-> candidate range with DSH's own `evaluatePluginCompatibility()`, not raw `semver.satisfies`** — they
-> disagree (bare semver rejects `>=0.1.1-rc.2 <1.0.0-0` against `0.2.0-rc.2`, DSH accepts it).
+> **Never add a `@deepseek-ai/dsh*` peerDependency to this package.** `evaluatePluginCompatibility()` compares
+> every such peer against the **DSH runtime version** (`getDshRuntimeVersion()`, read from app-boot's own
+> `package.json`) — never against the named package's installed version. Those versions move together only by
+> coincidence, so a normal-looking pin like `^0.1.1-rc.2` reads as "any 0.1.x" and **disables the whole row on
+> every DSH ≥ 0.2.0-0**: `preflight()` sets `row.disabled = true`, the row mounts nothing, the panel vanishes,
+> and the GUI says *"is incompatible with DSH 0.2.0-rc.2 (requires … ^0.1.1-rc.2)"* — which reads like a
+> version to bump rather than a check to delete. That is exactly what the locale peer did until it was
+> dropped. `dock-base` and `@deepseek-ai/cordis` are exempt from the check (neither is `@deepseek-ai/dsh*`)
+> and stay peers. If a `@deepseek-ai/dsh*` peer is ever unavoidable, **verify the candidate range with DSH's
+> own `evaluatePluginCompatibility()`, not raw `semver.satisfies`** — they disagree (bare semver rejects
+> `>=0.1.1-rc.2 <1.0.0-0` against `0.2.0-rc.2`, DSH accepts it).
 
 - `dock-base` is a **NON-optional** `peerDependencies` entry (there is no `peerDependenciesMeta` opt-out).
 - `dsh-flash` is a plain `dependencies` entry (`^1.0.0`).
@@ -221,7 +221,7 @@ node scripts/check-adapter-mount.mjs    # aka pnpm run check:overlay
 ```
 
 `check-adapter-mount.mjs` reads the **REAL** `lib/client.js`, evaluates it in a `node:vm` sandbox with a tiny
-fake DOM and a fake cordis `ctx`, and asserts **63 things across 10 groups**:
+fake DOM and a fake cordis `ctx`, and asserts **67 things across 10 groups**:
 
 1. module id/name;
 2. the loud watchdog naming both `dockFlashPanel` and `dsh-flash` at exactly 2000 ms;
@@ -235,7 +235,8 @@ fake DOM and a fake cordis `ctx`, and asserts **63 things across 10 groups**:
    service is present, and cleanly falling back to `panel.i18n` when it is absent;
 10. the cordis `ctx` contract: the stub throws on an undeclared property read, a static guard keeps
     `ctx.<service>` property reads out of the bundle, and the mount completes with the locale service
-    absent, present, **and** throwing.
+    absent, present, **and** throwing; plus the manifest guards — no `@deepseek-ai/dsh*` peerDependency,
+    `dock-base`/`cordis` still peers, and every `inject` entry a base name DSH can resolve.
 
 **The ctx stub is a Proxy on purpose, and it is load-bearing.** A real cordis context throws from its `get`
 trap for any service the plugin did not declare in `inject`. A plain-object stub returns `undefined` there
@@ -299,7 +300,7 @@ releases: the two gates above still stand.
 |---|---|---|---|
 | `dsh-flash` `^1.0.0` | dependency | The panel core (another repository) | Plain dependency; supplies `dockFlashPanel` |
 | `dock-base` | peer | `ctx.workbench` registry services | **NON-optional** — no `peerDependenciesMeta` |
-| `@deepseek-ai/dsh-client-locale` `>=0.1.1-rc.2 <0.3.0-0` | peer | Official `LocaleRuntime` (`locale` service, `locale/change` event) | Shared platform runtime; adapter reuses it for dock chrome and lists it in inject. Reach it with `ctx.get('locale')`, never `ctx.locale`. **Range is in DSH's version space** — see above |
+| `@deepseek-ai/dsh-client-locale` | **none** — inject only | Official `LocaleRuntime` (`locale` service, `locale/change` event) | Reused opportunistically for dock chrome. Reach it with `ctx.get('locale')`, never `ctx.locale`. Deliberately NOT a peer — a `@deepseek-ai/dsh*` peer is matched against the **DSH runtime version** and can disable the whole row |
 | `@deepseek-ai/cordis` `>=4.0.0-rc.1 <5.0.0-0 \|\| >=4.0.1-0 <5.0.0-0` | peer | Plugin framework | Required |
 
 > The peer range carries an explicit prerelease branch **on purpose**, so prerelease harness builds resolve.
@@ -315,7 +316,7 @@ releases: the two gates above still stand.
 | Reading `ctx.get('dockFlashPanel')` in the same tick as the `provide` | `undefined` from an asynchronous service | Pass the service explicitly to `mountDockPanelAdapter` |
 | A non-`insert` patch with a stale `name:` | DSH drops the whole `config:` block | Update `name:` to the real package name, keep `id:` |
 | Reading a service as a `ctx.<name>` **property** | The read **throws** `cannot get property "x" without inject` (a cordis `Proxy` get trap), aborting the mount — ⚡ stays, sidebar panel and Flash card never appear, console goes silent after `workbench mode` | Resolve services with `ctx.get('name')`, which returns `undefined` instead of throwing. `typeof ctx.<name>` does **not** help — `typeof` evaluates the getter and still throws |
-| A `@deepseek-ai/dsh*` peer pinned with `^` | The whole row is **disabled** — panel gone, GUI says "incompatible with DSH x.y.z" | Peer ranges are matched against the **DSH runtime version**; use a wide range and check it with `evaluatePluginCompatibility()` |
+| A `@deepseek-ai/dsh*` **peerDependency** on this package | The whole row is **disabled** — panel gone, GUI says "incompatible with DSH x.y.z". The message names a version to bump; the real fix is deletion | Do not declare one. DSH matches it against the **DSH runtime version**, not the package's own, so no pin is safe. Declare the name in `dsh.client.inject` and reach the service with `ctx.get(...)` instead |
 | `pnpm run <script>` | verify-deps-before-run tries to install the not-yet-published `dsh-flash` | Run `./node_modules/.bin/tsc -p tsconfig.json` / `node scripts/…` directly |
 
 ## Where else to read

@@ -132,8 +132,10 @@ profile 行上，因此没有宿主入口点的包就没有可挂载其浏览器
 | `dsh-flash` | `^1.0.0` | 普通 `dependency` —— 面板核心 |
 
 `dsh.client.inject` 为
-`["dsh-flash", "dock-base", "@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-api-remotes", "@deepseek-ai/dsh-api-session-controller"]`，
-`dsh.bundle.patch` 指向 `./cordis.patch.yml`。
+`["dsh-flash", "dock-base", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-api-remotes", "@deepseek-ai/dsh-api-session-controller"]`，
+`dsh.bundle.patch` 指向 `./cordis.patch.yml`。官方 locale 运行时只是一条加载顺序提示，**不是** peer 依赖：
+DSH 会把每一个 `@deepseek-ai/dsh*` peer 拿去和**它自己**的运行时版本比对，所以声明它反而可能让整个插件被禁用。
+面板在该服务存在时用它做本地化，不存在时回退到核心的翻译。
 
 ## 疑难排查
 
