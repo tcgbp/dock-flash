@@ -526,11 +526,38 @@ check('a boot with the official locale service still performs all five registrat
 const h10c = scenario({ boot: { entries: [{ id: 'dock-base' }] }, workbench: true, locale: true })
 h10c.locale.register = () => { throw new Error('boom') }
 let threw10c = null
-try { h10c.mod.apply(h10c.ctx); h10c.injections[0].cb({ dockFlashPanel: h10c.panel }) } catch (e) { threw10c = e }
+try { h10c.mod.apply(h10c.ctx); fire(h10c, ['dockFlashPanel'], { dockFlashPanel: h10c.panel }) } catch (e) { threw10c = e }
 check('a locale service whose register() throws does not abort the mount',
   allRegistered(h10c), regCounts(h10c))
 check('a failed official registration is reported as a warning, not silence',
   anyLine(h10c.lines.warn, /official locale registration failed/i), JSON.stringify(h10c.lines.warn))
+
+// ── The manifest must not declare a @deepseek-ai/dsh* peerDependency. ───────
+// evaluatePluginCompatibility() (dsh-app-boot) compares every such peer against
+// the DSH RUNTIME version — getDshRuntimeVersion(), read from app-boot's own
+// package.json — never against the named package's installed version. The two
+// move together only by coincidence, so ANY pin on such a peer eventually
+// disables the whole row: preflight() sets row.disabled, nothing mounts, and
+// the GUI blames a version range. That is how 3.0.2 shipped broken.
+const dshPeers = Object.keys(manifest.peerDependencies || {})
+  .filter((n) => n.startsWith('@deepseek-ai/dsh'))
+check('package.json declares no @deepseek-ai/dsh* peerDependency',
+  dshPeers.length === 0, JSON.stringify(dshPeers))
+check('dock-base and cordis are still peers (DSH does not check these)',
+  Object.keys(manifest.peerDependencies || {}).includes('dock-base') &&
+  Object.keys(manifest.peerDependencies || {}).includes('@deepseek-ai/cordis'),
+  JSON.stringify(Object.keys(manifest.peerDependencies || {})))
+// Every inject entry must name a package that the manifest or DSH can resolve,
+// and must be a BASE name (arriveGraphRow never strips a `/client` suffix).
+check('no dsh.client.inject entry carries a `/client` suffix',
+  !injectedNames.some((n) => n.endsWith('/client')), JSON.stringify(injectedNames))
+check('no dsh.client.inject entry names a package the manifest does not know',
+  injectedNames.every((n) =>
+    n in (manifest.dependencies || {}) || n in (manifest.peerDependencies || {}) ||
+    // platform rows: composed by DSH itself, never declared here
+    ['@deepseek-ai/dsh-client-locale', '@deepseek-ai/dsh-api-remotes',
+      '@deepseek-ai/dsh-api-session-controller'].includes(n)),
+  JSON.stringify(injectedNames))
 
 // ═══════════════════════════════════════════════════════════════════════════
 console.log('')
