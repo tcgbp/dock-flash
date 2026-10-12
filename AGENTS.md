@@ -38,8 +38,12 @@ scripts/          repo tooling (check-docs-size.mjs, check-adapter-mount.mjs)
   edits appear on refresh. Contains the module entry, the mount, the claim handshake and the watchdog.
 - `dist/index.js` — compiled from `src/index.ts` by `pnpm run build`.
 - `cordis.patch.yml` — the `dsh.bundle.patch` layer; the contract below is the most important thing here.
-- `docs/` — `architecture-notes.md` (the "why" and the measurements), `releasing.md`,
-  `testing-checklist.md`, `refactor-plan-core-adapter-split.md`, and the `superpowers/plans/` archive.
+- `docs/` — `architecture-notes.md` (the "why" and the measurements, **adapter-owned only**),
+  `releasing.md`, `testing-checklist.md`, and the `superpowers/plans/` archive.
+  `refactor-plan-core-adapter-split.md`, `refactor-coupling-map.md` and `handoff-phase1.md` are
+  **split-era records**, not tasks: each carries a header saying what is spent. The panel core's
+  own notes — skins, the ⚡ trigger, proxy, alerts, the quickControl registry — live in the
+  `dsh-flash` repository and are deliberately **not** mirrored here.
 - `scripts/` — `check-docs-size.mjs` (`pnpm run check:docs`), `check-adapter-mount.mjs`
   (`pnpm run check:overlay`).
 
